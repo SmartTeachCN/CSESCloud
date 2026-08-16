@@ -1,0 +1,184 @@
+/* ===== 按钮系统 ===== */
+
+/* 基础按钮 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--fast-duration), transform var(--fast-duration);
+  text-decoration: none;
+  padding: var(--spacer-2) var(--spacer-4);
+}
+
+/* 主要按钮 */
+.btn-primary {
+  background: var(--accent-base);
+  color: var(--accent-text);
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 次要按钮 */
+.btn-secondary {
+  background: var(--card-bg);
+  border: 1px solid var(--card-stroke);
+  color: var(--text-primary);
+}
+
+.btn-secondary:hover {
+  background: var(--subtle-secondary);
+}
+
+/* 幽灵按钮 */
+.btn-ghost {
+  background: var(--subtle-secondary);
+  color: var(--text-secondary);
+  border: none;
+}
+
+.btn-ghost:hover {
+  background: var(--subtle-pressed);
+  color: var(--text-primary);
+}
+
+/* 小号幽灵按钮 */
+.btn-ghost-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  padding: var(--spacer-1) var(--spacer-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--fast-duration);
+}
+
+.btn-ghost-sm:hover {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+}
+
+/* 文字按钮 */
+.btn-text {
+  background: transparent;
+  border: none;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: var(--spacer-2) var(--spacer-3);
+  border-radius: var(--radius-md);
+  transition: background var(--fast-duration), color var(--fast-duration);
+}
+
+.btn-text:hover {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+}
+
+/* 危险按钮 */
+.btn-danger {
+  background: var(--status-error);
+  color: white;
+}
+
+.btn-danger:hover {
+  background: #D9382C;
+}
+
+/* 大号主要按钮 */
+.btn-primary-lg {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-3) var(--spacer-5);
+  background: var(--accent-base);
+  color: var(--accent-text);
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--fast-duration), transform var(--fast-duration);
+}
+
+.btn-primary-lg:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+/* 大号次要按钮 */
+.btn-secondary-lg {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-3) var(--spacer-5);
+  background: var(--card-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--card-stroke);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--fast-duration);
+}
+
+.btn-secondary-lg:hover {
+  background: var(--subtle-secondary);
+}
+
+/* 对话框中的主要按钮 */
+.primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-2) var(--spacer-4);
+  background: var(--accent-base);
+  color: var(--accent-text);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.primary-btn:hover {
+  background: var(--accent-hover);
+}
+
+/* 对话框中的次要按钮 */
+.secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-2) var(--spacer-4);
+  background: var(--ctrl-fill-default);
+  color: var(--text-primary);
+  border: 1px solid var(--ctrl-border-rest);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.secondary-btn:hover {
+  background: var(--subtle-secondary);
+}

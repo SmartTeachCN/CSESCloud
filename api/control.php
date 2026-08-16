@@ -100,7 +100,7 @@ if (in_array($action, $needsAuth, true)) {
 
 // 管理类操作需要实例管理权限
 $needsAdmin = ['device_list', 'device_get', 'device_unregister', 'enrollment_create', 'enrollment_revoke',
-    'command_create', 'command_list', 'command_get', 'exam_config_list', 'events_stream'];
+    'enrollment_delete', 'command_create', 'command_list', 'command_get', 'exam_config_list', 'events_stream'];
 
 if (in_array($action, $needsAdmin, true)) {
     Auth::requireLogin();
@@ -108,7 +108,7 @@ if (in_array($action, $needsAdmin, true)) {
         "SELECT * FROM instance_members WHERE instance_id = ? AND user_id = ? AND role IN ('owner','admin')",
         [$instanceId, Auth::userId()]
     );
-    if (!$instAdmin && !Auth::isSuperAdmin()) {
+    if (!$instAdmin && !Auth::isSuperAdmin() && !Auth::isAlliance()) {
         Response::error('需要实例管理权限', 403, 403);
     }
 }
@@ -120,7 +120,7 @@ switch ($action) {
         $rows = DB::all(
             "SELECT device_id, display_name, platform, architecture, app_version,
                     lifecycle_status, labels, last_seen_at, enrolled_at, created_at
-             FROM ea2_devices WHERE instance_id = ? ORDER BY enrolled_at DESC",
+             FROM ea2_devices WHERE instance_id = ? AND lifecycle_status = 'active' ORDER BY enrolled_at DESC",
             [$instanceId]
         );
         foreach ($rows as &$r) {
@@ -145,10 +145,11 @@ switch ($action) {
     case 'device_unregister':
         $deviceId = $body['deviceId'] ?? ($body['device_id'] ?? '');
         if ($deviceId === '') Response::error('缺少 deviceId');
-        DB::update('ea2_devices', [
+        $affected = DB::update('ea2_devices', [
             'lifecycle_status' => 'revoked',
             'updated_at' => date('Y-m-d H:i:s'),
         ], 'instance_id = ? AND device_id = ?', [$instanceId, $deviceId]);
+        if ($affected === 0) Response::error('设备不存在或已注销');
         Response::success(null, '设备已注销');
 
     case 'device_update_state':
@@ -198,6 +199,12 @@ switch ($action) {
         $id = (int)($body['id'] ?? 0);
         DB::update('ea2_enrollment_codes', ['revoked_at' => date('Y-m-d H:i:s')], 'id = ? AND instance_id = ?', [$id, $instanceId]);
         Response::success(null, '注册码已吊销');
+
+    case 'enrollment_delete':
+        $id = (int)($body['id'] ?? 0);
+        $affected = DB::delete('ea2_enrollment_codes', 'id = ? AND instance_id = ?', [$id, $instanceId]);
+        if ($affected === 0) Response::error('注册码不存在');
+        Response::success(null, '注册码已删除');
 
     // ===== 命令管理 =====
     case 'command_create':
@@ -249,7 +256,7 @@ switch ($action) {
         $deviceId = $body['deviceId'] ?? ($body['device_id'] ?? '');
         $now = date('Y-m-d H:i:s');
         $commands = DB::all(
-            "SELECT command_id, command_type, payload, issued_at, expires_at
+            "SELECT id, command_id, command_type, payload, issued_at, expires_at
              FROM ea2_commands
              WHERE instance_id = ? AND device_id = ? AND status = 'pending'
                AND expires_at > ?
@@ -257,6 +264,10 @@ switch ($action) {
              LIMIT 20",
             [$instanceId, $deviceId, $now]
         );
+        // 标记为已发送，防止重复执行
+        foreach ($commands as $cmd) {
+            DB::update('ea2_commands', ['status' => 'sent'], 'id = ?', [(int)$cmd['id']]);
+        }
         $result = array_map(function ($cmd) {
             $payload = json_decode($cmd['payload'], true) ?: [];
             return [
@@ -415,7 +426,7 @@ switch ($action) {
 
 // ===== 设备注册处理函数 =====
 function _handleDeviceRegister(int $instanceId): void {
-    global $body;
+    global $body, $instanceUid;
 
     $enrollmentCode = trim($body['enrollmentCode'] ?? '');
     $displayName = trim($body['displayName'] ?? '');

@@ -525,63 +525,7 @@ async function removeSavedEntry(entry: any) {
   gap: var(--spacer-4);
 }
 
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacer-2);
-}
 
-.form-group label {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.input-wrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.input-icon {
-  position: absolute;
-  left: var(--spacer-3);
-  color: var(--text-tertiary);
-  pointer-events: none;
-}
-
-.form-group input,
-.form-group select {
-  width: 100%;
-  height: 40px;
-  padding: 0 var(--spacer-3) 0 calc(var(--spacer-3) + 24px);
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-base);
-  color: var(--text-primary);
-  outline: none;
-  transition: border-color var(--fast-duration), box-shadow var(--fast-duration), background var(--fast-duration);
-  appearance: none;
-}
-
-.form-group input::placeholder {
-  color: var(--text-tertiary);
-}
-
-.form-group input:focus,
-.form-group select:focus {
-  border-color: var(--accent-base);
-  background: var(--ctrl-fill-input-active);
-  box-shadow: 0 0 0 3px rgba(0, 103, 192, 0.15);
-}
-
-.select-caret {
-  position: absolute;
-  right: var(--spacer-3);
-  color: var(--text-tertiary);
-  pointer-events: none;
-}
 
 .school-badge {
   display: inline-flex;
@@ -597,41 +541,7 @@ async function removeSavedEntry(entry: any) {
   align-self: flex-start;
 }
 
-.toggle-password {
-  position: absolute;
-  right: var(--spacer-3);
-  background: transparent;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  padding: 4px;
-}
 
-.toggle-password:hover {
-  color: var(--text-primary);
-}
-
-.form-options {
-  display: flex;
-  align-items: center;
-}
-
-.remember {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.remember input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent-base);
-}
 
 .alliance-tip {
   display: flex;
@@ -680,31 +590,7 @@ async function removeSavedEntry(entry: any) {
   cursor: not-allowed;
 }
 
-.loading-spinner {
-  width: 18px;
-  height: 18px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: white;
-  border-radius: var(--radius-full);
-  animation: spin 0.8s linear infinite;
-}
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.error-tip {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  margin-top: var(--spacer-3);
-  padding: var(--spacer-2) var(--spacer-3);
-  background: rgba(196, 43, 28, 0.08);
-  border: 1px solid rgba(196, 43, 28, 0.2);
-  color: #C42B1C;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-}
 
 .saved-section {
   margin-top: var(--spacer-5);
@@ -835,37 +721,12 @@ async function removeSavedEntry(entry: any) {
     border-color: rgba(255, 255, 255, 0.08);
   }
 
-  .form-group input,
-  .form-group select {
-    background: var(--ctrl-fill-default);
-    border-color: var(--ctrl-border);
-    color: var(--text-primary);
-  }
-
-  .form-group input::placeholder {
-    color: var(--text-tertiary);
-  }
-
-  .form-group input:focus,
-  .form-group select:focus {
-    border-color: var(--accent-base);
-    background: var(--ctrl-fill-input-active);
-  }
-
   .login-tabs {
     border-bottom-color: var(--divider-stroke);
   }
 
   .tab {
     color: var(--text-tertiary);
-  }
-
-  .form-group label {
-    color: var(--text-secondary);
-  }
-
-  .remember {
-    color: var(--text-secondary);
   }
 
   .login-footer {
@@ -903,26 +764,10 @@ async function removeSavedEntry(entry: any) {
     color: rgba(255, 255, 255, 0.45);
   }
 
-  .toggle-password,
-  .input-icon,
-  .select-caret {
-    color: var(--text-tertiary);
-  }
-
-  .toggle-password:hover {
-    color: var(--text-primary);
-  }
-
   .school-badge {
     background: rgba(0, 103, 192, 0.2);
     border-color: rgba(0, 103, 192, 0.4);
     color: rgba(120, 190, 255, 1);
-  }
-
-  .error-tip {
-    background: rgba(196, 43, 28, 0.15);
-    border-color: rgba(196, 43, 28, 0.4);
-    color: #FF6B5E;
   }
 
   .temp-admin-btn {

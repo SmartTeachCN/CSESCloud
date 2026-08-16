@@ -12,7 +12,9 @@
     "permissions": [
       "ui.contribute",
       "network.http",
-      "network.local"
+      "network.local",
+      "player.start",
+      "windows.open"
     ],
     "targets": {
       "main": "main.cjs",

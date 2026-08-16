@@ -10,17 +10,6 @@
 
 require_once __DIR__ . '/lib/bootstrap.php';
 
-// 检查是否已存在
-$existing = DB::one(
-    "SELECT id FROM editor_plugins WHERE plugin_key = ?",
-    ['ea2_exam_editor']
-);
-
-if ($existing) {
-    echo "EA2 编辑器插件已存在 (id={$existing['id']})，跳过创建。\n";
-    exit;
-}
-
 $now = date('Y-m-d H:i:s');
 
 // ===== 编辑器 HTML =====
@@ -31,7 +20,6 @@ $editorHtml = <<<'HTML'
     <div class="ea2-toolbar-actions">
       <button class="ea2-btn" onclick="formatConfig()">格式化</button>
       <button class="ea2-btn" onclick="validateConfig()">验证</button>
-      <button class="ea2-btn primary" onclick="saveConfig()">保存</button>
     </div>
   </div>
 
@@ -71,7 +59,7 @@ $editorHtml = <<<'HTML'
   <!-- 状态栏 -->
   <div class="ea2-status-bar">
     <span id="ea2Status" class="ea2-status">EA2 编辑器就绪</span>
-    <span class="ea2-status-hint">Ctrl+S 保存 · Shift+Alt+F 格式化</span>
+    <span class="ea2-status-hint">Shift+Alt+F 格式化 · 保存请使用平台工具栏</span>
   </div>
 </div>
 HTML;
@@ -658,15 +646,48 @@ function setStatus(msg, type) {
   }
 }
 
-// ===== 键盘快捷键 =====
-document.addEventListener('keydown', function(e) {
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-    e.preventDefault();
-    saveConfig();
+// ===== 部署考试 =====
+async function deployExam() {
+  // 先验证
+  var result = validateConfig();
+  if (result.errors.length > 0) {
+    if (!confirm('存在 ' + result.errors.length + ' 个验证错误，仍要部署吗？\n\n' +
+      result.errors.slice(0, 3).map(function(e) { return e.message; }).join('\n'))) {
+      return;
+    }
   }
+  var config = buildConfig();
+  var json = JSON.stringify(config, null, 2);
+
+  setStatus('正在保存...', '');
+  try {
+    await window.CSEditor.saveContent(json);
+    dirty = false;
+    setStatus('正在部署...', '');
+
+    await window.CSEditor.request('controlApi', {
+      action: 'exam_config_deploy',
+      payload: { exam_config_id: window.CSEditor.file.name.replace(/\.ea2$/i, '') }
+    });
+    setStatus('考试已部署到所有在线设备', 'success');
+  } catch (e) {
+    setStatus('部署失败: ' + e.message, 'error');
+  }
+}
+
+// ===== 键盘快捷键 =====
+// 注：保存操作（Ctrl+S）由平台 Ribbon 工具栏统一接管，此处不再拦截
+document.addEventListener('keydown', function(e) {
   if (e.shiftKey && e.altKey && e.key === 'f') {
     e.preventDefault();
     formatConfig();
+  }
+});
+
+// 监听父窗口命令（部署等）
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.__ceseCommand === 'deploy') {
+    deployExam();
   }
 });
 
@@ -679,13 +700,30 @@ window.addEventListener('beforeunload', function(e) {
 });
 JS;
 
-// ===== 插入数据库 =====
+// ===== 检查是否已存在，存在则更新，不存在则插入 =====
+$existing = DB::one(
+    "SELECT id FROM editor_plugins WHERE plugin_key = ?",
+    ['ea2_exam_editor']
+);
+
+if ($existing) {
+    DB::update('editor_plugins', [
+        'editor_html' => $editorHtml,
+        'editor_js' => $editorJs,
+        'editor_css' => $editorCss,
+        'version' => '1.2.0',
+        'updated_at' => $now,
+    ], 'id = ?', [$existing['id']]);
+    echo "EA2 编辑器插件已更新到 v1.2.0（移除保存按钮、添加部署功能、修复 Ctrl+S 冲突）\n";
+    exit;
+}
+
 $id = DB::insert('editor_plugins', [
     'developer_username' => 'system',
     'plugin_key' => 'ea2_exam_editor',
     'name' => 'EA2 考试档案编辑器',
-    'version' => '1.0.0',
-    'description' => 'ExamAware2 考试档案结构化编辑器。支持考试场次管理、材料清单、时间重叠检查、实时验证。注册 .ea2 后缀。',
+    'version' => '1.2.0',
+    'description' => 'ExamAware2 考试档案结构化编辑器。支持考试场次管理、材料清单、时间重叠检查、实时验证。注册 .ea2 后缀。保存操作由平台 Ribbon 工具栏统一接管。',
     'extensions' => json_encode(['ea2']),
     'editor_html' => $editorHtml,
     'editor_js' => $editorJs,

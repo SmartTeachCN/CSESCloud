@@ -43,6 +43,9 @@ if ($method === 'GET' && $action === 'list') {
         n.target_type = 'all'
         OR (n.target_type = 'role' AND n.target_id = :role)
         OR (n.target_type = 'user' AND n.target_id = :uid)
+        OR (n.target_type = 'share_invite' AND n.target_id = :uid)
+        OR (n.target_type = 'share_accepted' AND n.target_id = :uid)
+        OR (n.target_type = 'share_rejected' AND n.target_id = :uid)
     )";
     $params = [
         'school_id' => $schoolId,
@@ -100,8 +103,11 @@ if ($method === 'GET' && $action === 'stats') {
         n.target_type = 'all'
         OR (n.target_type = 'role' AND n.target_id = ?)
         OR (n.target_type = 'user' AND n.target_id = ?)
+        OR (n.target_type = 'share_invite' AND n.target_id = ?)
+        OR (n.target_type = 'share_accepted' AND n.target_id = ?)
+        OR (n.target_type = 'share_rejected' AND n.target_id = ?)
     )";
-    $targetParams = [$schoolId, $userRole, (string)$userId];
+    $targetParams = [$schoolId, $userRole, (string)$userId, (string)$userId, (string)$userId, (string)$userId];
 
     if ($userClassId > 0) {
         $targetWhere .= " OR (n.target_type = 'class' AND n.target_id = ?)";

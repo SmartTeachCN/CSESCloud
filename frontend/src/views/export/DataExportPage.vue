@@ -244,26 +244,6 @@ function startExport() {
   margin: 0 auto;
 }
 
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: var(--spacer-5);
-}
-
-.page-title {
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.page-description {
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
-  margin: var(--spacer-1) 0 0;
-}
-
 .export-layout {
   display: grid;
   grid-template-columns: 1fr 320px;
@@ -505,33 +485,6 @@ function startExport() {
   gap: var(--spacer-4);
   padding-top: var(--spacer-4);
   border-top: 1px solid var(--divider-stroke);
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  padding: var(--spacer-2) var(--spacer-3);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  transition: background var(--fast-duration);
-  border: none;
-}
-
-.btn-primary {
-  background: var(--accent-base);
-  color: var(--accent-text);
-}
-
-.btn-primary:hover {
-  background: var(--accent-hover);
-}
-
-.btn-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 .btn-large {

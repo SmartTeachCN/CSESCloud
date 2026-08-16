@@ -117,73 +117,6 @@ const totalPages = computed(() => {
   margin: 0 auto;
 }
 
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: var(--spacer-5);
-  flex-wrap: wrap;
-  gap: var(--spacer-3);
-}
-
-.page-title {
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.page-description {
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
-  margin: var(--spacer-1) 0 0;
-}
-
-.page-header-right {
-  display: flex;
-  gap: var(--spacer-3);
-  align-items: center;
-}
-
-.search-bar input {
-  width: 240px;
-  height: 36px;
-  padding: 0 var(--spacer-3);
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  outline: none;
-  transition: border-color var(--fast-duration);
-}
-
-.search-bar input:focus {
-  border-color: var(--accent-base);
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  padding: var(--spacer-2) var(--spacer-3);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: background var(--fast-duration);
-}
-
-.btn-primary {
-  background: var(--accent-base);
-  color: white;
-}
-
-.btn-primary:hover {
-  background: var(--accent-hover);
-}
-
 .table-container {
   background: var(--card-bg);
   border: 1px solid var(--card-stroke);
@@ -233,33 +166,6 @@ const totalPages = computed(() => {
 
 .student-count {
   font-weight: 600;
-}
-
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  padding: var(--spacer-1) var(--spacer-2);
-  border-radius: var(--radius-full);
-}
-
-.status-badge.active {
-  background: rgba(16, 124, 16, 0.1);
-  color: var(--status-success);
-}
-
-.status-badge.paused {
-  background: var(--subtle-secondary);
-  color: var(--text-tertiary);
-}
-
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: currentColor;
 }
 
 .time-cell {

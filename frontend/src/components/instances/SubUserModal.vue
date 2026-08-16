@@ -344,32 +344,6 @@ async function submit() {
   border-top: 1px solid var(--divider-stroke);
 }
 
-.btn {
-  padding: var(--spacer-2) var(--spacer-4);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-1);
-}
-
-.btn-primary { background: var(--accent-base); color: white; }
-.btn-primary:hover { background: var(--accent-hover); }
-.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--divider-stroke); }
-.btn-ghost:hover { background: var(--subtle-secondary); }
-
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 .modal-fade-enter-active, .modal-fade-leave-active {
   transition: opacity var(--fast-duration);
 }

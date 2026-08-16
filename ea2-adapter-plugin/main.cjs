@@ -76,8 +76,24 @@ module.exports = defineMainPlugin({
     var credential = config.credential || '';
     var deviceId = config.deviceId || '';
 
+    /**
+     * 判断是否可以开始轮询：
+     * - 有服务器地址
+     * - 有注册码（新设备）或已有设备凭证（已注册设备）
+     */
+    function canStartPolling() {
+      if (!serverUrl) return false;
+      if (enrollmentCode) return true;
+      if (deviceId && credential) return true;
+      return false;
+    }
+
     // 监听配置变更
     var settingsDisposer = ctx.api.settings.onChanged(function (newSettings) {
+      var prevServerUrl = serverUrl;
+      var prevEnrollmentCode = enrollmentCode;
+      var prevDeviceId = deviceId;
+      var prevCredential = credential;
       config = newSettings;
       serverUrl = newSettings.serverUrl || '';
       instanceUid = newSettings.instanceUid || '';
@@ -85,8 +101,12 @@ module.exports = defineMainPlugin({
       credential = newSettings.credential || '';
       deviceId = newSettings.deviceId || '';
       log.info('[CSES Cloud] 设置已更新');
-      stopPolling();
-      if (serverUrl && enrollmentCode) startPolling();
+      // 仅在核心设置变更时重启轮询，避免 connectionStatus 更新导致无限循环
+      if (serverUrl !== prevServerUrl || enrollmentCode !== prevEnrollmentCode
+          || deviceId !== prevDeviceId || credential !== prevCredential) {
+        stopPolling();
+        if (canStartPolling()) startPolling();
+      }
     });
 
     // ===== 通用网络请求 =====
@@ -155,14 +175,13 @@ module.exports = defineMainPlugin({
 
     // ===== 设备注册（通过通用控制 API v1） =====
     async function registerDevice() {
-      if (!enrollmentCode) {
-        log.warn('[CSES Cloud] 未配置注册码，跳过设备注册');
-        return;
-      }
-
-      // 如果已有凭证，尝试直接轮询（已注册过）
+      // 如果已有设备凭证，跳过注册，直接使用现有凭证轮询
       if (deviceId && credential) {
         log.info('[CSES Cloud] 已有设备凭证，跳过注册: ' + deviceId);
+        return;
+      }
+      if (!enrollmentCode) {
+        log.warn('[CSES Cloud] 未配置注册码，跳过设备注册');
         return;
       }
 
@@ -278,6 +297,12 @@ module.exports = defineMainPlugin({
       if (artifact.sha256) {
         log.info('[CSES Cloud] 考试配置 SHA-256: ' + artifact.sha256);
       }
+      // 启动考试播放器
+      log.info('[CSES Cloud] 正在打开考试页面...');
+      var session = await ctx.api.player.startFromConfig(examConfig);
+      log.info('[CSES Cloud] 考试已打开, session: ' + session.id);
+      // 聚焦考试窗口
+      await session.focus().catch(function () {});
     }
 
     async function handlePlayback(payload) {
@@ -322,15 +347,15 @@ module.exports = defineMainPlugin({
 
       registerDevice().then(function () {
         log.info('[CSES Cloud] 设备注册成功，开始轮询命令');
-        // 更新状态到设置
         ctx.api.settings.patch({ connectionStatus: 'connected' }).catch(function () {});
+        // 注册成功后启动定时轮询
+        pollTimer = setInterval(pollCommands, POLL_INTERVAL_MS);
+        heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
       }).catch(function (e) {
         log.error('[CSES Cloud] 设备注册失败: ' + e.message);
         ctx.api.settings.patch({ connectionStatus: 'error: ' + e.message }).catch(function () {});
+        // 注册失败，不启动轮询
       });
-
-      pollTimer = setInterval(pollCommands, POLL_INTERVAL_MS);
-      heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
     }
 
     function stopPolling() {
@@ -339,7 +364,7 @@ module.exports = defineMainPlugin({
     }
 
     // 自动启动
-    if (serverUrl && enrollmentCode) {
+    if (canStartPolling()) {
       startPolling();
     } else {
       log.info('[CSES Cloud] 请在 EA2 设置中配置服务器地址和连接码');

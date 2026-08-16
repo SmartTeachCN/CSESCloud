@@ -2,7 +2,7 @@
   <div class="instance-editor">
     <header class="editor-top-bar">
       <div class="top-bar-left">
-        <button class="back-btn" @click="goBack" title="返回控制台">
+        <button class="back-btn" @click="goBack" title="返回控制台" style="width:auto" >
           <Icon icon="ri-arrow-left-s-line" :size="18" />
           <span class="back-text">返回控制台</span>
         </button>
@@ -24,9 +24,15 @@
 
     <RibbonToolbar
       :editor-info="editorInfo"
-      :manifest="ribbonManifest"
+      :manifest="effectiveRibbonManifest"
       :selected-tool="activeRibbonTool"
       :saving="saving"
+      :is-instance="true"
+      :can-undo="true"
+      :can-redo="true"
+      :can-save="true"
+      :can-auto-save="true"
+      :right-actions="instanceRightActions"
       @save="saveAll"
       @undo="handleUndo"
       @redo="handleRedo"
@@ -45,10 +51,6 @@
               <span>返回考试列表</span>
             </button>
             <span class="exam-editor-title">{{ examEditorFile?.name || '考试档案' }}</span>
-            <button class="exam-editor-save" @click="triggerExamPluginSave" :disabled="!canWrite || saving">
-              <Icon :icon="saving ? 'ri-loader-4-line' : 'ri-save-line'" :size="14" :class="{ spin: saving }" />
-              <span>保存</span>
-            </button>
           </div>
           <div class="exam-editor-body">
             <PluginEditorFrame
@@ -60,6 +62,7 @@
               @save="onExamPluginSave"
               @ready="() => {}"
               @notify="(msg: string) => console.log('[exam-editor]', msg)"
+              @plugin-request="onPluginFrameRequest"
             />
             <div v-else class="exam-editor-fallback">
               <textarea
@@ -140,7 +143,7 @@
 
       <div class="split-area" :class="{ collapsed: rightPanelCollapsed }" :style="rightPanelCollapsed ? {} : { width: rightPanelWidth + '%' }">
         <button class="panel-collapse-btn" @click="rightPanelCollapsed = !rightPanelCollapsed" :title="rightPanelCollapsed ? '展开面板' : '收起面板'">
-          <Icon :icon="rightPanelCollapsed ? 'ri-layout-left-line' : 'ri-layout-right-line'" :size="14" />
+          <Icon :icon="rightPanelCollapsed ? 'ri-menu-fold-line' : 'ri-menu-unfold-line'" :size="14" />
         </button>
         <template v-if="!rightPanelCollapsed">
           <div class="split-tabs">
@@ -222,12 +225,14 @@
                 </div>
                 <PluginEditorFrame
                   v-if="selectedFilePlugin"
+                  ref="filePluginFrame"
                   :key="'plugin-' + selectedFile.id"
                   :plugin="selectedFilePlugin"
                   :file-info="{ name: selectedFile.name, content: selectedFile.content || '', path: selectedFile.directory + selectedFile.name }"
                   @save="onPluginFileSave"
                   @ready="onPluginFileReady"
                   @notify="(msg: string) => console.log('[file-editor]', msg)"
+                  @plugin-request="onPluginFrameRequest"
                 />
                 <textarea v-else class="fpe-textarea" :value="selectedFile.content || ''" @input="onFileContentChange" spellcheck="false"></textarea>
               </div>
@@ -258,6 +263,18 @@
     </footer>
 
     <SubUserModal :visible="subModalVisible" :user="user" :instance="instance" @close="subModalVisible = false" @saved="onSubModalSaved" />
+
+    <ShareDialog
+      :visible="showShareDialog"
+      resource-type="instance"
+      :resource-id="instanceId"
+      :resource-name="instance?.name || ''"
+      resource-icon="ri-cloud-line"
+      resource-label="实例"
+      @close="showShareDialog = false"
+      @created="loadInstance"
+      @updated="loadInstance"
+    />
 
     <Teleport to="body">
       <div v-if="showNewFileDialog" class="modal-overlay" @click.self="showNewFileDialog = false">
@@ -329,6 +346,7 @@ import FindReplacePanel from '../../components/editor/panels/FindReplacePanel.vu
 import InstancePropertiesPanel from '../../components/editor/panels/InstancePropertiesPanel.vue';
 import StatusBarExtensions from '../../components/editor/panels/StatusBarExtensions.vue';
 import SubUserModal from '../../components/instances/SubUserModal.vue';
+import ShareDialog from '../../components/editor/panels/ShareDialog.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -364,6 +382,7 @@ function onAiApplyEdit(payload: { content: string; replaceAll?: boolean }) {
 
 const isInstanceSub = computed(() => user.value?.type === 'instance_sub' || user.value?.is_instance_sub);
 const subModalVisible = ref(false);
+const showShareDialog = ref(false);
 
 // ===== 文件树 =====
 const treeLoading = ref(false);
@@ -388,6 +407,7 @@ const examEditorMode = ref(false);
 const examEditorFile = ref<any>(null);
 const examEditorPlugin = ref<any>(null);
 const examPluginFrame = ref<any>(null);
+const filePluginFrame = ref<any>(null);
 
 // ===== 编辑器 =====
 const editorFrame = ref<HTMLIFrameElement | null>(null);
@@ -435,6 +455,33 @@ const activeFields = computed(() => { const col = collections.value.find(c => c.
 
 const ribbonManifest = ref<any[] | undefined>(undefined);
 const activeRibbonTool = ref('');
+
+// 考试编辑器 Ribbon 组（考试专用操作）
+const examRibbonGroups = [
+  {
+    label: '考试操作',
+    tools: [
+      { id: 'exam-deploy', label: '部署', icon: 'ri-send-plane-line', command: 'deploy' },
+      { id: 'exam-proctor', label: '监考', icon: 'ri-eye-line', command: 'proctor' },
+      { id: 'exam-preview', label: '预览', icon: 'ri-play-circle-line', command: 'preview' },
+    ]
+  },
+  {
+    label: '考试管理',
+    tools: [
+      { id: 'exam-sessions', label: '场次', icon: 'ri-calendar-check-line', command: 'sessions' },
+      { id: 'exam-students', label: '考生', icon: 'ri-user-star-line', command: 'students' },
+      { id: 'exam-grading', label: '阅卷', icon: 'ri-check-double-line', command: 'grading' },
+    ]
+  },
+];
+
+// 合并 Ribbon：实例 Ribbon 在前，考试编辑器 Ribbon 在后
+const effectiveRibbonManifest = computed(() => {
+  if (!examEditorMode.value) return ribbonManifest.value;
+  const instanceRibbon = ribbonManifest.value || [];
+  return [...instanceRibbon, ...examRibbonGroups];
+});
 
 // ===== 右侧面板 =====
 interface PanelDef { id: string; label: string; icon: string; closable: boolean; }
@@ -503,6 +550,15 @@ const editorInfo = computed(() => ({
   title: instance.value?.name || '加载中...', type: instance.value?.app_name || '实例配置',
   icon: iconName.value, lastUpdated: instance.value?.updated_at || '', lastEditor: instance.value?.owner_name || '', editButtonLabel: '编辑属性',
 }));
+
+// 实例右侧操作区按钮（始终启用）
+const instanceRightActions = computed(() => [
+  { id: 'share', label: '分享', icon: 'ri-share-forward-line', enabled: true },
+  { id: 'history', label: '操作记录', icon: 'ri-history-line', enabled: true },
+  { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', enabled: true },
+  { id: 'import', label: '导入', icon: 'ri-download-line', enabled: true },
+  { id: 'export', label: '导出', icon: 'ri-upload-2-line', enabled: true },
+]);
 
 // ===== 加载实例 =====
 async function loadInstance() {
@@ -649,6 +705,11 @@ window.addEventListener('message', async (e) => {
 
 function onRibbonTool(tool: any) {
   if (tool.type === 'select') activeRibbonTool.value = tool.id;
+  // 考试编辑器 Ribbon 工具 → 转发到 exam iframe
+  if (examEditorMode.value && tool.command && examButtonCommands.includes(tool.command)) {
+    triggerExamPluginCommand(tool.command);
+    return;
+  }
   if (iframeReady.value && editorFrame.value) {
     editorFrame.value.contentWindow?.postMessage({ __ceseCommand: tool.command || tool.id }, '*');
   }
@@ -657,6 +718,7 @@ function onRibbonTool(tool: any) {
   else if (tool.command === 'version') openPanel('history');
   else if (tool.command === 'fullscreen') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }
   else if (tool.command === 'refresh') loadInstance();
+  else if (tool.command === 'share') showShareDialog.value = true;
 }
 function handleUndo() { if (iframeReady.value && editorFrame.value) editorFrame.value.contentWindow?.postMessage({ __ceseCommand: 'undo' }, '*'); }
 function handleRedo() { if (iframeReady.value && editorFrame.value) editorFrame.value.contentWindow?.postMessage({ __ceseCommand: 'redo' }, '*'); }
@@ -704,9 +766,26 @@ function closeExamEditor() {
 }
 
 function triggerExamPluginSave() {
-  if (!examPluginFrame.value) return;
-  examPluginFrame.value.contentWindow?.postMessage({ __ceseCommand: 'save' }, '*');
+  // 通过 PluginEditorFrame 暴露的 iframe 元素发送保存命令
+  const frame = examPluginFrame.value;
+  if (!frame) return;
+  const iframe = frame.pluginFrame;
+  if (iframe) {
+    iframe.contentWindow?.postMessage({ __ceseCommand: 'save' }, '*');
+  }
 }
+
+function triggerExamPluginCommand(command: string) {
+  const frame = examPluginFrame.value;
+  if (!frame) return;
+  const iframe = frame.pluginFrame;
+  if (iframe) {
+    iframe.contentWindow?.postMessage({ __ceseCommand: command }, '*');
+  }
+}
+
+// 考试 Ribbon 按钮命令列表
+const examButtonCommands = ['deploy', 'proctor', 'preview', 'sessions', 'students', 'grading'];
 
 async function listEa2Files() {
   await loadFileTree(currentDir.value);
@@ -761,6 +840,31 @@ async function callControlApi(action: string, payload: any = {}) {
   return json.data ?? json;
 }
 
+/**
+ * 处理 PluginEditorFrame 转发的自定义请求（如 controlApi）
+ * 由父组件异步处理并通过 postMessage 返回结果
+ */
+async function onPluginFrameRequest(requestId: number, action: string, payload: any) {
+  try {
+    let result: any;
+    if (action === 'controlApi') {
+      result = await callControlApi(payload.action, payload.payload ?? {});
+    } else {
+      throw new Error('未知 action: ' + action);
+    }
+    // 响应到任意活跃的 PluginEditorFrame
+    const frame = examPluginFrame.value?.pluginFrame || filePluginFrame.value?.pluginFrame;
+    if (frame) {
+      frame.contentWindow?.postMessage({ __csesPluginResponse: requestId, result }, '*');
+    }
+  } catch (err: any) {
+    const frame = examPluginFrame.value?.pluginFrame || filePluginFrame.value?.pluginFrame;
+    if (frame) {
+      frame.contentWindow?.postMessage({ __csesPluginResponse: requestId, error: err.message }, '*');
+    }
+  }
+}
+
 function onExamPluginSave(content: string) {
   if (!examEditorFile.value || !canWrite.value) return;
   saving.value = true;
@@ -786,6 +890,7 @@ async function saveAll() {
   saving.value = true;
   try {
     if (selectedFile.value && !selectedFilePlugin.value) await saveCurrentFile();
+    if (examEditorMode.value) triggerExamPluginSave();
     if (iframeReady.value && editorFrame.value) editorFrame.value.contentWindow?.postMessage({ __ceseCommand: 'save' }, '*');
   } finally { saving.value = false; }
 }
@@ -843,7 +948,6 @@ onMounted(async () => {
 
 <style scoped>
 .instance-editor { display: flex; flex-direction: column; height: 100vh; background: var(--app-bg); overflow: hidden; }
-.editor-top-bar { display: flex; align-items: center; justify-content: space-between; height: 44px; background: var(--layer-default); border-bottom: 1px solid var(--divider-stroke); padding: 0 var(--spacer-3); flex-shrink: 0; gap: var(--spacer-3); }
 .top-bar-left { display: flex; align-items: center; gap: var(--spacer-2); flex-shrink: 0; min-width: 0; }
 .back-btn { height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; background: transparent; border: none; border-radius: var(--radius-sm); color: var(--text-secondary); cursor: pointer; padding: 0 var(--spacer-2); font-size: var(--font-size-sm); }
 .back-btn:hover { background: var(--subtle-secondary); color: var(--text-primary); }
@@ -860,8 +964,6 @@ onMounted(async () => {
 .shared-badge { background: var(--accent-bg); color: var(--accent-base); }
 .sub-user-badge { background: var(--subtle-pressed); color: var(--text-primary); }
 .top-bar-right { display: flex; align-items: center; gap: var(--spacer-2); flex-shrink: 0; }
-.editor-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-.editor-area { flex: 1; display: flex; min-width: 0; background: var(--app-bg); position: relative; }
 .editor-iframe { width: 100%; height: 100%; border: none; background: var(--app-bg); }
 
 /* 文件面板 */
@@ -912,40 +1014,15 @@ onMounted(async () => {
 .row-btn.danger:hover { color: var(--status-error); }
 .row-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.editor-splitter { width: 4px; background: transparent; cursor: col-resize; flex-shrink: 0; position: relative; z-index: 5; }
-.editor-splitter:hover { background: var(--accent-base); }
-.split-area { display: flex; flex-direction: column; min-width: 200px; max-width: 50%; background: var(--layer-default); border-left: 1px solid var(--divider-stroke); flex-shrink: 0; position: relative; }
-.split-area.collapsed { min-width: 32px; max-width: 32px; }
-.panel-collapse-btn { position: absolute; left: -16px; top: 50%; transform: translateY(-50%); width: 16px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--layer-default); border: 1px solid var(--divider-stroke); border-right: none; border-radius: var(--radius-sm) 0 0 var(--radius-sm); color: var(--text-tertiary); cursor: pointer; z-index: 10; }
-.split-area.collapsed .panel-collapse-btn { left: auto; right: 0; border-right: 1px solid var(--divider-stroke); border-left: none; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
-.panel-collapse-btn:hover { color: var(--text-primary); background: var(--subtle-secondary); }
-.split-tabs { display: flex; border-bottom: 1px solid var(--divider-stroke); background: var(--subtle-secondary); flex-shrink: 0; position: relative; }
 .split-tabs-scroll { display: flex; overflow-x: auto; flex: 1; scrollbar-width: none; }
 .split-tabs-scroll::-webkit-scrollbar { display: none; }
-.split-tab { display: inline-flex; align-items: center; gap: 4px; padding: var(--spacer-2) var(--spacer-3); background: transparent; border: none; border-bottom: 2px solid transparent; font-size: var(--font-size-xs); color: var(--text-tertiary); cursor: pointer; white-space: nowrap; flex-shrink: 0; }
-.split-tab:hover { color: var(--text-primary); }
-.split-tab.active { color: var(--text-primary); border-bottom-color: var(--accent-base); font-weight: 500; }
 .split-tab.add-tab { padding: var(--spacer-2) var(--spacer-2); border-left: 1px solid var(--divider-stroke); }
 .tab-close-btn { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; border-radius: 2px; margin-left: 2px; }
 .tab-close-btn:hover { background: var(--subtle-pressed); color: var(--status-error); }
-.panel-picker { position: absolute; top: 100%; right: 0; min-width: 160px; background: var(--flyout-bg); border: 1px solid var(--flyout-border); border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(0,0,0,0.15); z-index: 100; padding: var(--spacer-1); }
-.panel-picker-title { font-size: var(--font-size-xs); font-weight: 600; color: var(--text-tertiary); padding: var(--spacer-1) var(--spacer-2); }
-.panel-picker-item { display: flex; align-items: center; gap: var(--spacer-2); width: 100%; padding: var(--spacer-1) var(--spacer-2); border: none; background: transparent; color: var(--text-primary); font-size: var(--font-size-sm); cursor: pointer; border-radius: var(--radius-sm); }
-.panel-picker-item:hover { background: var(--subtle-secondary); }
-.panel-picker-item.disabled { opacity: 0.4; cursor: not-allowed; }
 .check-icon { margin-left: auto; color: var(--status-success); }
-.split-content { flex: 1; overflow: auto; display: flex; flex-direction: column; }
 .split-content > * { flex: 1; }
 
-.context-menu-overlay { position: fixed; inset: 0; z-index: 1000; }
 .context-menu-card { position: fixed; min-width: 180px; background: var(--flyout-bg); border: 1px solid var(--flyout-border); border-radius: var(--radius-md); box-shadow: 0 8px 32px rgba(0,0,0,0.18); padding: var(--spacer-1); z-index: 1001; }
-.ctx-item { display: flex; align-items: center; gap: var(--spacer-2); width: 100%; padding: var(--spacer-2) var(--spacer-3); border: none; background: transparent; color: var(--text-primary); font-size: var(--font-size-sm); cursor: pointer; border-radius: var(--radius-sm); text-align: left; }
-.ctx-item:hover { background: var(--subtle-secondary); }
-.ctx-divider { height: 1px; background: var(--divider-stroke); margin: var(--spacer-1) 0; }
-
-.editor-status-bar { display: flex; justify-content: space-between; align-items: center; height: 24px; background: var(--subtle-secondary); border-top: 1px solid var(--divider-stroke); padding: 0 var(--spacer-3); font-size: 10px; color: var(--text-tertiary); flex-shrink: 0; }
-.status-left,.status-right { display: flex; gap: var(--spacer-3); align-items: center; }
-.status-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .status-item.running { color: var(--status-success); }
 .status-item.stopped { color: var(--text-tertiary); }
 .status-item.error { color: var(--status-error); }
@@ -998,26 +1075,6 @@ onMounted(async () => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.exam-editor-save {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 12px;
-  background: var(--accent-base);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.exam-editor-save:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-.exam-editor-save:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 .exam-editor-body {
   flex: 1;

@@ -30,6 +30,7 @@ const emit = defineEmits<{
   (e: 'ready'): void;
   (e: 'save', content: string): void;
   (e: 'notify', msg: string): void;
+  (e: 'pluginRequest', requestId: number, action: string, payload: any): void;
 }>();
 
 const pluginFrame = ref<HTMLIFrameElement | null>(null);
@@ -115,7 +116,8 @@ window.addEventListener('message', (e) => {
         emit('notify', payload?.msg || '');
         pluginFrame.value?.contentWindow?.postMessage({ __csesPluginResponse: id, result: { ok: true } }, '*');
       } else {
-        throw new Error('未知 action: ' + action);
+        // 转发未知 action 到父组件处理（如 controlApi 等），由父组件异步响应
+        emit('pluginRequest', id, action, payload);
       }
     } catch (err: any) {
       pluginFrame.value?.contentWindow?.postMessage({ __csesPluginResponse: id, error: err.message }, '*');
@@ -128,7 +130,7 @@ window.addEventListener('message', (e) => {
   }
 });
 
-defineExpose({ iframeReady });
+defineExpose({ iframeReady, pluginFrame });
 </script>
 
 <style scoped>

@@ -126,33 +126,19 @@
       <!-- 输入区 -->
       <footer class="chat-input-area">
         <div class="input-wrapper">
-          <!-- 已选资源标签 + 文件标签 -->
-          <div v-if="attachedTags.length > 0" class="attached-tags">
-            <div
-              v-for="(tag, idx) in attachedTags"
-              :key="idx"
-              class="attach-tag"
-              :class="tag.type"
-            >
-              <Icon :icon="tag.icon" :size="14" />
-              <span class="tag-name">{{ tag.name }}</span>
-              <button class="tag-close" @click="removeTag(idx)" title="移除">
-                <Icon icon="ri-close-line" :size="12" />
-              </button>
-            </div>
-          </div>
-
-          <textarea
-            v-model="input"
-            ref="inputEl"
-            class="chat-input"
-            placeholder="输入问题（Enter 发送，Shift+Enter 换行）"
-            @keydown.enter.exact.prevent="sendMessage"
-            :disabled="sending"
-          ></textarea>
+          <!-- 富文本编辑区：资源卡片 + 文本内嵌 -->
+          <div
+            ref="editorEl"
+            class="chat-editor"
+            contenteditable="true"
+            :data-placeholder="'输入问题（Enter 发送，Shift+Enter 换行）'"
+            @keydown.enter.exact.prevent="onEditorEnter"
+            @input="onEditorInput"
+            @paste="onEditorPaste"
+          ></div>
 
           <div class="input-actions">
-            <!-- 左侧：资源选择 + 按钮 -->
+            <!-- 左侧：资源选择 + 文件上传 -->
             <div class="input-actions-left">
               <button
                 class="icon-btn"
@@ -170,13 +156,18 @@
                 multiple
               />
             </div>
+            
+            <!-- 中间：空白填充 -->
+            <div class="input-actions-middle"></div>
 
             <!-- 右侧：模型选择 + 语音 + 发送 -->
             <div class="input-actions-right">
-              <select v-model="selectedModel" class="model-select">
-                <option value="default">默认规则引擎</option>
-                <option v-for="m in customModels" :key="m.id" :value="m.name">{{ m.name }}</option>
-              </select>
+              <CustomSelect
+                v-model="selectedModel"
+                :options="modelOptions"
+                class="model-select-custom"
+                height="32px"
+              />
 
               <button
                 class="icon-btn mic-btn"
@@ -189,7 +180,7 @@
 
               <button
                 class="send-btn"
-                :disabled="sending || !input.trim()"
+                :disabled="sending || !editorText.trim()"
                 @click="sendMessage"
               >
                 <Icon :icon="sending ? 'ri-loader-4-line' : 'ri-send-plane-line'" :size="16" :class="{ spin: sending }" />
@@ -353,6 +344,7 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { marked } from 'marked';
+import CustomSelect from '../../components/CustomSelect.vue';
 import { aiApi, instancesApi, schoolsApi } from '../../api';
 import { useAuth } from '../../composables/useAuth';
 
@@ -384,11 +376,10 @@ const currentSession = computed(() => {
   return sessions.value.find(s => s.id === currentSessionId.value);
 });
 const messages = ref<any[]>([]);
-const input = ref('');
 const sending = ref(false);
 const streamingActive = ref(false);
 const messagesEl = ref<HTMLElement | null>(null);
-const inputEl = ref<HTMLTextAreaElement | null>(null);
+const editorEl = ref<HTMLDivElement | null>(null);
 
 // ===== 控制栏选项 =====
 const selectedModel = ref('default');
@@ -397,6 +388,9 @@ const resourcePopoverEl = ref<HTMLElement | null>(null);
 const currentScope = ref('global');
 const currentScopeRef = ref<number | null>(null);
 const currentScopeName = ref('');
+
+// 编辑器文本（用于响应式禁用发送按钮）
+const editorText = ref('');
 
 // ===== 附件标签（资源 + 文件）=====
 interface AttachedTag {
@@ -423,7 +417,15 @@ const showModelSettings = ref(false);
 const showModelForm = ref(false);
 const editingModelId = ref<number | null>(null);
 const customModels = ref<any[]>([]);
-// 仅用户自有模型（不含系统模型），用于模型管理弹窗
+
+const modelOptions = computed(() => {
+  const opts = [{ value: 'default', label: '默认规则引擎', icon: 'ri-brain-line' }];
+  for (const m of customModels.value) {
+    opts.push({ value: m.name, label: `${m.name} (${m.provider})`, icon: 'ri-cpu-line' });
+  }
+  return opts;
+});
+
 const userModels = computed(() => customModels.value.filter(m => m.owner_key !== 'system'));
 const modelForm = ref({
   name: '',
@@ -534,13 +536,13 @@ async function switchSession(id: number) {
 function createNewChat() {
   currentSessionId.value = null;
   messages.value = [];
-  input.value = '';
   attachedTags.value = [];
   currentScope.value = 'global';
   currentScopeRef.value = null;
   currentScopeName.value = '';
-  if (inputEl.value) {
-    inputEl.value.focus();
+  clearEditor();
+  if (editorEl.value) {
+    editorEl.value.focus();
   }
 }
 
@@ -569,7 +571,7 @@ function scrollToBottom() {
 
 // ===== 快速建议点击 =====
 function sendSuggestion(text: string) {
-  input.value = text;
+  setEditorText(text);
   sendMessage();
 }
 
@@ -587,7 +589,11 @@ function toggleResource(scope: string, refId: number, name: string) {
       refId
     });
   }
-  // 更新当前 scope
+  updateScopeFromTags();
+  renderResourceChips();
+}
+
+function updateScopeFromTags() {
   if (attachedTags.value.length === 1 && attachedTags.value[0].type === 'resource') {
     currentScope.value = attachedTags.value[0].scope!;
     currentScopeRef.value = attachedTags.value[0].refId!;
@@ -599,13 +605,8 @@ function toggleResource(scope: string, refId: number, name: string) {
 
 function removeTag(idx: number) {
   attachedTags.value.splice(idx, 1);
-  if (attachedTags.value.length === 1 && attachedTags.value[0].type === 'resource') {
-    currentScope.value = attachedTags.value[0].scope!;
-    currentScopeRef.value = attachedTags.value[0].refId!;
-  } else if (attachedTags.value.length === 0) {
-    currentScope.value = 'global';
-    currentScopeRef.value = null;
-  }
+  updateScopeFromTags();
+  renderResourceChips();
 }
 
 function toggleResourceSelector() {
@@ -642,9 +643,8 @@ function handleFileUpload(event: Event) {
   }
   // 重置 input 以便可以重复选择同一文件
   target.value = '';
+  renderResourceChips();
 }
-
-// ===== 清空当前对话 =====
 function clearCurrentChat() {
   if (messages.value.length === 0) return;
   if (!confirm('确认清空当前对话所有消息？')) return;
@@ -671,10 +671,11 @@ function toggleVoiceInput() {
   recognition.interimResults = false;
   recognition.onresult = (event: any) => {
     const transcript = event.results[0][0].transcript;
-    input.value += (input.value ? '\n' : '') + transcript;
+    const current = getEditorText();
+    setEditorText(current + (current ? '\n' : '') + transcript);
     isVoiceRecording.value = false;
-    if (inputEl.value) {
-      inputEl.value.focus();
+    if (editorEl.value) {
+      editorEl.value.focus();
     }
   };
   recognition.onerror = () => {
@@ -687,9 +688,149 @@ function toggleVoiceInput() {
   isVoiceRecording.value = true;
 }
 
-// ===== 发送消息 =====
+// ===== 富文本编辑器辅助函数 =====
+function getEditorText(): string {
+  if (!editorEl.value) return '';
+  // 提取纯文本，忽略资源卡片
+  const el = editorEl.value;
+  let text = '';
+  el.childNodes.forEach(node => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += node.textContent || '';
+    } else if (node instanceof HTMLElement && node.classList.contains('resource-chip')) {
+      // 跳过资源卡片
+    } else if (node instanceof HTMLElement && node.tagName === 'BR') {
+      text += '\n';
+    } else if (node instanceof HTMLElement && node.tagName === 'DIV') {
+      text += (node.textContent || '') + '\n';
+    } else {
+      text += node.textContent || '';
+    }
+  });
+  return text.trim();
+}
+
+function setEditorText(text: string) {
+  if (!editorEl.value) return;
+  editorEl.value.textContent = text;
+  renderResourceChips();
+}
+
+function clearEditor() {
+  if (!editorEl.value) return;
+  editorEl.value.innerHTML = '';
+  editorText.value = '';
+  renderResourceChips();
+}
+
+function onEditorEnter(e: KeyboardEvent) {
+  if (e.shiftKey) {
+    // Shift+Enter 换行，由浏览器默认行为处理
+    return;
+  }
+  // Enter 发送
+  e.preventDefault();
+  sendMessage();
+}
+
+function onEditorInput() {
+  editorText.value = getEditorText();
+}
+
+function onEditorPaste(e: ClipboardEvent) {
+  e.preventDefault();
+  const text = e.clipboardData?.getData('text/plain') || '';
+  if (text) {
+    // 插入纯文本
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(text));
+      range.collapse(false);
+    }
+  }
+}
+
+function renderResourceChips() {
+  if (!editorEl.value) return;
+  const el = editorEl.value;
+  // 保存光标位置
+  const sel = window.getSelection();
+  let cursorOffset = 0;
+  if (sel && sel.rangeCount > 0 && el.contains(sel.anchorNode)) {
+    const range = sel.getRangeAt(0);
+    const preRange = document.createRange();
+    preRange.selectNodeContents(el);
+    preRange.setEnd(range.endContainer, range.endOffset);
+    cursorOffset = preRange.toString().length;
+  }
+
+  // 移除所有旧卡片
+  el.querySelectorAll('.resource-chip').forEach(c => c.remove());
+
+  // 在内容开头插入资源卡片
+  if (attachedTags.value.length > 0) {
+    const frag = document.createDocumentFragment();
+    attachedTags.value.forEach((tag, idx) => {
+      const chip = document.createElement('span');
+      chip.className = `resource-chip ${tag.type}`;
+      chip.contentEditable = 'false';
+      chip.setAttribute('data-idx', String(idx));
+      chip.innerHTML = `<span class="chip-icon"><svg>...</svg></span><span class="chip-name">${escapeHtml(tag.name)}</span><span class="chip-remove" data-idx="${idx}">&times;</span>`;
+      // 用实际 icon 文本替代 SVG 占位符
+      const iconSpan = chip.querySelector('.chip-icon');
+      if (iconSpan) {
+        iconSpan.textContent = tag.icon === 'ri-database-2-line' ? '📦' : tag.icon === 'ri-school-line' ? '🏫' : '📎';
+      }
+      frag.appendChild(chip);
+      // 添加空格分隔
+      frag.appendChild(document.createTextNode(' '));
+    });
+    el.insertBefore(frag, el.firstChild);
+  }
+
+  // 恢复光标位置
+  if (cursorOffset > 0) {
+    try {
+      const newRange = document.createRange();
+      let offset = 0;
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+      let node = walker.nextNode();
+      while (node && offset + (node.textContent?.length || 0) < cursorOffset) {
+        offset += node.textContent?.length || 0;
+        node = walker.nextNode();
+      }
+      if (node) {
+        newRange.setStart(node, Math.min(cursorOffset - offset, node.textContent?.length || 0));
+        newRange.collapse(true);
+        sel?.removeAllRanges();
+        sel?.addRange(newRange);
+      }
+    } catch {
+      // 如果恢复失败，将光标放到末尾
+      el.focus();
+    }
+  }
+
+  // 绑定删除事件
+  el.querySelectorAll('.chip-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const idx = parseInt((btn as HTMLElement).getAttribute('data-idx') || '0');
+      removeTag(idx);
+    });
+  });
+}
+
+function escapeHtml(text: string): string {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
 async function sendMessage() {
-  const content = input.value.trim();
+  const content = getEditorText().trim();
   if (!content || sending.value) return;
 
   sending.value = true;
@@ -700,7 +841,7 @@ async function sendMessage() {
     role: 'user',
     content
   });
-  input.value = '';
+  clearEditor();
   scrollToBottom();
 
   // 非默认模型使用流式输出
@@ -957,20 +1098,15 @@ onMounted(async () => {
   if (sessionId) {
     switchSession(Number(sessionId));
   }
-  if (inputEl.value) {
-    inputEl.value.focus();
+  if (editorEl.value) {
+    editorEl.value.focus();
   }
 });
 
-// 自动调整textarea高度
-watch(input, () => {
-  nextTick(() => {
-    if (inputEl.value) {
-      inputEl.value.style.height = 'auto';
-      inputEl.value.style.height = Math.min(inputEl.value.scrollHeight, 200) + 'px';
-    }
-  });
-});
+// 监听 attachedTags 变化，自动渲染资源卡片
+watch(attachedTags, () => {
+  nextTick(() => renderResourceChips());
+}, { deep: true });
 </script>
 
 <style scoped>
@@ -1491,8 +1627,15 @@ watch(input, () => {
 
 /* ===== 输入区域 ===== */
 .chat-input-area {
-  padding: var(--spacer-3) var(--spacer-4);
+  padding: var(--spacer-3) var(--spacer-4) var(--spacer-4);
   flex-shrink: 0;
+  background: linear-gradient(180deg, transparent 0%, var(--app-bg) 20%);
+}
+
+.chat-input-area > .input-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .input-wrapper {
@@ -1502,95 +1645,115 @@ watch(input, () => {
   border: 1px solid var(--ctrl-border-rest);
   border-radius: var(--radius-lg);
   overflow: hidden;
-  transition: border-color var(--fast-duration);
+  transition: border-color var(--fast-duration), box-shadow var(--fast-duration);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .input-wrapper:focus-within {
   border-color: var(--accent-base);
+  box-shadow: 0 0 0 3px rgba(0, 103, 192, 0.1);
 }
 
-/* 附件标签 */
-.attached-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 10px 14px 0 14px;
-}
-
-.attach-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border-radius: var(--radius-md);
-  font-size: 11px;
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
-.attach-tag.resource {
-  background: var(--accent-bg);
-  color: var(--accent-base);
-}
-
-.attach-tag.file {
-  background: var(--subtle-secondary);
-  color: var(--text-primary);
-}
-
-.tag-name {
-  max-width: 120px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tag-close {
-  width: 16px;
-  height: 16px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-full);
-  color: inherit;
-  cursor: pointer;
-  opacity: 0.6;
-  flex-shrink: 0;
-}
-
-.tag-close:hover {
-  opacity: 1;
-  background: rgba(0, 0, 0, 0.1);
-}
-
-.chat-input {
+/* 富文本编辑区 */
+.chat-editor {
   width: 100%;
   min-height: 56px;
   max-height: 200px;
-  padding: 12px 16px 8px;
+  padding: 14px 16px 6px;
   background: transparent;
   border: none;
   outline: none;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-base);
   color: var(--text-primary);
   font-family: inherit;
-  line-height: 1.5;
-  resize: none;
-  box-sizing: border-box;
+  line-height: 1.6;
+  overflow-y: auto;
+  word-break: break-word;
+  white-space: pre-wrap;
 }
 
-.chat-input:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+.chat-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+/* 资源卡片（内嵌在编辑区中） */
+.resource-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  margin: 0 2px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  vertical-align: middle;
+  user-select: none;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.resource-chip.resource {
+  background: rgba(0, 103, 192, 0.08);
+  color: var(--accent-base);
+  border: 1px solid rgba(0, 103, 192, 0.15);
+}
+
+.resource-chip.file {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--divider-stroke);
+}
+
+.chip-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.chip-name {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-full);
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.5;
+  transition: opacity var(--fast-duration), background var(--fast-duration);
+  flex-shrink: 0;
+}
+
+.chip-remove:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+/* 旧版附件标签（保留兼容） */
+.attached-tags {
+  display: none;
 }
 
 .input-actions {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 4px 6px 8px;
+  padding: 0 8px 8px 12px;
 }
 
 .input-actions-left {
@@ -1598,30 +1761,24 @@ watch(input, () => {
   align-items: center;
 }
 
+.input-actions-middle {
+  flex: 1;
+}
+
 .input-actions-right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
-.icon-btn {
-  width: 34px;
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-md);
-  color: var(--text-tertiary);
-  cursor: pointer;
-  transition: all var(--fast-duration);
-  flex-shrink: 0;
+.model-select-custom {
+  min-width: 140px;
+  max-width: 200px;
 }
 
-.icon-btn:hover {
-  background: var(--subtle-secondary);
-  color: var(--text-primary);
+.model-select-custom .select-trigger {
+  font-size: 12px;
+  height: 32px;
 }
 
 .icon-btn.active {
@@ -1644,7 +1801,7 @@ watch(input, () => {
   display: none;
 }
 
-/* 模型选择下拉 */
+/* 模型选择下拉（已替换为 CustomSelect，保留兼容） */
 .model-select {
   height: 32px;
   padding: 0 24px 0 10px;
@@ -1667,34 +1824,30 @@ watch(input, () => {
   border-color: var(--accent-base);
 }
 
-.model-select option {
-  background: var(--card-bg);
-  color: var(--text-primary);
-}
-
-.form-row select option {
-  background: var(--card-bg);
-  color: var(--text-primary);
-}
-
 .send-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 14px;
+  padding: 6px 16px;
+  height: 32px;
   background: var(--accent-base);
   color: white;
   border: none;
   border-radius: var(--radius-md);
   font-size: var(--font-size-xs);
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
-  transition: background var(--fast-duration);
+  transition: background var(--fast-duration), transform var(--fast-duration);
   flex-shrink: 0;
 }
 
 .send-btn:hover:not(:disabled) {
   background: var(--accent-hover);
+  transform: scale(1.02);
+}
+
+.send-btn:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .send-btn:disabled {
@@ -1702,13 +1855,7 @@ watch(input, () => {
   cursor: not-allowed;
 }
 
-.spin {
-  animation: spin 1s linear infinite;
-}
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
 
 /* ===== 资源选择浮层 ===== */
 .resource-popover-overlay {
@@ -1870,7 +2017,7 @@ watch(input, () => {
   .header-right .tool-btn span {
     display: none;
   }
-  .model-select {
+  .model-select-custom {
     max-width: 100px;
   }
 }
@@ -1993,20 +2140,7 @@ watch(input, () => {
   gap: var(--spacer-1);
 }
 
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
 
-.status-dot.enabled {
-  background: var(--status-success);
-}
-
-.status-dot.disabled {
-  background: var(--text-tertiary);
-}
 
 .model-meta {
   font-size: 11px;
@@ -2109,38 +2243,5 @@ watch(input, () => {
   margin-top: var(--spacer-2);
 }
 
-.primary-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  padding: var(--spacer-2) var(--spacer-4);
-  background: var(--accent-base);
-  color: white;
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-}
 
-.primary-btn:hover {
-  background: var(--accent-hover);
-}
-
-.secondary-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  padding: var(--spacer-2) var(--spacer-4);
-  background: var(--ctrl-fill-default);
-  color: var(--text-primary);
-  border: 1px solid var(--ctrl-border-rest);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-}
-
-.secondary-btn:hover {
-  background: var(--subtle-secondary);
-}
 </style>

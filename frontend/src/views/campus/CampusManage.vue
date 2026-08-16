@@ -143,23 +143,6 @@ const accentColors = [
   margin: 0 auto;
 }
 
-.page-header {
-  margin-bottom: var(--spacer-5);
-}
-
-.page-title {
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.page-description {
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
-  margin: var(--spacer-1) 0 0;
-}
-
 .settings-layout {
   display: grid;
   grid-template-columns: 200px 1fr;
@@ -216,13 +199,6 @@ const accentColors = [
   min-height: 400px;
 }
 
-.section-title {
-  font-size: var(--font-size-xl);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 var(--spacer-5);
-}
-
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -274,34 +250,6 @@ const accentColors = [
   margin-top: var(--spacer-5);
   padding-top: var(--spacer-4);
   border-top: 1px solid var(--divider-stroke);
-}
-
-.btn {
-  padding: var(--spacer-2) var(--spacer-4);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: background var(--fast-duration);
-}
-
-.btn-primary {
-  background: var(--accent-base);
-  color: white;
-}
-
-.btn-primary:hover {
-  background: var(--accent-hover);
-}
-
-.btn-ghost {
-  background: var(--subtle-secondary);
-  color: var(--text-secondary);
-}
-
-.btn-ghost:hover {
-  background: var(--subtle-pressed);
 }
 
 .setting-row {

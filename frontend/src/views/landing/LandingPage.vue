@@ -167,7 +167,7 @@ const features = [
 ];
 
 const solutions = [
-  { icon: 'ri-team-line', title: '班级主页', desc: '在线网页托管，展示班级风采' },
+  { icon: 'ri-folder-3-line', title: '数据空间', desc: '统一管理云文件与网页空间' },
   { icon: 'ri-tools-line', title: '教学工具', desc: '丰富的工具集助力教学活动' },
   { icon: 'ri-shield-check-line', title: '安全审计', desc: '完整的操作日志与数据导出' },
   { icon: 'ri-notification-3-line', title: '通知中心', desc: '实时推送系统通知与告警' }
@@ -260,42 +260,6 @@ function scrollTo(id: string) {
   gap: var(--spacer-3);
 }
 
-.btn-text {
-  background: transparent;
-  border: none;
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: var(--spacer-2) var(--spacer-3);
-  border-radius: var(--radius-md);
-  transition: background var(--fast-duration), color var(--fast-duration);
-}
-
-.btn-text:hover {
-  background: var(--subtle-secondary);
-  color: var(--text-primary);
-}
-
-.btn-primary {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  padding: var(--spacer-2) var(--spacer-4);
-  background: var(--accent-base);
-  color: var(--accent-text);
-  border: none;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--fast-duration);
-}
-
-.btn-primary:hover {
-  background: var(--accent-hover);
-}
-
 .hero {
   max-width: 1200px;
   margin: 0 auto;
@@ -363,45 +327,6 @@ function scrollTo(id: string) {
   .hero-actions {
     justify-content: center;
   }
-}
-
-.btn-primary-lg {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  padding: var(--spacer-3) var(--spacer-5);
-  background: var(--accent-base);
-  color: var(--accent-text);
-  border: none;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--fast-duration), transform var(--fast-duration);
-}
-
-.btn-primary-lg:hover {
-  background: var(--accent-hover);
-  transform: translateY(-1px);
-}
-
-.btn-secondary-lg {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  padding: var(--spacer-3) var(--spacer-5);
-  background: var(--card-bg);
-  color: var(--text-primary);
-  border: 1px solid var(--card-stroke);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--fast-duration);
-}
-
-.btn-secondary-lg:hover {
-  background: var(--subtle-secondary);
 }
 
 .hero-visual {

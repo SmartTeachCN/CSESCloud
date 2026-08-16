@@ -1,0 +1,483 @@
+/* ===== 编辑器通用样式 ===== */
+
+/* 编辑器顶栏 */
+.editor-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 38px;
+  background: var(--layer-default);
+  border-bottom: 1px solid var(--divider-stroke);
+  padding: 0 var(--spacer-3);
+  gap: var(--spacer-3);
+  flex-shrink: 0;
+}
+
+.editor-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  flex-shrink: 0;
+}
+
+.brand-text {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* 标签页（在 Ribbon 上方） */
+.editor-tabs-row {
+  display: flex;
+  align-items: center;
+  background: var(--ctrl-fill-default);
+  border-bottom: 1px solid var(--divider-stroke);
+  padding: 0 var(--spacer-2);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.editor-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding: var(--spacer-1) 0;
+}
+
+.editor-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  padding: var(--spacer-1) var(--spacer-3);
+  background: var(--subtle-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--fast-duration), color var(--fast-duration);
+  margin-bottom: -1px;
+  user-select: none;
+}
+
+.editor-tab:hover {
+  background: var(--subtle-pressed);
+  color: var(--text-primary);
+}
+
+.editor-tab.active {
+  background: var(--ctrl-fill-default);
+  border-color: var(--divider-stroke);
+  border-bottom-color: transparent;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.editor-tab .tab-icon {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.editor-tab.active .tab-icon {
+  color: var(--accent-base);
+}
+
+.editor-tab .tab-title {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-tab .dirty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--status-warning);
+  flex-shrink: 0;
+}
+
+.editor-tab .tab-close {
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-full);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.editor-tab .tab-close:hover {
+  background: var(--subtle-pressed);
+  color: var(--text-primary);
+}
+
+/* 编辑器主体 */
+.editor-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-area {
+  flex: 1;
+  min-width: 0;
+  background: var(--app-bg);
+  position: relative;
+}
+
+/* 编辑器分隔条 */
+.editor-splitter {
+  width: 4px;
+  background: transparent;
+  cursor: col-resize;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 5;
+}
+
+.editor-splitter:hover {
+  background: var(--accent-base);
+}
+
+/* 右侧面板 */
+.split-area {
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  max-width: 50%;
+  background: var(--layer-default);
+  border-left: 1px solid var(--divider-stroke);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.split-area.collapsed {
+  min-width: 32px;
+  max-width: 32px;
+}
+
+.split-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--divider-stroke);
+  background: var(--subtle-secondary);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.split-tabs-scroll {
+  display: flex;
+  overflow-x: auto;
+  flex: 1;
+  scrollbar-width: none;
+}
+
+.split-tabs-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.split-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--spacer-2) var(--spacer-3);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color var(--fast-duration), border-color var(--fast-duration);
+}
+
+.split-tab:hover {
+  color: var(--text-primary);
+}
+
+.split-tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent-base);
+  font-weight: 500;
+}
+
+.split-tab .tab-close-btn {
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: 2px;
+  margin-left: 2px;
+}
+
+.split-tab .tab-close-btn:hover {
+  background: var(--subtle-pressed);
+  color: var(--status-error);
+}
+
+.split-content {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 面板收起按钮 */
+.panel-collapse-btn {
+  position: absolute;
+  left: -16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 32px;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--layer-default);
+  border: 1px solid var(--divider-stroke);
+  border-right: none;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  z-index: 10;
+}
+
+.split-area.collapsed .panel-collapse-btn {
+  left: auto;
+  right: 0;
+  border-right: 1px solid var(--divider-stroke);
+  border-left: none;
+}
+
+.panel-collapse-btn:hover {
+  color: var(--text-primary);
+  background: var(--subtle-secondary);
+}
+
+/* 面板选择器 */
+.panel-picker {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  min-width: 160px;
+  background: var(--flyout-bg);
+  border: 1px solid var(--flyout-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  padding: var(--spacer-1);
+}
+
+.panel-picker-title {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  padding: var(--spacer-1) var(--spacer-2);
+}
+
+.panel-picker-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  width: 100%;
+  padding: var(--spacer-1) var(--spacer-2);
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.panel-picker-item:hover {
+  background: var(--subtle-secondary);
+}
+
+.panel-picker-item.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 面板占位 */
+.panel-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--spacer-4);
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
+.placeholder-icon {
+  font-size: 48px;
+  margin-bottom: var(--spacer-3);
+}
+
+.placeholder-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.placeholder-desc {
+  font-size: var(--font-size-xs);
+  margin-top: var(--spacer-1);
+}
+
+/* 编辑器状态栏 */
+.editor-status-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 24px;
+  background: var(--subtle-secondary);
+  border-top: 1px solid var(--divider-stroke);
+  padding: 0 var(--spacer-3);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.status-left,
+.status-right {
+  display: flex;
+  gap: var(--spacer-3);
+  align-items: center;
+}
+
+.status-item {
+  white-space: nowrap;
+}
+
+/* 文件类型标签 */
+.file-type-badge {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  padding: 2px var(--spacer-2);
+  background: var(--subtle-secondary);
+  border-radius: var(--radius-full);
+}
+
+/* 空编辑器 */
+.empty-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: var(--spacer-3);
+}
+
+.empty-text {
+  font-size: var(--font-size-sm);
+}
+
+/* 属性面板 */
+.properties-panel {
+  padding: var(--spacer-3);
+}
+
+.property-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-3);
+}
+
+.property-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-1);
+}
+
+.property-item label {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.property-item span {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+}
+
+.property-item input {
+  padding: var(--spacer-1) var(--spacer-2);
+  background: var(--subtle-secondary);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+  font-family: var(--font-family-mono);
+  outline: none;
+}
+
+/* 查找替换面板 */
+.find-panel {
+  padding: var(--spacer-3);
+}
+
+.find-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-2);
+}
+
+.find-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+}
+
+.find-row input {
+  flex: 1;
+  padding: var(--spacer-1) var(--spacer-2);
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.find-row input:focus {
+  border-color: var(--accent-base);
+}
+
+.find-btn {
+  padding: var(--spacer-1) var(--spacer-2);
+  background: var(--subtle-secondary);
+  border: 1px solid var(--ctrl-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.find-btn:hover {
+  background: var(--subtle-pressed);
+  color: var(--text-primary);
+}

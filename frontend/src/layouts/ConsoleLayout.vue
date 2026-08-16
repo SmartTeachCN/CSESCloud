@@ -254,7 +254,7 @@ const isSuperAdmin = computed(() => authUser.value?.is_super_admin || false);
 const isAdmin = computed(() => isSuperAdmin.value || authUser.value?.role === 'admin');
 
 // KeepAlive 保留状态的组件（导航离开后不销毁）
-const keepAliveComponents = ['LightEditor', 'StandardEditor', 'WebHomepage'];
+const keepAliveComponents = ['LightEditor', 'StandardEditor', 'DataSpace'];
 
 async function onJoinedSchool() {
   joinVisible.value = false;
@@ -271,7 +271,7 @@ const navMenuItems = [
   { path: '/console', icon: 'ri-home-5-line', title: '首页', subtitle: '控制台首页' },
   { path: '/console/campus', icon: 'ri-school-line', title: '校园集控', subtitle: '连接与管理校园' },
   { path: '/console/instances', icon: 'ri-cloud-line', title: '实例云控', subtitle: '在云端管理单个实例' },
-  { path: '/console/web-homepage', icon: 'ri-home-6-line', title: '班级主页', subtitle: '在线网页托管' },
+  { path: '/console/dataspace', icon: 'ri-folder-3-line', title: '数据空间', subtitle: '云文件与网页空间管理' },
   { path: '/console/ai', icon: 'ri-brain-line', title: 'AI 助理', subtitle: '智能问答与辅助' },
   { path: '/console/editor/light', icon: 'ri-edit-2-line', title: '轻编辑器', subtitle: '快速编辑配置文件' },
   { path: '/console/help', icon: 'ri-question-line', title: '文档 & 使用教程', subtitle: '查看帮助文档' },
@@ -588,7 +588,6 @@ function roleLabelFor(role: string, isAlliance: boolean): string {
 }
 
 .nav-menu-btn,
-.back-btn,
 .sidebar-toggle-btn {
   display: inline-flex;
   align-items: center;
@@ -604,21 +603,14 @@ function roleLabelFor(role: string, isAlliance: boolean): string {
 }
 
 .nav-menu-btn:hover,
-.back-btn:hover,
 .sidebar-toggle-btn:hover {
   background: var(--subtle-secondary);
   color: var(--text-primary);
 }
 
 .nav-menu-btn:active,
-.back-btn:active,
 .sidebar-toggle-btn:active {
   background: var(--subtle-pressed);
-}
-
-.back-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .brand {
@@ -653,126 +645,11 @@ function roleLabelFor(role: string, isAlliance: boolean): string {
   width: 100%;
 }
 
-.search-icon {
-  position: absolute;
-  left: var(--spacer-3);
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-tertiary);
-  pointer-events: none;
-}
-
-.search-input {
-  width: 100%;
-  height: 36px;
-  padding: 0 var(--spacer-3) 0 calc(var(--spacer-3) + 20px);
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border-rest);
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  outline: none;
-  transition: border-color var(--fast-duration), background var(--fast-duration);
-}
-
-.search-input:focus {
-  border-color: var(--accent-base);
-  background: var(--ctrl-fill-input-active);
-}
-
-.search-input::placeholder {
-  color: var(--text-tertiary);
-}
-
-.search-results {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  background: var(--flyout-bg);
-  backdrop-filter: var(--flyout-backdrop);
-  border: 1px solid var(--flyout-border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-  max-height: 300px;
-  overflow-y: auto;
-  z-index: 200;
-}
-
-.search-result-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  padding: var(--spacer-2) var(--spacer-3);
-  cursor: pointer;
-  transition: background var(--fast-duration);
-}
-
-.search-result-item:hover {
-  background: var(--subtle-secondary);
-}
-
-.result-icon {
-  color: var(--text-tertiary);
-}
-
-.result-title {
-  flex: 1;
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-}
-
-.result-tag {
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-  background: var(--subtle-secondary);
-  padding: 2px var(--spacer-2);
-  border-radius: var(--radius-xs);
-}
-
 .top-bar-right {
   display: flex;
   align-items: center;
   gap: var(--spacer-2);
   flex-shrink: 0;
-}
-
-.icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  position: relative;
-  transition: background var(--fast-duration), color var(--fast-duration);
-}
-
-.icon-btn:hover {
-  background: var(--subtle-secondary);
-  color: var(--text-primary);
-}
-
-.badge {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  background: var(--status-error);
-  color: white;
-  font-size: 10px;
-  font-weight: 600;
-  border-radius: var(--radius-full);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid var(--app-bg);
 }
 
 .user-menu-trigger {

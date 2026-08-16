@@ -259,65 +259,6 @@ function deleteUser(user: SubUser) {
   margin: 0 auto;
 }
 
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: var(--spacer-5);
-  flex-wrap: wrap;
-  gap: var(--spacer-3);
-}
-
-.page-title {
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.page-description {
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
-  margin: var(--spacer-1) 0 0;
-}
-
-.page-header-right {
-  display: flex;
-  gap: var(--spacer-2);
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  padding: var(--spacer-2) var(--spacer-3);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  transition: background var(--fast-duration);
-  border: none;
-}
-
-.btn-primary {
-  background: var(--accent-base);
-  color: var(--accent-text);
-}
-
-.btn-primary:hover {
-  background: var(--accent-hover);
-}
-
-.btn-ghost {
-  background: var(--subtle-secondary);
-  color: var(--text-secondary);
-}
-
-.btn-ghost:hover {
-  background: var(--subtle-pressed);
-  color: var(--text-primary);
-}
-
 .stats-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -647,12 +588,6 @@ function deleteUser(user: SubUser) {
   flex-direction: column;
   gap: var(--spacer-3);
   overflow-y: auto;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacer-1);
 }
 
 .form-label {

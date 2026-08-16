@@ -183,13 +183,6 @@ const iconBg = computed(() => {
   color: var(--status-error);
 }
 
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: currentColor;
-}
-
 .instance-status.running .status-dot {
   animation: pulse 2s ease-in-out infinite;
 }

@@ -173,23 +173,6 @@ function resetSettings() {
   margin: 0 auto;
 }
 
-.page-header {
-  margin-bottom: var(--spacer-5);
-}
-
-.page-title {
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.page-description {
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
-  margin: var(--spacer-1) 0 0;
-}
-
 .settings-layout {
   display: grid;
   grid-template-columns: 180px 1fr;
@@ -244,13 +227,6 @@ function resetSettings() {
   border-radius: var(--radius-lg);
   padding: var(--spacer-5);
   min-height: 400px;
-}
-
-.section-title {
-  font-size: var(--font-size-xl);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 var(--spacer-4);
 }
 
 .setting-row {
@@ -385,31 +361,5 @@ function resetSettings() {
   border-top: 1px solid var(--divider-stroke);
 }
 
-.btn {
-  padding: var(--spacer-2) var(--spacer-4);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: background var(--fast-duration);
-}
 
-.btn-primary {
-  background: var(--accent-base);
-  color: white;
-}
-
-.btn-primary:hover {
-  background: var(--accent-hover);
-}
-
-.btn-ghost {
-  background: var(--subtle-secondary);
-  color: var(--text-secondary);
-}
-
-.btn-ghost:hover {
-  background: var(--subtle-pressed);
-}
 </style>

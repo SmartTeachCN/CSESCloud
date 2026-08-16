@@ -58,8 +58,16 @@ function listVisibleInstances(): array
              FROM instances i
              JOIN instance_shares s ON s.instance_id = i.id
              LEFT JOIN apps a ON a.id = i.app_id
-             WHERE s.target_type = 'alliance' AND s.target_user_id = 0",
-            [$ownerKey]
+             WHERE s.target_type = 'alliance' AND s.target_user_id = 0
+             UNION ALL
+             SELECT i.*, a.name AS app_name, a.app_key, a.category AS app_category,
+                    NULL AS group_name, 0 AS group_order,
+                    'shared' AS relation
+             FROM instances i
+             JOIN share_items si ON si.resource_type = 'instance' AND si.resource_id = i.id AND si.is_deleted = 0
+             JOIN share_user_permissions sup ON sup.share_id = si.id AND sup.target_user_id = ? AND sup.status = 'accepted'
+             LEFT JOIN apps a ON a.id = i.app_id",
+            [$ownerKey, $user['user_id'] ?? 0]
         );
     } else {
         $rows = DB::all(
@@ -70,8 +78,10 @@ function listVisibleInstances(): array
              LEFT JOIN apps a ON a.id = i.app_id
              LEFT JOIN instance_groups g ON g.id = i.group_id
              LEFT JOIN instance_shares s ON s.instance_id = i.id AND s.target_user_id = ? AND s.target_type = 'sub'
-             WHERE i.school_id = ? AND (i.owner_key = ? OR s.id IS NOT NULL)",
-            [$ownerKey, $user['user_id'] ?? 0, $user['school_id'] ?? 0, $ownerKey]
+             LEFT JOIN share_items si ON si.resource_type = 'instance' AND si.resource_id = i.id AND si.is_deleted = 0
+             LEFT JOIN share_user_permissions sup ON sup.share_id = si.id AND sup.target_user_id = ? AND sup.status = 'accepted'
+             WHERE i.school_id = ? AND (i.owner_key = ? OR s.id IS NOT NULL OR sup.id IS NOT NULL)",
+            [$ownerKey, $user['user_id'] ?? 0, $user['user_id'] ?? 0, $user['school_id'] ?? 0, $ownerKey]
         );
     }
     return $rows;

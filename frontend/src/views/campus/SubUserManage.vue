@@ -484,33 +484,6 @@ watch(showBindModal, (v) => {
   margin: 0 auto;
 }
 
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: var(--spacer-4);
-  flex-wrap: wrap;
-  gap: var(--spacer-3);
-}
-
-.page-title {
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.page-description {
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
-  margin: 4px 0 0;
-}
-
-.page-header-right {
-  display: flex;
-  gap: var(--spacer-2);
-}
-
 .stats-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -674,25 +647,6 @@ watch(showBindModal, (v) => {
 .role-badge.teacher { background: rgba(16,124,16,0.1); color: var(--status-success); }
 .role-badge.student { background: rgba(230,126,34,0.1); color: #e67e22; }
 
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--font-size-xs);
-  padding: 2px var(--spacer-2);
-  border-radius: var(--radius-full);
-}
-
-.status-badge.active { background: rgba(16,124,16,0.1); color: var(--status-success); }
-.status-badge.inactive { background: var(--subtle-secondary); color: var(--text-tertiary); }
-
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: currentColor;
-}
-
 .col-actions {
   display: flex;
   gap: 4px;
@@ -724,25 +678,6 @@ watch(showBindModal, (v) => {
   color: var(--text-tertiary);
   gap: var(--spacer-2);
 }
-
-.btn {
-  padding: var(--spacer-2) var(--spacer-4);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-1);
-}
-
-.btn-primary { background: var(--accent-base); color: white; }
-.btn-primary:hover { background: var(--accent-hover); }
-.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--divider-stroke); }
-.btn-ghost:hover { background: var(--subtle-secondary); }
-.btn-sm { padding: 4px var(--spacer-2); font-size: var(--font-size-xs); }
 
 .modal-overlay {
   position: fixed;
@@ -809,41 +744,6 @@ watch(showBindModal, (v) => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--spacer-3);
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacer-1);
-}
-
-.form-group label {
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.required { color: var(--status-error); }
-
-.form-group input,
-.form-group select {
-  padding: var(--spacer-2) var(--spacer-3);
-  background: var(--subtle-secondary);
-  border: 1px solid var(--divider-stroke);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  outline: none;
-}
-
-.form-group input:focus,
-.form-group select:focus {
-  border-color: var(--accent-base);
-}
-
-.form-group input:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
 }
 
 /* 权限配置 */
@@ -986,11 +886,5 @@ watch(showBindModal, (v) => {
   border-top: 1px solid var(--divider-stroke);
 }
 
-.spin {
-  animation: spin 1s linear infinite;
-}
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
 </style>

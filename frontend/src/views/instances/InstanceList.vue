@@ -243,46 +243,16 @@
     </Teleport>
 
     <!-- 共享模态框 -->
-    <Teleport to="body">
-      <div v-if="shareModal.instance" class="modal-overlay" @click.self="shareModal.instance = null">
-        <div class="modal-card">
-          <div class="modal-header">
-            <h3>共享实例</h3>
-            <button class="modal-close" @click="shareModal.instance = null">
-              <Icon icon="ri-close-line" :size="18" />
-            </button>
-          </div>
-          <div class="modal-body">
-            <p class="modal-tip">
-              <Icon icon="ri-information-line" :size="14" />
-              <span>实例「{{ shareModal.instance?.name }}」共享后，目标用户可在其列表中看到此实例。</span>
-            </p>
-            <div class="form-group">
-              <label>目标用户类型</label>
-              <select v-model="shareForm.target_type">
-                <option value="alliance">智教联盟账户</option>
-                <option value="sub">学校子用户</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>目标用户 ID（0 表示所有联盟账户）</label>
-              <input v-model.number="shareForm.target_user_id" type="number" min="0" />
-            </div>
-            <div class="form-group">
-              <label>权限</label>
-              <select v-model="shareForm.share_mode">
-                <option value="view">仅查看</option>
-                <option value="edit">可编辑</option>
-              </select>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button class="btn btn-ghost" @click="shareModal.instance = null">取消</button>
-            <button class="btn btn-primary" @click="submitShare">共享</button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <ShareDialog
+      :visible="showShareDialog"
+      resource-type="instance"
+      :resource-id="shareTargetInstance?.id || ''"
+      :resource-name="shareTargetInstance?.name || ''"
+      resource-icon="ri-cloud-line"
+      resource-label="实例"
+      @close="showShareDialog = false"
+      @updated="loadInstances"
+    />
   </div>
 </template>
 
@@ -292,6 +262,7 @@ import { useRouter } from 'vue-router';
 import { instancesApi, groupsApi } from '../../api';
 import InstanceCard from '../../components/instances/InstanceCard.vue';
 import InstanceCreateModal from '../../components/instances/InstanceCreateModal.vue';
+import ShareDialog from '../../components/editor/panels/ShareDialog.vue';
 
 const router = useRouter();
 
@@ -316,12 +287,8 @@ const draggingId = ref<number | null>(null);
 const dragOverGroupId = ref<number | null | undefined>(undefined);
 
 // 共享
-const shareModal = ref<{ instance: any | null }>({ instance: null });
-const shareForm = ref({
-  target_type: 'alliance',
-  target_user_id: 0,
-  share_mode: 'view'
-});
+const showShareDialog = ref(false);
+const shareTargetInstance = ref<any>(null);
 
 // 概览统计
 const runningCount = computed(() => instances.value.filter(i => i.status === 'running').length);
@@ -415,21 +382,9 @@ function copyInstanceUid() {
 }
 
 function openShareModal(inst: any) {
-  shareModal.value.instance = inst;
-  shareForm.value = { target_type: 'alliance', target_user_id: 0, share_mode: 'view' };
+  shareTargetInstance.value = inst;
+  showShareDialog.value = true;
   clearContextMenu();
-}
-
-async function submitShare() {
-  const inst = shareModal.value.instance;
-  if (!inst) return;
-  try {
-    await instancesApi.share(inst.id, shareForm.value);
-    shareModal.value.instance = null;
-    alert('已共享');
-  } catch (e: any) {
-    alert(e?.message || '共享失败');
-  }
 }
 
 async function batchAction(action: string) {
@@ -548,134 +503,6 @@ onUnmounted(() => {
   max-width: 1400px;
   margin: 0 auto;
   position: relative;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: var(--spacer-5);
-  flex-wrap: wrap;
-  gap: var(--spacer-3);
-}
-
-.page-title {
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.page-description {
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
-  margin: var(--spacer-1) 0 0;
-}
-
-.page-header-right {
-  display: flex;
-  gap: var(--spacer-3);
-  align-items: center;
-}
-
-.search-bar {
-  position: relative;
-}
-
-.search-icon {
-  position: absolute;
-  left: var(--spacer-3);
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--text-tertiary);
-  pointer-events: none;
-}
-
-.search-bar input {
-  width: 240px;
-  height: 36px;
-  padding: 0 var(--spacer-3) 0 calc(var(--spacer-3) + 20px);
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border-rest);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  outline: none;
-  transition: border-color var(--fast-duration);
-}
-
-.search-bar input:focus {
-  border-color: var(--accent-base);
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  padding: var(--spacer-2) var(--spacer-3);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: background var(--fast-duration);
-}
-
-.btn-primary {
-  background: var(--accent-base);
-  color: var(--accent-text);
-}
-
-.btn-primary:hover {
-  background: var(--accent-hover);
-}
-
-.btn-ghost {
-  background: var(--subtle-secondary);
-  color: var(--text-secondary);
-}
-
-.btn-ghost:hover {
-  background: var(--subtle-pressed);
-}
-
-.overview-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: var(--spacer-3);
-  margin-bottom: var(--spacer-5);
-}
-
-.overview-card {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-3);
-  padding: var(--spacer-4);
-  background: var(--card-bg);
-  border: 1px solid var(--card-stroke);
-  border-radius: var(--radius-lg);
-}
-
-.overview-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.overview-value {
-  font-size: var(--font-size-2xl);
-  font-weight: 700;
-  color: var(--text-primary);
-  line-height: 1;
-}
-
-.overview-label {
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-  margin-top: 2px;
 }
 
 .batch-bar {

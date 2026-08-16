@@ -420,9 +420,13 @@ switch ($action) {
         }
 
         // 从 .ea2 文件读取考试配置
+        $fileName = $examConfigId;
+        if (!str_ends_with($fileName, '.ea2')) {
+            $fileName .= '.ea2';
+        }
         $ea2File = DB::one(
             "SELECT * FROM cloud_files WHERE instance_id = ? AND file_type = 'ea2' AND name = ?",
-            [$instanceId, $examConfigId . '.ea2']
+            [$instanceId, $fileName]
         );
         if (!$ea2File) {
             // 尝试按 id 查找

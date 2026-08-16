@@ -147,6 +147,9 @@
                   <button v-if="!code.revoked_at" class="icon-btn-sm danger" @click="revokeCode(code)" :disabled="busy" title="吊销">
                     <Icon icon="ri-close-circle-line" :size="14" />
                   </button>
+                  <button v-if="code.revoked_at" class="icon-btn-sm danger" @click="deleteCode(code)" :disabled="busy" title="删除">
+                    <Icon icon="ri-delete-bin-line" :size="14" />
+                  </button>
                 </div>
               </div>
             </div>
@@ -352,11 +355,18 @@ const commandForm = ref({
 });
 const commands = ref<any[]>([]);
 
+async function apiFetch(url: string, options?: RequestInit) {
+  const res = await fetch(url, { credentials: 'include', ...options });
+  const json = await res.json();
+  if (json.code !== 0) {
+    throw new Error(json.message || '请求失败');
+  }
+  return json.data;
+}
+
 async function loadDevices() {
   try {
-    const res = await fetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=device_list');
-    const json = await res.json();
-    devices.value = json.data || [];
+    devices.value = await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=device_list');
   } catch (e) {
     console.error('加载设备列表失败', e);
   }
@@ -364,9 +374,7 @@ async function loadDevices() {
 
 async function loadEnrollmentCodes() {
   try {
-    const res = await fetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_list');
-    const json = await res.json();
-    enrollmentCodes.value = json.data || [];
+    enrollmentCodes.value = await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_list');
   } catch (e) {
     console.error('加载注册码列表失败', e);
   }
@@ -374,9 +382,7 @@ async function loadEnrollmentCodes() {
 
 async function loadCommands() {
   try {
-    const res = await fetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=command_list');
-    const json = await res.json();
-    commands.value = json.data || [];
+    commands.value = await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=command_list');
   } catch (e) {
     console.error('加载命令列表失败', e);
   }
@@ -396,7 +402,7 @@ async function sendCommand() {
   }
   busy.value = true;
   try {
-    const res = await fetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=command_create', {
+    await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=command_create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -406,16 +412,11 @@ async function sendCommand() {
         expires_minutes: commandForm.value.expires_minutes,
       }),
     });
-    const json = await res.json();
-    if (json.code === 0) {
-      alert('命令已下发');
-      commandForm.value.payload = '{}';
-      commandForm.value.command_type = '';
-      commandForm.value.device_id = '';
-      await loadCommands();
-    } else {
-      alert(json.message || '下发失败');
-    }
+    alert('命令已下发');
+    commandForm.value.payload = '{}';
+    commandForm.value.command_type = '';
+    commandForm.value.device_id = '';
+    await loadCommands();
   } catch (e: any) {
     alert(e.message || '下发失败');
   } finally {
@@ -427,7 +428,7 @@ async function createEnrollmentCode() {
   if (busy.value) return;
   busy.value = true;
   try {
-    const res = await fetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_create', {
+    const data = await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -436,8 +437,7 @@ async function createEnrollmentCode() {
         validity_hours: enrollmentForm.value.validityHours,
       }),
     });
-    const json = await res.json();
-    newCode.value = json.data.code;
+    newCode.value = data.code;
     await loadEnrollmentCodes();
   } catch (e: any) {
     alert(e.message || '生成失败');
@@ -450,7 +450,24 @@ async function revokeCode(code: any) {
   if (!confirm('确认吊销此注册码？')) return;
   busy.value = true;
   try {
-    await fetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_revoke', {
+    await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: code.id }),
+    });
+    await loadEnrollmentCodes();
+  } catch (e: any) {
+    alert(e.message || '操作失败');
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function deleteCode(code: any) {
+  if (!confirm('确认永久删除此注册码？此操作不可撤销。')) return;
+  busy.value = true;
+  try {
+    await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: code.id }),
@@ -467,7 +484,7 @@ async function unregisterDevice(dev: any) {
   if (!confirm(`确认注销设备 ${dev.display_name}？`)) return;
   busy.value = true;
   try {
-    await fetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=device_unregister', {
+    await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=device_unregister', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deviceId: dev.device_id }),
@@ -566,71 +583,6 @@ const config = ref({
   gap: var(--spacer-2);
 }
 
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  padding: var(--spacer-1) var(--spacer-2);
-  border-radius: var(--radius-full);
-}
-
-.status-badge.running { background: rgba(16, 124, 16, 0.1); color: var(--status-success); }
-.status-badge.stopped { background: var(--subtle-secondary); color: var(--text-tertiary); }
-.status-badge.error { background: rgba(196, 43, 28, 0.1); color: var(--status-error); }
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  background: currentColor;
-}
-
-.btn {
-  padding: var(--spacer-2) var(--spacer-4);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: background var(--fast-duration);
-}
-
-.btn-primary { background: var(--accent-base); color: white; }
-.btn-primary:hover { background: var(--accent-hover); }
-.btn-ghost { background: var(--subtle-secondary); color: var(--text-secondary); }
-.btn-ghost:hover { background: var(--subtle-pressed); }
-
-.detail-tabs {
-  display: flex;
-  gap: var(--spacer-1);
-  border-bottom: 1px solid var(--divider-stroke);
-  margin-bottom: var(--spacer-4);
-}
-
-.detail-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  padding: var(--spacer-2) var(--spacer-4);
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
-  cursor: pointer;
-  transition: color var(--fast-duration), border-color var(--fast-duration);
-}
-
-.detail-tab:hover { color: var(--text-primary); }
-
-.detail-tab.active {
-  color: var(--text-primary);
-  border-bottom-color: var(--accent-base);
-  font-weight: 500;
-}
-
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -676,44 +628,6 @@ const config = ref({
   font-size: var(--font-size-xs);
   color: var(--text-tertiary);
   margin-top: var(--spacer-2);
-}
-
-.info-card {
-  background: var(--card-bg);
-  border: 1px solid var(--card-stroke);
-  border-radius: var(--radius-lg);
-  padding: var(--spacer-4);
-}
-
-.info-card h3 {
-  font-size: var(--font-size-lg);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 var(--spacer-3);
-}
-
-.info-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: var(--spacer-3);
-}
-
-.info-item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacer-1);
-}
-
-.info-label {
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-}
-
-.info-value {
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  font-weight: 500;
-  font-family: var(--font-family-mono);
 }
 
 .log-viewer {
@@ -1233,13 +1147,4 @@ const config = ref({
 }
 
 .status-pill.draft { background: rgba(0, 103, 192, 0.1); color: var(--accent-base); }
-
-.loading-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacer-8);
-  color: var(--text-tertiary);
-  font-size: var(--font-size-sm);
-}
 </style>

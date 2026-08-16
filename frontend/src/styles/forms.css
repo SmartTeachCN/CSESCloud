@@ -1,0 +1,237 @@
+/* ===== 表单系统 ===== */
+
+/* 表单组 */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-2);
+}
+
+.form-group label {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* 输入框包装器（带图标时使用） */
+.input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* 表单输入框 - 默认无图标 */
+.form-group input,
+.form-group select {
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--spacer-3);
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-base);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--fast-duration), box-shadow var(--fast-duration), background var(--fast-duration);
+  appearance: none;
+}
+
+/* 放在 .input-wrapper 内的 input 才有图标预留空间 */
+.input-wrapper .form-group input,
+.input-wrapper input {
+  padding: 0 var(--spacer-3) 0 calc(var(--spacer-3) + 24px);
+}
+
+.form-group input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  border-color: var(--accent-base);
+  background: var(--ctrl-fill-input-active);
+  box-shadow: 0 0 0 3px rgba(0, 103, 192, 0.15);
+}
+
+/* 通用文本域 */
+.form-group textarea,
+.form-textarea,
+.note-textarea,
+.fpe-textarea,
+.config-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: var(--spacer-2) var(--spacer-3);
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border-rest);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  outline: none;
+  resize: vertical;
+  font-family: var(--font-family);
+  line-height: 1.5;
+  transition: border-color var(--fast-duration);
+}
+
+.form-group textarea:focus,
+.form-textarea:focus,
+.note-textarea:focus,
+.fpe-textarea:focus,
+.config-textarea:focus {
+  border-color: var(--accent-base);
+}
+
+/* 代码编辑器文本域 */
+.code-textarea {
+  flex: 1;
+  padding: var(--spacer-2);
+  background: var(--ctrl-fill-input-active);
+  border: none;
+  outline: none;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  line-height: 20px;
+  color: var(--text-primary);
+  resize: none;
+  tab-size: 2;
+  overflow: auto;
+}
+
+/* 通用输入框 */
+.input-field {
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--spacer-3);
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border-rest);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--fast-duration);
+}
+
+.input-field:focus {
+  border-color: var(--accent-base);
+}
+
+.input-field::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* 通用文本域 */
+.textarea-field {
+  width: 100%;
+  min-height: 80px;
+  padding: var(--spacer-2) var(--spacer-3);
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border-rest);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  outline: none;
+  resize: vertical;
+  font-family: inherit;
+  transition: border-color var(--fast-duration);
+}
+
+.textarea-field:focus {
+  border-color: var(--accent-base);
+}
+
+/* 下拉选择框 - 自定义样式 */
+select,
+.form-select,
+.select-field {
+  height: 36px;
+  padding: 0 var(--spacer-3);
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border-rest);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--spacer-3) center;
+  padding-right: calc(var(--spacer-3) + 20px);
+  transition: border-color var(--fast-duration);
+}
+
+/* 在 .input-wrapper 内的 select 不显示自定义箭头（已有 .select-caret） */
+.input-wrapper select,
+.input-wrapper .form-select,
+.input-wrapper .select-field {
+  background-image: none;
+  padding-right: var(--spacer-3);
+}
+
+select:focus,
+.form-select:focus,
+.select-field:focus {
+  border-color: var(--accent-base);
+}
+
+/* 解决 select option 在深色模式下的样式 - 统一自定义 */
+select option,
+.form-select option,
+.select-field option,
+.dialog-select option,
+.model-select option,
+.ctrl-select option,
+.form-row select option,
+.share-body .form-select option {
+  background-color: var(--card-bg);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+  padding: var(--spacer-1) var(--spacer-2);
+}
+
+/* 禁用/占位 option 样式 */
+select option:disabled,
+select option[value=""] {
+  color: var(--text-tertiary);
+}
+
+/* 复选框样式 */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-base);
+}
+
+/* 表单选项行 */
+.form-options {
+  display: flex;
+  align-items: center;
+}
+
+/* 学校标签 */
+.school-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  padding: var(--spacer-1) var(--spacer-3);
+  background: rgba(0, 103, 192, 0.08);
+  border: 1px solid rgba(0, 103, 192, 0.2);
+  color: var(--accent-base);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  align-self: flex-start;
+}

@@ -278,49 +278,7 @@ onMounted(() => {
   margin: 0 auto;
 }
 
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: var(--spacer-4);
-  gap: var(--spacer-3);
-  flex-wrap: wrap;
-}
 
-.page-title {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  font-size: var(--font-size-2xl);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.page-description {
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
-  margin: var(--spacer-1) 0 0;
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  padding: var(--spacer-2) var(--spacer-3);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: background var(--fast-duration);
-}
-
-.btn-ghost { background: var(--subtle-secondary); color: var(--text-secondary); }
-.btn-ghost:hover { background: var(--subtle-pressed); color: var(--text-primary); }
-.btn-primary { background: var(--accent-base); color: white; }
-.btn-primary:hover { background: var(--accent-hover); }
-.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* 分类标签 */
 .category-tabs {
@@ -590,17 +548,7 @@ onMounted(() => {
 .btn-sm.primary:hover { background: var(--accent-hover); }
 .btn-sm:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* 详情对话框 */
-.dialog-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacer-4);
-}
+
 
 .dialog {
   width: 100%;
@@ -723,6 +671,5 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+
 </style>

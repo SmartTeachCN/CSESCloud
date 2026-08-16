@@ -232,3 +232,32 @@ export const instanceFilesApi = {
   fileTree: (instanceId: number) =>
     api.get<any>(`/instance-files.php?action=file-tree&instance_id=${instanceId}`),
 };
+
+export const dataSpaceApi = {
+  tree: () => api.get<any>('/data-space.php?action=tree'),
+  get: (params: Record<string, any>) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null) qs.set(k, String(v));
+    }
+    return api.get<any>(`/data-space.php?action=get&${qs.toString()}`);
+  },
+  save: (body: any) => api.post('/data-space.php?action=save', body),
+  delete: (body: any) => api.post('/data-space.php?action=delete', body),
+  usage: () => api.get<any>('/data-space.php?action=usage'),
+  createWebSpace: (body: any) => api.post('/data-space.php?action=create-webspace', body),
+  updateWebSpace: (body: any) => api.post('/data-space.php?action=update-webspace', body),
+  webspaceCreateFile: (body: any) => api.post('/data-space.php?action=webspace-create-file', body),
+  webspaceCreateDir: (body: any) => api.post('/data-space.php?action=webspace-create-dir', body),
+  webspaceUpload: (file: File, spaceId: number, dir?: string) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('space_id', String(spaceId));
+    if (dir) form.append('dir', dir);
+    return request<any>('/data-space.php?action=webspace-upload', {
+      method: 'POST',
+      body: form,
+      headers: {} as any,
+    });
+  },
+};

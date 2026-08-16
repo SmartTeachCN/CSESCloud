@@ -73,9 +73,10 @@ class DB
 
         // 通知表扩展字段
         self::addMissingColumn('notifications', 'sender_id', 'INTEGER');
-        self::addMissingColumn('notifications', 'sender_name', 'TEXT');
-        self::addMissingColumn('notifications', 'target_type', "TEXT NOT NULL DEFAULT 'all'");
-        self::addMissingColumn('notifications', 'target_id', 'TEXT');
+self::addMissingColumn('notifications', 'sender_name', 'TEXT');
+self::addMissingColumn('notifications', 'target_type', "TEXT NOT NULL DEFAULT 'all'");
+self::addMissingColumn('notifications', 'target_id', 'TEXT');
+self::addMissingColumn('notifications', 'share_id', 'INTEGER');
 
         // apps 表：共享与派生关系
         self::addMissingColumn('apps', 'is_shared', 'INTEGER NOT NULL DEFAULT 0');

@@ -1,7 +1,7 @@
 <template>
   <div class="editor-pane">
     <!-- 标签栏 -->
-    <div class="ep-tabs-row" v-if="tabs.length > 0">
+    <div class="ep-tabs-row" v-if="tabs.length > 0 && !hideTabs">
       <div class="ep-tabs">
         <div
           v-for="tab in tabs"
@@ -86,6 +86,7 @@ const props = defineProps<{
   tabs: TabInfo[];
   activeTabId: string;
   readOnly?: boolean;
+  hideTabs?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -242,35 +243,7 @@ function onPluginNotify(msg: string) {
   text-overflow: ellipsis;
 }
 
-.dirty-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--status-warning);
-  flex-shrink: 0;
-}
 
-.tab-close {
-  /* width: 18px; */
-  height: 18px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  border-radius: var(--radius-full);
-  color: var(--text-tertiary);
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  flex-shrink: 0;
-  margin-left: 2px;
-}
-
-.tab-close:hover {
-  background: var(--subtle-pressed);
-  color: var(--text-primary);
-}
 
 /* 内容区 */
 .ep-content {

@@ -83,10 +83,12 @@
       >
         <Icon icon="ri-add-circle-line" :size="14" />
       </button>
-      <select v-model="selectedModel" class="ctrl-select">
-        <option value="default">默认</option>
-        <option v-for="m in customModels" :key="'pm-' + m.id" :value="m.name">{{ m.name }}</option>
-      </select>
+      <CustomSelect
+        v-model="selectedModel"
+        :options="panelModelOptions"
+        class="ctrl-select-custom"
+        height="26px"
+      />
       <button
         class="ctrl-btn"
         :class="{ recording: isVoiceRecording }"
@@ -115,6 +117,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { marked } from 'marked';
+import CustomSelect from '../../CustomSelect.vue';
 import { aiApi, instancesApi, schoolsApi } from '../../../api';
 
 marked.use({ breaks: true, gfm: true });
@@ -159,6 +162,14 @@ const showResourcePanel = ref(false);
 const availableInstances = ref<any[]>([]);
 const availableCampuses = ref<any[]>([]);
 const customModels = ref<any[]>([]);
+
+const panelModelOptions = computed(() => {
+  const opts = [{ value: 'default', label: '默认', icon: 'ri-brain-line' }];
+  for (const m of customModels.value) {
+    opts.push({ value: m.name, label: m.name, icon: 'ri-cpu-line' });
+  }
+  return opts;
+});
 let recognition: any = null;
 
 const emptyHint = computed(() => {
@@ -453,9 +464,25 @@ onMounted(() => {
   background-position: right 4px center;
 }
 
-.ctrl-select option {
-  background: var(--card-bg);
-  color: var(--text-primary);
+/* CustomSelect 面板版 */
+.ctrl-select-custom {
+  margin-left: auto;
+  min-width: 80px;
+  max-width: 140px;
+}
+
+.ctrl-select-custom .select-trigger {
+  font-size: 11px;
+  height: 26px;
+  padding: 0 6px;
+}
+
+.ctrl-select-custom .trigger-arrow {
+  font-size: 12px;
+}
+
+.ctrl-select-custom .select-dropdown {
+  font-size: 11px;
 }
 
 .ctrl-btn {
@@ -672,14 +699,6 @@ onMounted(() => {
 .ai-send:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 
 /* 打字动画 */

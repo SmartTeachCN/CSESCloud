@@ -38,6 +38,12 @@ if ($method === 'GET' && $action === 'list') {
     // 转换为轻编辑器期望的格式
     $result = array_map(function ($row) {
         $name = basename($row['file_path']);
+        // 检查是否已分享
+        $shared = DB::scalar(
+            "SELECT COUNT(*) FROM share_items
+             WHERE resource_type = 'cloud_file' AND resource_id = ? AND is_deleted = 0",
+            [$row['id']]
+        ) > 0;
         return [
             'id' => $row['id'],
             'name' => $name,
@@ -47,8 +53,44 @@ if ($method === 'GET' && $action === 'list') {
             'content_type' => $row['content_type'],
             'created_at' => $row['created_at'],
             'updated_at' => $row['updated_at'],
+            'is_shared' => $shared ? 1 : 0,
+            'source' => 'owned',
         ];
     }, $rows);
+
+    // 获取分享给我的文件
+    $userId = 0;
+    $user = Auth::user();
+    if ($user) $userId = (int)($user['user_id'] ?? 0);
+    if ($userId > 0) {
+        $sharedRows = DB::all(
+            "SELECT DISTINCT whf.*, sup.permission AS shared_permission, si.owner_username AS shared_from
+             FROM share_items si
+             JOIN share_user_permissions sup ON sup.share_id = si.id AND sup.target_user_id = ? AND sup.status = 'accepted'
+             JOIN web_hosting_files whf ON whf.id = si.resource_id
+             WHERE si.resource_type = 'cloud_file' AND si.is_deleted = 0 AND si.expires_at > datetime('now','localtime')
+             ORDER BY whf.file_path ASC",
+            [$userId]
+        );
+        foreach ($sharedRows as $row) {
+            $name = basename($row['file_path']);
+            $result[] = [
+                'id' => $row['id'],
+                'name' => $name,
+                'file_path' => $row['file_path'],
+                'file_type' => pathinfo($name, PATHINFO_EXTENSION),
+                'file_size' => $row['file_size'],
+                'content_type' => $row['content_type'],
+                'created_at' => $row['created_at'],
+                'updated_at' => $row['updated_at'],
+                'is_shared' => 0,
+                'source' => 'shared',
+                'shared_from' => $row['shared_from'],
+                'shared_permission' => $row['shared_permission'],
+            ];
+        }
+    }
+
     Response::success($result);
 }
 
@@ -58,7 +100,38 @@ if ($method === 'GET' && $action === 'get') {
         "SELECT * FROM web_hosting_files WHERE id = ? AND space_id = ? AND file_path LIKE ?",
         [$id, $spaceId, CLOUD_PREFIX . '%']
     );
-    if (!$row) Response::error('云文件不存在');
+    if (!$row) {
+        // 检查是否是分享给我的文件
+        $userId = (int)(Auth::user()['user_id'] ?? 0);
+        if ($userId > 0) {
+            $sharedRow = DB::one(
+                "SELECT whf.*, sup.permission AS shared_permission
+                 FROM web_hosting_files whf
+                 JOIN share_items si ON si.resource_id = whf.id AND si.resource_type = 'cloud_file' AND si.is_deleted = 0
+                 JOIN share_user_permissions sup ON sup.share_id = si.id AND sup.target_user_id = ? AND sup.status = 'accepted'
+                 WHERE whf.id = ? AND si.expires_at > datetime('now','localtime')",
+                [$userId, $id]
+            );
+            if ($sharedRow) {
+                // 只读权限时提示
+                $isReadOnly = ($sharedRow['shared_permission'] ?? 'view') === 'view';
+                Response::success([
+                    'id' => $sharedRow['id'],
+                    'name' => basename($sharedRow['file_path']),
+                    'file_path' => $sharedRow['file_path'],
+                    'file_type' => pathinfo($sharedRow['file_path'], PATHINFO_EXTENSION),
+                    'file_size' => $sharedRow['file_size'],
+                    'content' => $sharedRow['content'] ?? '',
+                    'content_type' => $sharedRow['content_type'],
+                    'created_at' => $sharedRow['created_at'],
+                    'updated_at' => $sharedRow['updated_at'],
+                    'source' => 'shared',
+                    'permission' => $sharedRow['shared_permission'],
+                ]);
+            }
+        }
+        Response::error('云文件不存在');
+    }
     Response::success([
         'id' => $row['id'],
         'name' => basename($row['file_path']),
@@ -69,6 +142,7 @@ if ($method === 'GET' && $action === 'get') {
         'content_type' => $row['content_type'],
         'created_at' => $row['created_at'],
         'updated_at' => $row['updated_at'],
+        'source' => 'owned',
     ]);
 }
 
@@ -122,7 +196,27 @@ if ($method === 'POST' && $action === 'update') {
         "SELECT * FROM web_hosting_files WHERE id = ? AND space_id = ? AND file_path LIKE ?",
         [$id, $spaceId, CLOUD_PREFIX . '%']
     );
-    if (!$row) Response::error('云文件不存在');
+    if (!$row) {
+        // 检查是否是分享给我的文件（需有编辑权限）
+        $userId = (int)(Auth::user()['user_id'] ?? 0);
+        if ($userId > 0) {
+            $sharedRow = DB::one(
+                "SELECT whf.*, sup.permission AS shared_permission
+                 FROM web_hosting_files whf
+                 JOIN share_items si ON si.resource_id = whf.id AND si.resource_type = 'cloud_file' AND si.is_deleted = 0
+                 JOIN share_user_permissions sup ON sup.share_id = si.id AND sup.target_user_id = ? AND sup.status = 'accepted'
+                 WHERE whf.id = ? AND si.expires_at > datetime('now','localtime')",
+                [$userId, $id]
+            );
+            if ($sharedRow && ($sharedRow['shared_permission'] ?? 'view') === 'edit') {
+                $row = $sharedRow;
+            } else {
+                Response::error('云文件不存在或无权编辑');
+            }
+        } else {
+            Response::error('云文件不存在');
+        }
+    }
 
     $updates = ['updated_at' => date('Y-m-d H:i:s')];
     if (isset($body['name'])) {

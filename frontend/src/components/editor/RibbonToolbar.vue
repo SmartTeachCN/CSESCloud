@@ -67,20 +67,20 @@
       <!-- 小行1：靠左撤销/恢复（纯图标），靠右自动保存/保存（横向加宽） -->
       <div class="right-row-top">
         <div class="right-row-top-left">
-          <button class="ribbon-tool icon-only" title="撤销 (Ctrl+Z)" @click="$emit('undo')">
+          <button class="ribbon-tool icon-only" title="撤销 (Ctrl+Z)" @click="$emit('undo')" :disabled="!canUndo">
             <Icon icon="ri-arrow-go-back-line" :size="16" />
           </button>
-          <button class="ribbon-tool icon-only" title="重做 (Ctrl+Shift+Z)" @click="$emit('redo')">
+          <button class="ribbon-tool icon-only" title="重做 (Ctrl+Shift+Z)" @click="$emit('redo')" :disabled="!canRedo">
             <Icon icon="ri-arrow-go-forward-line" :size="16" />
           </button>
         </div>
         <div class="right-row-top-right">
-          <button class="ribbon-tool wide" title="自动保存" @click="autoSave = !autoSave">
+          <button class="ribbon-tool wide" title="自动保存" @click="autoSave = !autoSave" :disabled="!canAutoSave">
             <Icon :icon="autoSave ? 'ri-save-2-fill' : 'ri-save-2-line'" :size="14" />
             <span class="tool-label">自动保存</span>
             <span class="tool-state" :class="{ on: autoSave }">{{ autoSave ? '开' : '关' }}</span>
           </button>
-          <button class="ribbon-tool wide primary" :disabled="saving" @click="emitSave">
+          <button class="ribbon-tool wide primary" :disabled="saving || !canSave" @click="emitSave">
             <Icon :icon="saving ? 'ri-loader-4-line' : 'ri-download-cloud-2-line'" :size="14" :class="{ spin: saving }" />
             <span class="tool-label">保存</span>
           </button>
@@ -94,6 +94,7 @@
           class="ribbon-tool compact"
           :title="action.label"
           @click="$emit('tool-click', action)"
+          :disabled="!action.enabled"
         >
           <Icon :icon="action.icon" :size="14" />
           <span class="tool-label">{{ action.label }}</span>
@@ -136,6 +137,18 @@ const props = defineProps<{
   saveLabel?: string;
   /** 外部指定的当前选中工具 ID（用于 select 型按钮） */
   selectedTool?: string;
+  /** 实例编辑器始终显示操作区 */
+  isInstance?: boolean;
+  /** 是否有可撤销的操作 */
+  canUndo?: boolean;
+  /** 是否有可重做的操作 */
+  canRedo?: boolean;
+  /** 是否可保存 */
+  canSave?: boolean;
+  /** 是否可自动保存 */
+  canAutoSave?: boolean;
+  /** 右侧操作区按钮，含 enabled 控制禁用状态 */
+  rightActions?: Array<Partial<RibbonTool> & { enabled?: boolean; id: string; label: string; icon: string }>;
 }>();
 
 const emit = defineEmits<{
@@ -182,14 +195,19 @@ const defaultGroups: RibbonGroup[] = [
   }
 ];
 
-// 右侧操作区按钮
-const rightActions: RibbonTool[] = [
-  { id: 'share', label: '分享', icon: 'ri-share-forward-line', command: 'share' },
-  { id: 'history', label: '操作记录', icon: 'ri-history-line', command: 'history' },
-  { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', command: 'version' },
-  { id: 'import', label: '导入', icon: 'ri-download-line', command: 'import' },
-  { id: 'export', label: '导出', icon: 'ri-upload-2-line', command: 'export' },
+// 默认右侧操作区按钮
+const defaultRightActions: Array<Partial<RibbonTool> & { enabled?: boolean; id: string; label: string; icon: string }> = [
+  { id: 'share', label: '分享', icon: 'ri-share-forward-line', command: 'share', enabled: true },
+  { id: 'history', label: '操作记录', icon: 'ri-history-line', command: 'history', enabled: true },
+  { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', command: 'version', enabled: true },
+  { id: 'import', label: '导入', icon: 'ri-download-line', command: 'import', enabled: true },
+  { id: 'export', label: '导出', icon: 'ri-upload-2-line', command: 'export', enabled: true },
 ];
+
+const rightActions = computed(() => {
+  if (props.rightActions) return props.rightActions;
+  return defaultRightActions.map(a => ({ ...a, enabled: a.enabled !== undefined ? a.enabled : !!props.editorInfo }));
+});
 
 const ribbonGroups = computed(() => props.manifest && props.manifest.length > 0 ? props.manifest : defaultGroups);
 
@@ -443,6 +461,12 @@ function emitSave() {
   cursor: not-allowed;
 }
 
+.ribbon-tool:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  color: var(--text-tertiary);
+}
+
 .tool-label {
   font-size: 10px;
   font-weight: 500;
@@ -515,7 +539,5 @@ function emitSave() {
   animation: spin 1s linear infinite;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+
 </style>

@@ -46,8 +46,8 @@
         class="notification-item"
         :class="{ unread: !item.is_read, [item.type]: true }"
       >
-        <div class="notif-icon" :class="item.type">
-          <Icon :icon="getIcon(item.type)" :size="18" />
+        <div class="notif-icon" :class="item.target_type?.startsWith('share') ? item.target_type : item.type">
+          <Icon :icon="getIcon(item.target_type?.startsWith('share') ? item.target_type : item.type)" :size="18" />
         </div>
         <div class="notif-content">
           <div class="notif-header">
@@ -65,16 +65,26 @@
           </div>
         </div>
         <div class="notif-actions">
-          <button
-            class="icon-btn-sm"
-            :title="item.is_read ? '标记为未读' : '标记为已读'"
-            @click="toggleRead(item)"
-          >
-            <Icon :icon="item.is_read ? 'ri-mail-unread-line' : 'ri-mail-check-line'" :size="14" />
-          </button>
-          <button class="icon-btn-sm" title="删除" @click="deleteNotification(item.id)">
-            <Icon icon="ri-delete-bin-line" :size="14" />
-          </button>
+          <template v-if="item.target_type === 'share_invite' && item.share_id">
+            <button class="share-action-btn accept" @click="acceptShare(item)" :disabled="busy">
+              <Icon icon="ri-check-line" :size="14" /> 接受
+            </button>
+            <button class="share-action-btn reject" @click="rejectShare(item)" :disabled="busy">
+              <Icon icon="ri-close-line" :size="14" /> 拒绝
+            </button>
+          </template>
+          <template v-else>
+            <button
+              class="icon-btn-sm"
+              :title="item.is_read ? '标记为未读' : '标记为已读'"
+              @click="toggleRead(item)"
+            >
+              <Icon :icon="item.is_read ? 'ri-mail-unread-line' : 'ri-mail-check-line'" :size="14" />
+            </button>
+            <button class="icon-btn-sm" title="删除" @click="deleteNotification(item.id)">
+              <Icon icon="ri-delete-bin-line" :size="14" />
+            </button>
+          </template>
         </div>
       </div>
 
@@ -171,6 +181,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { notificationsApi } from '../../api';
+import { api } from '../../api/client';
 import { useAuth } from '../../composables/useAuth';
 
 const { user } = useAuth();
@@ -185,6 +196,7 @@ interface Notification {
   content: string;
   target_type: string;
   target_id: string | null;
+  share_id: number | null;
   is_read: number | null;
   read_at: string | null;
   created_at: string;
@@ -254,16 +266,6 @@ const filteredNotifications = computed(() => {
   }
 });
 
-function getIcon(type: string): string {
-  const icons: Record<string, string> = {
-    info: 'ri-information-line',
-    success: 'ri-checkbox-circle-line',
-    warning: 'ri-error-warning-line',
-    system: 'ri-settings-3-line',
-  };
-  return icons[type] || 'ri-information-line';
-}
-
 function getTypeLabel(type: string): string {
   const labels: Record<string, string> = {
     system: '系统',
@@ -275,8 +277,24 @@ function getTypeLabel(type: string): string {
 }
 
 function getTargetLabel(item: Notification): string {
-  const labels: Record<string, string> = { all: '全体成员', role: '按角色', class: '按班级', user: '指定用户' };
+  const labels: Record<string, string> = {
+    all: '全体成员', role: '按角色', class: '按班级', user: '指定用户',
+    share_invite: '分享邀请', share_accepted: '已接受分享', share_rejected: '已拒绝分享'
+  };
   return labels[item.target_type] || item.target_type;
+}
+
+function getIcon(type: string): string {
+  const icons: Record<string, string> = {
+    info: 'ri-information-line',
+    success: 'ri-checkbox-circle-line',
+    warning: 'ri-error-warning-line',
+    system: 'ri-settings-3-line',
+    share_invite: 'ri-share-forward-line',
+    share_accepted: 'ri-check-double-line',
+    share_rejected: 'ri-close-circle-line',
+  };
+  return icons[type] || 'ri-information-line';
 }
 
 function formatTime(dateStr: string): string {
@@ -347,6 +365,40 @@ async function deleteNotification(id: number) {
   }
 }
 
+async function acceptShare(item: Notification) {
+  if (!item.share_id) return;
+  busy.value = true;
+  try {
+    await api.post('/share.php?action=accept', { share_id: item.share_id });
+    // 更新通知状态
+    item.target_type = 'share_accepted';
+    item.is_read = 1;
+    alert('已接受分享');
+    await loadNotifications();
+  } catch (e: any) {
+    alert(e.message || '操作失败');
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function rejectShare(item: Notification) {
+  if (!item.share_id) return;
+  busy.value = true;
+  try {
+    await api.post('/share.php?action=reject', { share_id: item.share_id });
+    // 更新通知状态
+    item.target_type = 'share_rejected';
+    item.is_read = 1;
+    alert('已拒绝分享');
+    await loadNotifications();
+  } catch (e: any) {
+    alert(e.message || '操作失败');
+  } finally {
+    busy.value = false;
+  }
+}
+
 async function loadRecipients() {
   try {
     recipients.value = await notificationsApi.recipients();
@@ -390,75 +442,6 @@ onMounted(loadNotifications);
   margin: 0 auto;
 }
 
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: var(--spacer-5);
-  flex-wrap: wrap;
-  gap: var(--spacer-3);
-}
-
-.page-title {
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.page-description {
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
-  margin: var(--spacer-1) 0 0;
-}
-
-.page-header-right {
-  display: flex;
-  gap: var(--spacer-2);
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  padding: var(--spacer-2) var(--spacer-3);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  transition: background var(--fast-duration);
-  border: none;
-}
-
-.btn-ghost {
-  background: var(--subtle-secondary);
-  color: var(--text-secondary);
-}
-
-.btn-ghost:hover {
-  background: var(--subtle-pressed);
-  color: var(--text-primary);
-}
-
-.btn-ghost:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  background: var(--accent-base);
-  color: var(--accent-text);
-}
-
-.btn-primary:hover {
-  background: var(--accent-hover);
-}
-
-.btn-primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 .tabs-bar {
   display: flex;
   gap: var(--spacer-1);
@@ -467,31 +450,6 @@ onMounted(loadNotifications);
   border-radius: var(--radius-lg);
   padding: var(--spacer-1);
   margin-bottom: var(--spacer-4);
-}
-
-.tab {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  padding: var(--spacer-2) var(--spacer-3);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--fast-duration), color var(--fast-duration);
-}
-
-.tab:hover {
-  background: var(--subtle-secondary);
-  color: var(--text-primary);
-}
-
-.tab.active {
-  background: var(--accent-base);
-  color: var(--accent-text);
 }
 
 .tab-count {
@@ -589,6 +547,21 @@ onMounted(loadNotifications);
   color: #666;
 }
 
+.notif-icon.share_invite {
+  background: rgba(0, 103, 192, 0.1);
+  color: var(--accent-base);
+}
+
+.notif-icon.share_accepted {
+  background: rgba(16, 124, 16, 0.1);
+  color: var(--status-success);
+}
+
+.notif-icon.share_rejected {
+  background: rgba(220, 38, 38, 0.08);
+  color: var(--status-error);
+}
+
 .notif-content {
   flex: 1;
   min-width: 0;
@@ -675,6 +648,43 @@ onMounted(loadNotifications);
   color: var(--text-primary);
 }
 
+.share-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--fast-duration);
+}
+
+.share-action-btn.accept {
+  background: rgba(16, 124, 16, 0.1);
+  color: var(--status-success);
+}
+
+.share-action-btn.accept:hover {
+  background: rgba(16, 124, 16, 0.2);
+}
+
+.share-action-btn.reject {
+  background: rgba(220, 38, 38, 0.08);
+  color: var(--status-error);
+}
+
+.share-action-btn.reject:hover {
+  background: rgba(220, 38, 38, 0.15);
+}
+
+.share-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .empty-state {
   text-align: center;
   padding: var(--spacer-12);
@@ -690,26 +700,7 @@ onMounted(loadNotifications);
   color: var(--text-tertiary);
 }
 
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 /* 对话框 */
-.dialog-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacer-4);
-}
-
 .dialog {
   width: 100%;
   max-width: 520px;
@@ -775,43 +766,8 @@ onMounted(loadNotifications);
   border-top: 1px solid var(--divider-stroke);
 }
 
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacer-1);
-}
-
-.form-group label {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
 .required {
   color: var(--status-error, #C42B1C);
-}
-
-.form-group input,
-.form-group textarea,
-.form-group select {
-  padding: var(--spacer-2) var(--spacer-3);
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  outline: none;
-  font-family: inherit;
-}
-
-.form-group input:focus,
-.form-group textarea:focus,
-.form-group select:focus {
-  border-color: var(--accent-base);
-}
-
-.form-group textarea {
-  resize: vertical;
 }
 
 .type-options,

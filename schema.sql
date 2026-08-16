@@ -119,8 +119,9 @@ CREATE TABLE IF NOT EXISTS notifications (
     type TEXT NOT NULL DEFAULT 'system',        -- system / info / warning / success
     title TEXT NOT NULL,
     content TEXT,
-    target_type TEXT NOT NULL DEFAULT 'all',    -- all / role / class / user
+    target_type TEXT NOT NULL DEFAULT 'all',    -- all / role / class / user / share_invite / share_accepted / share_rejected
     target_id TEXT,                             -- 目标 ID（role 值时存角色名如 'admin'，class 时存班级 ID，user 时存用户 ID）
+    share_id INTEGER DEFAULT NULL,              -- 关联的分享 ID（share_items.id）
     created_at TEXT NOT NULL
 );
 
@@ -376,14 +377,15 @@ CREATE INDEX IF NOT EXISTS idx_editor_plugins_extensions ON editor_plugins(exten
 CREATE TABLE IF NOT EXISTS web_hosting_spaces (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     alliance_username TEXT NOT NULL,           -- 智教联盟用户名（空间所有者）
-    slug TEXT NOT NULL UNIQUE,                 -- URL 路径别名（/site/{slug} 访问）
+    slug TEXT NOT NULL,                        -- URL 路径别名（/site/{slug} 访问）
     title TEXT,                                -- 站点标题
     description TEXT,                          -- 站点描述
     storage_quota INTEGER NOT NULL DEFAULT 104857600,  -- 存储配额（字节，默认 100MB）
     is_enabled INTEGER NOT NULL DEFAULT 1,     -- 是否启用
+    is_web_space INTEGER DEFAULT 0,            -- 是否为网页空间（1=网页空间, 0/NULL=数据空间）
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE (alliance_username)
+    UNIQUE (alliance_username, slug)
 );
 CREATE INDEX IF NOT EXISTS idx_web_hosting_spaces_user ON web_hosting_spaces(alliance_username);
 CREATE INDEX IF NOT EXISTS idx_web_hosting_spaces_slug ON web_hosting_spaces(slug);
@@ -405,7 +407,53 @@ CREATE TABLE IF NOT EXISTS web_hosting_files (
 CREATE INDEX IF NOT EXISTS idx_web_hosting_files_space ON web_hosting_files(space_id);
 CREATE INDEX IF NOT EXISTS idx_web_hosting_files_path ON web_hosting_files(file_path);
 
--- 分享链接表
+-- ===== 统一分享系统 =====
+-- 分享主表：记录分享的元数据（资源类型、分享者、有效期）
+CREATE TABLE IF NOT EXISTS share_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_key TEXT NOT NULL,                    -- 分享者的 owner_key
+    owner_username TEXT NOT NULL,               -- 分享者用户名
+    resource_type TEXT NOT NULL,                -- 'cloud_file' / 'instance'
+    resource_id INTEGER NOT NULL,               -- 资源 ID（cloud_files.id 或 instances.id）
+    resource_name TEXT NOT NULL,                -- 资源显示名称
+    share_type TEXT NOT NULL DEFAULT 'user',    -- 'user'（按用户分享）/ 'link'（预览链接）
+    permission TEXT NOT NULL DEFAULT 'view',    -- 'view' 或 'edit'
+    expires_at TEXT NOT NULL,                   -- 过期时间
+    is_deleted INTEGER NOT NULL DEFAULT 0,      -- 软删除标记
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_share_items_owner ON share_items(owner_key);
+CREATE INDEX IF NOT EXISTS idx_share_items_resource ON share_items(resource_type, resource_id);
+
+-- 分享用户权限表：记录每个被分享用户的独立权限
+CREATE TABLE IF NOT EXISTS share_user_permissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    share_id INTEGER NOT NULL,
+    target_user_id INTEGER,                     -- 目标用户 ID（可为 NULL 表示链接分享）
+    target_username TEXT,                       -- 目标用户名
+    permission TEXT NOT NULL DEFAULT 'view',    -- 'view' 或 'edit'
+    status TEXT NOT NULL DEFAULT 'pending',     -- 'pending' / 'accepted' / 'rejected'
+    accepted_at TEXT,                           -- 接受时间
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (share_id) REFERENCES share_items(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_share_user_perms_share ON share_user_permissions(share_id);
+CREATE INDEX IF NOT EXISTS idx_share_user_perms_user ON share_user_permissions(target_user_id);
+
+-- 预览链接表：记录分享的预览链接
+CREATE TABLE IF NOT EXISTS share_preview_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    share_id INTEGER NOT NULL,
+    token TEXT NOT NULL UNIQUE,                 -- 预览链接唯一 token
+    is_enabled INTEGER NOT NULL DEFAULT 1,      -- 是否启用预览链接
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (share_id) REFERENCES share_items(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_share_preview_links_token ON share_preview_links(token);
+CREATE INDEX IF NOT EXISTS idx_share_preview_links_share ON share_preview_links(share_id);
+
+-- 保留旧 share_links 表（兼容过渡）
 CREATE TABLE IF NOT EXISTS share_links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   token TEXT NOT NULL UNIQUE,

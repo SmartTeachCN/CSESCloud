@@ -14,37 +14,37 @@
       </div>
 
       <template v-if="sidebarOpen">
-        <!-- 当前文件 -->
-        <div class="current-file-section" v-if="currentFile">
-          <div class="current-file-card">
-            <div class="file-icon"><Icon :icon="currentFile.icon" :size="20" /></div>
-            <div class="file-info">
-              <div class="file-name" :title="currentFile.name">{{ currentFile.name }}</div>
-              <div class="file-meta">{{ currentFile.size }} · {{ currentFile.modified }}</div>
-            </div>
-            <span class="dirty-indicator" v-if="dirty">●</span>
-          </div>
-          <div class="file-actions">
-            <button class="file-action-btn" title="保存" @click="saveFile"><Icon icon="ri-save-line" :size="16" /></button>
-            <button class="file-action-btn" title="关闭" @click="closeFile"><Icon icon="ri-close-line" :size="16" /></button>
-          </div>
-        </div>
-        <div class="current-file-section empty" v-else>
-          <div class="no-file-placeholder">
-            <div class="no-file-icon"><Icon icon="ri-file-2-line" :size="32" /></div>
-            <div class="no-file-text">未打开文件</div>
-            <div class="no-file-hint">点击上方按钮打开文件</div>
-          </div>
-        </div>
-
         <!-- 云文件区域 -->
         <div class="cloud-section">
           <div class="cloud-divider">
             <span>云文件</span>
-            <button v-if="isLoggedIn" class="cloud-add-btn" @click="showCloudNewDialog = true" title="新建云文件">
-              <Icon icon="ri-add-line" :size="14" />
-            </button>
+            <div class="cloud-divider-line"></div>
+            <div class="cloud-plus-menu-wrapper">
+              <button class="cloud-plus-btn" @click="showCloudPlusMenu = !showCloudPlusMenu" title="操作">
+                <Icon icon="ri-add-line" :size="14" />
+              </button>
+              <div v-if="showCloudPlusMenu" class="cloud-plus-menu" @click.stop>
+                <button class="plus-item" @click="showCloudNewDialog = true; showCloudPlusMenu = false">
+                  <Icon icon="ri-file-add-line" :size="14" />
+                  <span>新建文件</span>
+                </button>
+                <button class="plus-item" @click="showCloudNewDirDialog = true; showCloudPlusMenu = false">
+                  <Icon icon="ri-folder-add-line" :size="14" />
+                  <span>新建目录</span>
+                </button>
+                <button class="plus-item" @click="triggerCloudUpload(); showCloudPlusMenu = false">
+                  <Icon icon="ri-upload-2-line" :size="14" />
+                  <span>上传文件</span>
+                </button>
+                <div class="plus-divider"></div>
+                <button class="plus-item" @click="refreshCloudFiles(); showCloudPlusMenu = false">
+                  <Icon icon="ri-refresh-line" :size="14" />
+                  <span>刷新</span>
+                </button>
+              </div>
+            </div>
           </div>
+          <input type="file" ref="cloudUploadInput" @change="handleCloudUpload" hidden />
           <div v-if="!isLoggedIn" class="cloud-login-prompt">
             <div class="login-icon"><Icon icon="ri-cloud-line" :size="36" /></div>
             <div class="login-text">登录以使用云文件</div>
@@ -56,15 +56,19 @@
               v-for="file in cloudFiles"
               :key="file.id"
               class="cloud-file-item"
-              :class="{ active: currentFile?.id === file.id }"
+              :class="{ active: currentFile?.id === file.id, 'shared-from-other': file.source === 'shared' }"
               @click="openCloudFile(file)"
+              @contextmenu.prevent="onCloudFileCtxMenu(file, $event)"
             >
               <span class="cloud-file-icon"><Icon :icon="file.icon" :size="16" /></span>
               <span class="cloud-file-name">{{ file.name }}</span>
+              <span v-if="file.is_shared && file.source !== 'shared'" class="cloud-file-shared-badge" title="已分享">
+                <Icon icon="ri-share-line" :size="10" />
+              </span>
+              <span v-if="file.source === 'shared'" class="cloud-file-shared-from-badge" :title="'来自 ' + file.shared_from + ' 的分享'">
+                <Icon icon="ri-share-forward-line" :size="10" /> 来自分享
+              </span>
               <span class="cloud-file-size">{{ file.size }}</span>
-              <button class="cloud-file-delete" @click.stop="deleteCloudFile(file)" title="删除">
-                <Icon icon="ri-close-line" :size="12" />
-              </button>
             </div>
             <div v-if="!cloudLoading && cloudFiles.length === 0" class="cloud-empty">
               <span>暂无云文件</span>
@@ -102,10 +106,42 @@
         </div>
       </header>
 
+      <!-- 标签页（在 Ribbon 上方） -->
+      <div class="editor-tabs-row" v-if="editorTabs.length > 0">
+        <div class="editor-tabs">
+          <div
+            v-for="tab in editorTabs"
+            :key="tab.id"
+            class="editor-tab"
+            :class="{ active: tab.id === (currentFile?.id || ''), dirty: tab.dirty }"
+            @click="onTabClick(tab.id)"
+          >
+            <Icon :icon="tab.icon" :size="14" class="tab-icon" />
+            <span class="tab-title" :title="tab.name">{{ tab.name }}</span>
+            <span v-if="tab.dirty" class="dirty-dot"></span>
+            <button class="tab-close" @click.stop="onTabClose(tab.id)" title="关闭">
+              <Icon icon="ri-close-line" :size="12" />
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Ribbon 工具栏 -->
       <RibbonToolbar
         :editor-info="editorInfo"
         :saving="saving"
+        :is-instance="false"
+        :can-undo="!!currentFile"
+        :can-redo="!!currentFile"
+        :can-save="!!currentFile"
+        :can-auto-save="!!currentFile"
+        :right-actions="[
+          { id: 'share', label: '分享', icon: 'ri-share-forward-line', enabled: !!currentFile },
+          { id: 'history', label: '操作记录', icon: 'ri-history-line', enabled: !!currentFile },
+          { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', enabled: !!currentFile && currentFile?.source === 'cloud' },
+          { id: 'import', label: '导入', icon: 'ri-download-line', enabled: !!currentFile },
+          { id: 'export', label: '导出', icon: 'ri-upload-2-line', enabled: !!currentFile },
+        ]"
         @save="saveFile"
         @undo="handleUndo"
         @redo="handleRedo"
@@ -122,6 +158,7 @@
             :tabs="editorTabs"
             :active-tab-id="currentFile?.id || ''"
             :read-only="false"
+            :hide-tabs="true"
             @tab-click="onTabClick"
             @tab-close="onTabClose"
             @update:content="onContentUpdate"
@@ -166,8 +203,32 @@
                 <button class="ctx-item" @click="openPanel('find'); contextMenu.visible = false">
                   <Icon icon="ri-search-line" :size="14" /> 查找替换
                 </button>
-                <button class="ctx-item" @click="showShareDialog = true; contextMenu.visible = false" v-if="currentFile">
+                <button class="ctx-item" @click="handleShare(); contextMenu.visible = false" v-if="currentFile">
                   <Icon icon="ri-share-forward-line" :size="14" /> 分享
+                </button>
+              </div>
+            </div>
+          </Teleport>
+
+          <!-- 云文件右键菜单 -->
+          <Teleport to="body">
+            <div v-if="cloudCtxMenu.visible" class="context-menu-overlay" @click="cloudCtxMenu.visible = false" @contextmenu.prevent="cloudCtxMenu.visible = false">
+              <div class="context-menu" :style="{ left: cloudCtxMenu.x + 'px', top: cloudCtxMenu.y + 'px' }">
+                <button class="ctx-item" @click="openCloudFile(cloudCtxMenu.file!); cloudCtxMenu.visible = false">
+                  <Icon icon="ri-folder-open-line" :size="14" /> 打开
+                </button>
+                <button class="ctx-item" @click="handleShareCloudFile(cloudCtxMenu.file!); cloudCtxMenu.visible = false" v-if="cloudCtxMenu.file && cloudCtxMenu.file.source !== 'shared'">
+                  <Icon icon="ri-share-forward-line" :size="14" /> 分享
+                </button>
+                <button class="ctx-item" @click="downloadCloudFile(cloudCtxMenu.file!); cloudCtxMenu.visible = false">
+                  <Icon icon="ri-download-line" :size="14" /> 下载
+                </button>
+                <div class="ctx-divider"></div>
+                <button class="ctx-item" @click="renameCloudFile(cloudCtxMenu.file!); cloudCtxMenu.visible = false" v-if="cloudCtxMenu.file && cloudCtxMenu.file.source !== 'shared'">
+                  <Icon icon="ri-edit-line" :size="14" /> 重命名
+                </button>
+                <button class="ctx-item danger" @click="deleteCloudFile(cloudCtxMenu.file!); cloudCtxMenu.visible = false" v-if="cloudCtxMenu.file && cloudCtxMenu.file.source !== 'shared'">
+                  <Icon icon="ri-delete-bin-line" :size="14" /> 删除
                 </button>
               </div>
             </div>
@@ -179,7 +240,6 @@
 
         <!-- 右侧面板 -->
         <div class="split-area" :class="{ collapsed: rightPanelCollapsed }" :style="rightPanelCollapsed ? {} : { width: rightPanelWidth + '%' }">
-          <!-- 折叠按钮 -->
           <button class="panel-collapse-btn" @click="rightPanelCollapsed = !rightPanelCollapsed" :title="rightPanelCollapsed ? '展开面板' : '收起面板'">
             <Icon :icon="rightPanelCollapsed ? 'ri-menu-fold-line' : 'ri-menu-unfold-line'" :size="14" />
           </button>
@@ -210,7 +270,6 @@
               <button class="split-tab add-tab" title="添加面板" @click="showPanelPicker = !showPanelPicker">
                 <Icon icon="ri-add-line" :size="14" />
               </button>
-              <!-- 面板选择器 -->
               <div v-if="showPanelPicker" class="panel-picker" @click.stop>
                 <div class="panel-picker-title">选择面板</div>
                 <button
@@ -326,13 +385,51 @@
     </div>
   </Teleport>
 
+  <!-- 新建云目录对话框 -->
+  <Teleport to="body">
+    <div v-if="showCloudNewDirDialog" class="dialog-overlay" @click.self="showCloudNewDirDialog = false">
+      <div class="dialog-card">
+        <h3>新建目录</h3>
+        <div class="dialog-field">
+          <label>目录名</label>
+          <input type="text" v-model="newCloudDirName" class="dialog-input" placeholder="例如：images" @keyup.enter="createCloudDir" />
+        </div>
+        <div class="dialog-actions">
+          <button class="secondary-btn" @click="showCloudNewDirDialog = false">取消</button>
+          <button class="primary-btn" @click="createCloudDir">创建</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- 重命名对话框 -->
+  <Teleport to="body">
+    <div v-if="showRenameDialog" class="dialog-overlay" @click.self="showRenameDialog = false">
+      <div class="dialog-card">
+        <h3>重命名</h3>
+        <div class="dialog-field">
+          <label>新名称</label>
+          <input type="text" v-model="renameFileName" class="dialog-input" @keyup.enter="confirmRename" />
+        </div>
+        <div class="dialog-actions">
+          <button class="secondary-btn" @click="showRenameDialog = false">取消</button>
+          <button class="primary-btn" @click="confirmRename">确定</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <!-- 分享对话框 -->
   <ShareDialog
     :visible="showShareDialog"
-    :file-id="currentFile?.source === 'cloud' ? currentFile.id : ''"
-    :file-name="currentFile?.name || ''"
-    :file-content="currentFile?.content || ''"
-    @close="showShareDialog = false"
+    resource-type="cloud_file"
+    :resource-id="currentFile?.source === 'cloud' ? currentFile.id : ''"
+    :resource-name="currentFile?.name || ''"
+    resource-icon="ri-file-2-line"
+    resource-label="文件"
+    @close="onShareDialogClose"
+    @created="loadCloudFiles"
+    @updated="loadCloudFiles"
   />
 </template>
 
@@ -358,6 +455,7 @@ const { user } = useAuth();
 // ===== 侧栏 =====
 const sidebarOpen = ref(true);
 const fileInput = ref<HTMLInputElement | null>(null);
+const cloudUploadInput = ref<HTMLInputElement | null>(null);
 const isLoggedIn = computed(() => user.value?.type === 'alliance');
 const storageUsed = ref('0 B');
 const storageTotal = ref('100 MB');
@@ -376,9 +474,10 @@ interface EditorFile {
   size: string;
   modified: string;
   dirty: boolean;
-  source: 'local' | 'cloud';
+  source: 'local' | 'cloud' | 'shared';
   content?: string;
   ext?: string;
+  readOnly?: boolean;
 }
 
 interface CloudFile {
@@ -387,13 +486,16 @@ interface CloudFile {
   icon: string;
   size: string;
   url: string;
+  is_shared?: number;
+  source?: string;
+  shared_from?: string;
+  shared_permission?: string;
 }
 
 const openTabs = ref<EditorFile[]>([]);
 const currentFile = ref<EditorFile | null>(null);
 const dirty = ref(false);
 
-// AI 编辑器上下文
 const aiEditorContext = computed(() => {
   if (!currentFile.value) return undefined;
   return {
@@ -406,12 +508,10 @@ const saving = ref(false);
 const autoSave = ref(true);
 const editorPaneRef = ref<InstanceType<typeof EditorPane> | null>(null);
 
-// AI 应用编辑
 function onAiApplyEdit(payload: { content: string; replaceAll?: boolean }) {
   if (!currentFile.value) return;
   currentFile.value.content = payload.content;
   dirty.value = true;
-  // 刷新编辑器内容
   if (editorPaneRef.value) {
     editorPaneRef.value.setValue(payload.content);
   }
@@ -436,7 +536,7 @@ const editorTabs = computed<TabInfo[]>(() => openTabs.value.map(t => ({
   id: t.id,
   name: t.name,
   icon: t.icon,
-  isText: true, // EditorPane handles non-text separately
+  isText: true,
   content: t.content || '',
   dirty: t.dirty,
   language: t.ext || 'plaintext',
@@ -445,6 +545,16 @@ const editorTabs = computed<TabInfo[]>(() => openTabs.value.map(t => ({
 
 const cloudFiles = ref<CloudFile[]>([]);
 const cloudLoading = ref(false);
+
+// ===== 云文件加号菜单 =====
+const showCloudPlusMenu = ref(false);
+
+// ===== 云文件右键菜单 =====
+const cloudCtxMenu = ref<{ visible: boolean; x: number; y: number; file: CloudFile | null }>({ visible: false, x: 0, y: 0, file: null });
+
+function onCloudFileCtxMenu(file: CloudFile, e: MouseEvent) {
+  cloudCtxMenu.value = { visible: true, x: e.clientX, y: e.clientY, file };
+}
 
 // ===== 云文件 API 封装 =====
 const cloudApi = {
@@ -468,12 +578,20 @@ async function loadCloudFiles() {
       url: '#',
       file_type: f.file_type,
       updated_at: f.updated_at,
+      is_shared: f.is_shared || 0,
+      source: f.source || 'owned',
+      shared_from: f.shared_from || '',
+      shared_permission: f.shared_permission || '',
     }));
   } catch {
     cloudFiles.value = [];
   } finally {
     cloudLoading.value = false;
   }
+}
+
+function refreshCloudFiles() {
+  loadCloudFiles();
 }
 
 function formatFileSize(bytes: number): string {
@@ -484,9 +602,11 @@ function formatFileSize(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
-// ===== 新建云文件 =====
+// ===== 新建云文件/目录 =====
 const showCloudNewDialog = ref(false);
 const newCloudFileName = ref('');
+const showCloudNewDirDialog = ref(false);
+const newCloudDirName = ref('');
 
 async function createCloudFile() {
   const name = newCloudFileName.value.trim();
@@ -501,11 +621,47 @@ async function createCloudFile() {
   }
 }
 
+async function createCloudDir() {
+  const name = newCloudDirName.value.trim();
+  if (!name) return;
+  showCloudNewDirDialog.value = false;
+  newCloudDirName.value = '';
+  try {
+    await api.post('/cloud-files.php?action=create-dir', { name });
+    await loadCloudFiles();
+  } catch (e: any) {
+    console.error('创建目录失败', e);
+  }
+}
+
+function triggerCloudUpload() {
+  cloudUploadInput.value?.click();
+}
+
+function handleCloudUpload(event: Event) {
+  const target = event.target as HTMLInputElement;
+  const file = target.files?.[0];
+  if (!file) return;
+  // Upload via cloud files API
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const content = e.target?.result as string;
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'txt';
+    try {
+      await cloudApi.create({ name: file.name, content, file_type: ext });
+      await loadCloudFiles();
+    } catch (err: any) {
+      console.error('上传失败', err);
+    }
+  };
+  reader.readAsText(file);
+  target.value = '';
+}
+
 async function deleteCloudFile(file: CloudFile) {
   if (!confirm(`确定删除云文件 "${file.name}" 吗？`)) return;
   try {
     await cloudApi.delete(Number(file.id));
-    // 如果当前打开的是这个文件，关闭它
     if (currentFile.value?.id === file.id) {
       closeTab(currentFile.value);
     }
@@ -513,6 +669,67 @@ async function deleteCloudFile(file: CloudFile) {
   } catch (e: any) {
     console.error('删除云文件失败', e);
   }
+}
+
+function downloadCloudFile(file: CloudFile) {
+  // Find the file in openTabs or load it
+  const existing = openTabs.value.find(t => t.id === file.id);
+  if (existing && existing.content) {
+    const blob = new Blob([existing.content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name;
+    a.click();
+    URL.revokeObjectURL(url);
+  } else {
+    // Load from cloud
+    cloudApi.get(Number(file.id)).then((data: any) => {
+      const blob = new Blob([data.content || ''], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name;
+      a.click();
+      URL.revokeObjectURL(url);
+    }).catch(() => {});
+  }
+}
+
+const showRenameDialog = ref(false);
+const renameFileName = ref('');
+let renameTargetFile: CloudFile | null = null;
+
+function renameCloudFile(file: CloudFile) {
+  renameTargetFile = file;
+  renameFileName.value = file.name;
+  showRenameDialog.value = true;
+}
+
+async function confirmRename() {
+  const newName = renameFileName.value.trim();
+  if (!newName || !renameTargetFile) return;
+  showRenameDialog.value = false;
+  try {
+    await api.post('/cloud-files.php?action=rename', { id: Number(renameTargetFile.id), name: newName });
+    // Update local tab if open
+    const tab = openTabs.value.find(t => t.id === renameTargetFile!.id);
+    if (tab) {
+      tab.name = newName;
+      tab.ext = newName.split('.').pop()?.toLowerCase() || '';
+    }
+    await loadCloudFiles();
+    renameTargetFile = null;
+  } catch (e: any) {
+    console.error('重命名失败', e);
+  }
+}
+
+function handleShareCloudFile(file: CloudFile) {
+  // Open the file first, then share
+  openCloudFile(file).then(() => {
+    showShareDialog.value = true;
+  });
 }
 
 // ===== 插件系统（仅用于顶栏指示器） =====
@@ -532,7 +749,12 @@ const currentFileType = computed(() => {
 
 // ===== Ribbon 编辑器信息 =====
 const editorInfo = computed(() => {
-  if (!currentFile.value) return undefined;
+  if (!currentFile.value) return {
+    title: '未打开文件',
+    type: '轻编辑器',
+    icon: 'ri-file-2-line',
+    editButtonLabel: '打开文件',
+  };
   return {
     title: currentFile.value.name,
     type: currentFileType.value,
@@ -542,8 +764,6 @@ const editorInfo = computed(() => {
     editButtonLabel: '打开文件',
   };
 });
-
-const editorLanguage = computed(() => currentFile.value?.ext || 'plaintext');
 
 const lineCount = computed(() => currentFile.value?.content ? currentFile.value.content.split('\n').length : 0);
 const charCount = computed(() => currentFile.value?.content ? currentFile.value.content.length : 0);
@@ -593,8 +813,8 @@ const allAvailablePanels: PanelDef[] = [
   { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', closable: true },
 ];
 const visiblePanels = ref<PanelDef[]>([
-  allAvailablePanels[0], // AI助理
-  allAvailablePanels[1], // 属性
+  allAvailablePanels[0],
+  allAvailablePanels[1],
 ]);
 const activePanel = ref('ai');
 const showPanelPicker = ref(false);
@@ -626,7 +846,6 @@ function addPanel(panel: PanelDef) {
   activePanel.value = panel.id;
 }
 
-// 拖拽排序
 let dragSrcIdx = -1;
 function onPanelDragStart(idx: number, e: DragEvent) {
   dragSrcIdx = idx;
@@ -647,7 +866,6 @@ function onPanelDragEnd() {
   dragSrcIdx = -1;
 }
 
-// 查找替换
 const findText = ref('');
 const replaceText = ref('');
 const rightPanelWidth = ref(25);
@@ -678,7 +896,6 @@ const iconMap: Record<string, string> = {
   csv: 'ri-bar-chart-line', sql: 'ri-database-2-line', py: 'ri-code-s-slash-line'
 };
 
-// ===== 加载插件列表 =====
 async function loadPlugins() {
   try {
     allPlugins.value = await pluginApi.published();
@@ -687,7 +904,6 @@ async function loadPlugins() {
   }
 }
 
-// ===== 根据后缀查找插件（用于顶栏指示器） =====
 async function resolvePlugin(ext: string): Promise<any | null> {
   if (!ext) return null;
   try {
@@ -698,7 +914,6 @@ async function resolvePlugin(ext: string): Promise<any | null> {
   }
 }
 
-// ===== 文件操作 =====
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -739,6 +954,8 @@ async function openCloudFile(cloudFile: CloudFile) {
   try {
     const data = await cloudApi.get(Number(cloudFile.id));
     const ext = cloudFile.name.split('.').pop()?.toLowerCase() || '';
+    const isFromShare = cloudFile.source === 'shared';
+    const isReadOnly = isFromShare && (data.permission || cloudFile.shared_permission) === 'view';
     const editorFile: EditorFile = {
       id: cloudFile.id,
       name: cloudFile.name,
@@ -746,10 +963,14 @@ async function openCloudFile(cloudFile: CloudFile) {
       size: cloudFile.size,
       modified: data.updated_at || '未知',
       dirty: false,
-      source: 'cloud',
+      source: isFromShare ? 'shared' : 'cloud',
       content: data.content || '',
-      ext
+      ext,
+      readOnly: isReadOnly,
     };
+    if (isReadOnly) {
+      alert('此文件为只读分享，无法编辑。');
+    }
     openFile(editorFile);
   } catch (e: any) {
     console.error('加载云文件失败', e);
@@ -800,18 +1021,16 @@ function closeTab(tab: EditorFile) {
   }
 }
 
-function closeFile() {
-  if (currentFile.value) {
-    closeTab(currentFile.value);
-  }
-}
-
 async function saveFile() {
   if (!currentFile.value) return;
+  if (currentFile.value.readOnly) {
+    alert('此文件为只读分享，无法保存。');
+    return;
+  }
   saving.value = true;
 
   try {
-    if (currentFile.value.source === 'cloud') {
+    if (currentFile.value.source === 'cloud' || currentFile.value.source === 'shared') {
       await cloudApi.update({
         id: Number(currentFile.value.id),
         content: currentFile.value.content || '',
@@ -828,14 +1047,17 @@ async function saveFile() {
   }
 }
 
-// ===== Ribbon 工具回调 =====
+function saveCurrentFile() {
+  saveFile();
+}
+
 function onRibbonTool(tool: any) {
   if (tool.command === 'find') openPanel('find');
   else if (tool.command === 'replace') openPanel('find');
   else if (tool.command === 'history') openPanel('history');
   else if (tool.command === 'version') openPanel('version');
   else if (tool.command === 'share') {
-    if (currentFile.value) showShareDialog.value = true;
+    handleShare();
   }
   else if (tool.command === 'import') handleImport();
   else if (tool.command === 'export') handleExport();
@@ -845,7 +1067,6 @@ function onRibbonTool(tool: any) {
   }
 }
 
-// ===== 撤销/重做 =====
 function handleUndo() {
   editorPaneRef.value?.undo();
 }
@@ -854,7 +1075,6 @@ function handleRedo() {
   editorPaneRef.value?.redo();
 }
 
-// ===== 导入/导出 =====
 function handleImport() {
   if (!currentFile.value) {
     openLocalFile();
@@ -892,7 +1112,6 @@ function handleExport() {
   URL.revokeObjectURL(url);
 }
 
-// ===== 本地操作记录 =====
 function addLocalHistory(content: string) {
   localHistoryStep++;
   localHistory.value.push({
@@ -929,11 +1148,36 @@ function onAutoSaveChange(v: boolean) {
   autoSave.value = v;
 }
 
-// ===== 查找替换 =====
+function onShareDialogClose() {
+  showShareDialog.value = false;
+}
+
+async function handleShare() {
+  if (!currentFile.value) return;
+  if (currentFile.value.source !== 'cloud') {
+    if (!confirm('当前文件尚未保存到云文件。\n\n确认分享将自动上传到云文件，是否继续？')) return;
+    try {
+      const ext = currentFile.value.ext || 'txt';
+      const name = currentFile.value.name;
+      await cloudApi.create({ name, content: currentFile.value.content || '', file_type: ext });
+      await loadCloudFiles();
+      const uploaded = cloudFiles.value.find(f => f.name === name && f.source === 'owned');
+      if (uploaded) {
+        currentFile.value.source = 'cloud';
+        currentFile.value.id = uploaded.id;
+        showShareDialog.value = true;
+      }
+    } catch (e: any) {
+      alert('上传失败: ' + (e.message || '未知错误'));
+    }
+    return;
+  }
+  showShareDialog.value = true;
+}
+
 function doFind() {
-  const content = currentFile.value?.content;
-  if (!findText.value || !content) return;
-  const idx = content.indexOf(findText.value);
+  if (!findText.value || !currentFile.value?.content) return;
+  const idx = currentFile.value.content.indexOf(findText.value);
   if (idx === -1) {
     alert('未找到');
   }
@@ -953,7 +1197,6 @@ function doReplaceAll() {
   dirty.value = true;
 }
 
-// ===== 拖拽分隔条 =====
 function startDrag(e: MouseEvent) {
   const startX = e.clientX;
   const startWidth = rightPanelWidth.value;
@@ -971,7 +1214,6 @@ function startDrag(e: MouseEvent) {
   document.addEventListener('mouseup', onMouseUp);
 }
 
-// ===== 导航 =====
 function goLogin() {
   router.push('/login');
 }
@@ -1034,40 +1276,78 @@ onMounted(() => {
 }
 .open-local-btn:hover { background: var(--accent-hover); }
 
-.current-file-section { padding: var(--spacer-3); border-bottom: 1px solid var(--divider-stroke); }
-.current-file-section.empty { padding: var(--spacer-4) var(--spacer-3); }
-
-.current-file-card {
-  display: flex; align-items: center; gap: var(--spacer-2);
-  padding: var(--spacer-2); background: var(--subtle-secondary);
-  border-radius: var(--radius-md); margin-bottom: var(--spacer-2); position: relative;
-}
-.file-icon { font-size: 24px; flex-shrink: 0; }
-.file-info { flex: 1; min-width: 0; }
-.file-name { font-size: var(--font-size-sm); font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.file-meta { font-size: var(--font-size-xs); color: var(--text-tertiary); margin-top: 2px; }
-.dirty-indicator { color: var(--status-warning); font-size: 12px; }
-
-.file-actions { display: flex; gap: var(--spacer-1); }
-.file-action-btn {
-  flex: 1; height: 32px; background: transparent;
-  border: 1px solid var(--divider-stroke); border-radius: var(--radius-sm);
-  cursor: pointer; font-size: 14px;
-}
-.file-action-btn:hover { background: var(--subtle-secondary); }
-
-.no-file-placeholder { display: flex; flex-direction: column; align-items: center; gap: var(--spacer-1); text-align: center; color: var(--text-tertiary); }
-.no-file-icon { font-size: 32px; margin-bottom: var(--spacer-2); }
-.no-file-text { font-size: var(--font-size-sm); font-weight: 500; color: var(--text-secondary); }
-.no-file-hint { font-size: var(--font-size-xs); }
-
 .cloud-section { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: var(--spacer-2) var(--spacer-3); }
-.cloud-divider { display: flex; align-items: center; gap: var(--spacer-2); margin: var(--spacer-3) 0 var(--spacer-3); }
-.cloud-divider::before { content: ''; flex: 1; height: 1px; background: var(--divider-stroke); }
-.cloud-divider::after { content: ''; width: 0; }
-.cloud-divider span { font-size: var(--font-size-xs); font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
-.cloud-add-btn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; border-radius: var(--radius-xs); }
-.cloud-add-btn:hover { background: var(--subtle-secondary); color: var(--text-primary); }
+
+/* 云文件标题 + 横线 + 加号 */
+.cloud-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  margin: var(--spacer-2) 0 var(--spacer-3);
+}
+.cloud-divider > span {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cloud-divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--divider-stroke);
+}
+
+/* 加号菜单 */
+.cloud-plus-menu-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+.cloud-plus-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+.cloud-plus-btn:hover { background: var(--subtle-secondary); color: var(--text-primary); }
+
+.cloud-plus-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  min-width: 160px;
+  background: var(--flyout-bg);
+  border: 1px solid var(--flyout-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  z-index: 100;
+  padding: var(--spacer-1);
+}
+.plus-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  width: 100%;
+  padding: var(--spacer-2) var(--spacer-3);
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+.plus-item:hover { background: var(--subtle-secondary); }
+.plus-divider { height: 1px; background: var(--divider-stroke); margin: var(--spacer-1) 0; }
+
 .cloud-loading { text-align: center; padding: var(--spacer-4); font-size: var(--font-size-xs); color: var(--text-tertiary); }
 
 .cloud-login-prompt { display: flex; flex-direction: column; align-items: center; padding: var(--spacer-4); text-align: center; }
@@ -1079,13 +1359,12 @@ onMounted(() => {
 .cloud-file-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: var(--spacer-1); }
 .cloud-file-item { display: flex; align-items: center; gap: var(--spacer-2); padding: var(--spacer-2); background: transparent; border-radius: var(--radius-sm); font-size: var(--font-size-sm); color: var(--text-secondary); cursor: pointer; }
 .cloud-file-item:hover { background: var(--subtle-secondary); color: var(--text-primary); }
-.cloud-file-item:hover .cloud-file-delete { display: flex; }
 .cloud-file-item.active { background: var(--subtle-pressed); color: var(--text-primary); }
 .cloud-file-icon { font-size: 16px; }
 .cloud-file-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cloud-file-size { font-size: var(--font-size-xs); color: var(--text-tertiary); }
-.cloud-file-delete { display: none; align-items: center; justify-content: center; width: 18px; height: 18px; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; border-radius: var(--radius-xs); flex-shrink: 0; }
-.cloud-file-delete:hover { color: var(--status-error); background: rgba(196, 43, 43, 0.08); }
+.cloud-file-size { font-size: var(--font-size-xs); color: var(--text-tertiary); flex-shrink: 0; }
+.cloud-file-shared-badge { display: inline-flex; align-items: center; color: var(--status-success); flex-shrink: 0; }
+.cloud-file-shared-from-badge { display: inline-flex; align-items: center; gap: 2px; font-size: 9px; color: var(--accent-base); background: var(--accent-bg); padding: 0 4px; border-radius: var(--radius-xs); flex-shrink: 0; }
 .cloud-empty { text-align: center; padding: var(--spacer-4); font-size: var(--font-size-xs); color: var(--text-tertiary); }
 
 .sidebar-footer { padding: var(--spacer-3); border-top: 1px solid var(--divider-stroke); background: var(--subtle-secondary); }
@@ -1102,25 +1381,14 @@ onMounted(() => {
   overflow: hidden; background: var(--app-bg);
 }
 
-.editor-top-bar {
-  display: flex; align-items: center; justify-content: space-between;
-  height: 44px; background: var(--layer-default);
-  border-bottom: 1px solid var(--divider-stroke);
-  padding: 0 var(--spacer-3); gap: var(--spacer-3); flex-shrink: 0;
-}
 .top-bar-left { display: flex; align-items: center; gap: var(--spacer-3); flex: 1; min-width: 0; }
-.editor-brand { display: flex; align-items: center; gap: var(--spacer-2); flex-shrink: 0; padding-right: var(--spacer-3); border-right: 1px solid var(--divider-stroke); }
-.brand-text { font-size: var(--font-size-sm); font-weight: 600; color: var(--text-primary); }
 
 .top-bar-right { display: flex; align-items: center; gap: var(--spacer-2); flex-shrink: 0; }
-.plugin-indicator { display: inline-flex; align-items: center; gap: 4px; font-size: var(--font-size-xs); color: var(--accent-base); padding: 2px var(--spacer-2); background: var(--accent-bg); border-radius: var(--radius-full); }
-.file-type-badge { font-size: var(--font-size-xs); color: var(--text-tertiary); padding: 2px var(--spacer-2); background: var(--subtle-secondary); border-radius: var(--radius-full); }
 
-/* ---- 编辑器主体 ---- */
-.editor-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-.editor-area { flex: 1; min-width: 0; background: var(--app-bg); position: relative; }
 
-/* empty-actions slot 按钮 */
+
+
+
 .welcome-actions { display: flex; flex-direction: column; gap: var(--spacer-2); margin-top: var(--spacer-3); }
 .welcome-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--spacer-2); padding: var(--spacer-3) var(--spacer-5); border-radius: var(--radius-md); font-size: var(--font-size-base); font-weight: 500; cursor: pointer; border: none; }
 .welcome-btn.primary { background: var(--accent-base); color: white; }
@@ -1128,86 +1396,26 @@ onMounted(() => {
 .welcome-btn.secondary { background: var(--subtle-secondary); color: var(--text-primary); }
 .welcome-btn.secondary:hover { background: var(--subtle-pressed); }
 
-/* ---- 分隔条 ---- */
-.editor-splitter { width: 4px; background: transparent; cursor: col-resize; flex-shrink: 0; position: relative; z-index: 5; }
-.editor-splitter:hover { background: var(--accent-base); }
 
-/* ---- 右侧面板 ---- */
-.split-area { display: flex; flex-direction: column; min-width: 200px; max-width: 50%; background: var(--layer-default); border-left: 1px solid var(--divider-stroke); flex-shrink: 0; position: relative; }
-.split-area.collapsed { min-width: 32px; max-width: 32px; border-left: 1px solid var(--divider-stroke); }
-.split-tabs { display: flex; border-bottom: 1px solid var(--divider-stroke); background: var(--subtle-secondary); flex-shrink: 0; position: relative; }
-.split-tabs-scroll { display: flex; overflow-x: auto; flex: 1; scrollbar-width: none; }
-.split-tabs-scroll::-webkit-scrollbar { display: none; }
-.split-tab { display: inline-flex; align-items: center; gap: 4px; padding: var(--spacer-2) var(--spacer-3); background: transparent; border: none; border-bottom: 2px solid transparent; font-size: var(--font-size-xs); color: var(--text-tertiary); cursor: pointer; white-space: nowrap; flex-shrink: 0; }
-.split-tab:hover { color: var(--text-primary); }
-.split-tab.active { color: var(--text-primary); border-bottom-color: var(--accent-base); font-weight: 500; }
-.split-tab.add-tab { padding: var(--spacer-2) var(--spacer-2); border-left: 1px solid var(--divider-stroke); }
-.tab-close-btn { height: 14px; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; border-radius: 2px; margin-left: 2px; }
-.tab-close-btn:hover { background: var(--subtle-pressed); color: var(--status-error); }
 
-/* 面板折叠按钮 */
-.panel-collapse-btn { position: absolute; left: -16px; top: 50%; transform: translateY(-50%); width: 16px; height: 32px; padding: 2px; display: flex; align-items: center; justify-content: center; background: var(--layer-default); border: 1px solid var(--divider-stroke); border-right: none; border-radius: var(--radius-sm) 0 0 var(--radius-sm); color: var(--text-tertiary); cursor: pointer; z-index: 10; }
-.split-area.collapsed .panel-collapse-btn { left: auto; right: 0; border-right: 1px solid var(--divider-stroke); border-left: none; border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
-.panel-collapse-btn:hover { color: var(--text-primary); background: var(--subtle-secondary); }
 
-/* 面板选择器 */
-.panel-picker { position: absolute; top: 100%; right: 0; min-width: 160px; background: var(--flyout-bg); border: 1px solid var(--flyout-border); border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(0,0,0,0.15); z-index: 100; padding: var(--spacer-1); }
-.panel-picker-title { font-size: var(--font-size-xs); font-weight: 600; color: var(--text-tertiary); padding: var(--spacer-1) var(--spacer-2); }
-.panel-picker-item { display: flex; align-items: center; gap: var(--spacer-2); width: 100%; padding: var(--spacer-1) var(--spacer-2); border: none; background: transparent; color: var(--text-primary); font-size: var(--font-size-sm); cursor: pointer; border-radius: var(--radius-sm); }
-.panel-picker-item:hover { background: var(--subtle-secondary); }
-.panel-picker-item.disabled { opacity: 0.4; cursor: not-allowed; }
-.check-icon { margin-left: auto; color: var(--status-success); }
-.split-content { flex: 1; overflow: auto; display: flex; flex-direction: column; }
 
-.panel-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: var(--spacer-4); text-align: center; color: var(--text-tertiary); }
-.placeholder-icon { font-size: 48px; margin-bottom: var(--spacer-3); }
-.placeholder-title { font-size: var(--font-size-sm); font-weight: 600; color: var(--text-secondary); }
-.placeholder-desc { font-size: var(--font-size-xs); margin-top: var(--spacer-1); }
+
+
+
+
 
 .outline-content, .outline-hint { padding: var(--spacer-3); font-size: var(--font-size-xs); color: var(--text-tertiary); }
 
-.find-panel { padding: var(--spacer-3); }
-.find-section { display: flex; flex-direction: column; gap: var(--spacer-2); }
-.find-row { display: flex; align-items: center; gap: var(--spacer-2); }
-.find-row input { flex: 1; padding: var(--spacer-1) var(--spacer-2); background: var(--ctrl-fill-default); border: 1px solid var(--ctrl-border); border-radius: var(--radius-sm); font-size: var(--font-size-xs); color: var(--text-primary); outline: none; }
-.find-row input:focus { border-color: var(--accent-base); }
-.find-btn { padding: var(--spacer-1) var(--spacer-2); background: var(--subtle-secondary); border: 1px solid var(--ctrl-border); border-radius: var(--radius-sm); font-size: var(--font-size-xs); color: var(--text-secondary); cursor: pointer; }
-.find-btn:hover { background: var(--subtle-pressed); color: var(--text-primary); }
+
 
 .props-panel { padding: var(--spacer-3); }
 .property-list { display: flex; flex-direction: column; gap: var(--spacer-3); }
-.property-item { display: flex; flex-direction: column; gap: var(--spacer-1); }
-.property-item label { font-size: var(--font-size-xs); color: var(--text-tertiary); font-weight: 500; }
-.property-item span { font-size: var(--font-size-sm); color: var(--text-primary); font-family: var(--font-mono, monospace); }
 
-/* ---- 状态栏 ---- */
-.editor-status-bar {
-  display: flex; justify-content: space-between; align-items: center;
-  height: 24px; background: var(--subtle-secondary);
-  border-top: 1px solid var(--divider-stroke);
-  padding: 0 var(--spacer-3); font-size: var(--font-size-xs); color: var(--text-tertiary); flex-shrink: 0;
-}
-.status-left, .status-right { display: flex; gap: var(--spacer-3); align-items: center; }
-.status-item { white-space: nowrap; }
 
-/* ---- 对话框 ---- */
-.dialog-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 500; display: flex; align-items: center; justify-content: center; }
-.dialog-card { background: var(--flyout-bg); backdrop-filter: var(--flyout-backdrop); border: 1px solid var(--flyout-border); border-radius: var(--radius-lg); padding: var(--spacer-5); min-width: 360px; max-width: 480px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12); }
-.dialog-card h3 { font-size: var(--font-size-lg); font-weight: 600; color: var(--text-primary); margin: 0 0 var(--spacer-4); }
-.dialog-field { display: flex; flex-direction: column; gap: var(--spacer-1); margin-bottom: var(--spacer-4); }
-.dialog-field label { font-size: var(--font-size-sm); font-weight: 500; color: var(--text-secondary); }
-.dialog-input { height: 36px; padding: 0 var(--spacer-3); background: var(--ctrl-fill-default); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--font-size-sm); outline: none; }
-.dialog-input:focus { border-color: var(--accent-base); }
-.dialog-actions { display: flex; justify-content: flex-end; gap: var(--spacer-2); }
-.primary-btn { display: inline-flex; align-items: center; gap: var(--spacer-2); padding: var(--spacer-2) var(--spacer-4); background: var(--accent-base); color: var(--accent-text); border: none; border-radius: var(--radius-sm); font-size: var(--font-size-sm); font-weight: 500; cursor: pointer; }
-.primary-btn:hover { background: var(--accent-hover); }
-.secondary-btn { display: inline-flex; align-items: center; gap: var(--spacer-2); padding: var(--spacer-2) var(--spacer-4); background: var(--ctrl-fill-default); color: var(--text-primary); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); font-size: var(--font-size-sm); cursor: pointer; }
-.secondary-btn:hover { background: var(--subtle-secondary); }
 
-/* ---- 右键菜单 ---- */
-.context-menu-overlay { position: fixed; inset: 0; z-index: 1000; }
-.context-menu { position: fixed; min-width: 180px; background: var(--flyout-bg); border: 1px solid var(--flyout-border); border-radius: var(--radius-md); box-shadow: 0 8px 32px rgba(0,0,0,0.18); padding: var(--spacer-1); z-index: 1001; }
-.ctx-item { display: flex; align-items: center; gap: var(--spacer-2); width: 100%; padding: var(--spacer-2) var(--spacer-3); border: none; background: transparent; color: var(--text-primary); font-size: var(--font-size-sm); cursor: pointer; border-radius: var(--radius-sm); text-align: left; }
-.ctx-item:hover { background: var(--subtle-secondary); }
-.ctx-divider { height: 1px; background: var(--divider-stroke); margin: var(--spacer-1) 0; }
+
+
+
+
 </style>

@@ -67,9 +67,3 @@ img {
   max-width: 100%;
   height: auto;
 }
-
-/* 修复下拉框选项在深色模式下的背景与文字颜色 */
-select option {
-  background-color: var(--card-bg);
-  color: var(--text-primary);
-}

@@ -361,14 +361,6 @@ watch(() => props.visible, (v) => {
   font-size: var(--font-size-sm);
 }
 
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 .school-list {
   display: flex;
   flex-direction: column;
@@ -519,44 +511,6 @@ watch(() => props.visible, (v) => {
   gap: var(--spacer-2);
 }
 
-.btn-ghost,
-.btn-primary {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  padding: var(--spacer-2) var(--spacer-4);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: background var(--fast-duration);
-}
-
-.btn-ghost {
-  background: var(--subtle-secondary);
-  color: var(--text-secondary);
-}
-
-.btn-ghost:hover {
-  background: var(--subtle-pressed);
-  color: var(--text-primary);
-}
-
-.btn-primary {
-  background: var(--accent-base);
-  color: var(--accent-text);
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-
-.btn-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .request-list {
   display: flex;
   flex-direction: column;
@@ -582,13 +536,6 @@ watch(() => props.visible, (v) => {
   font-size: var(--font-size-xs);
   color: var(--text-tertiary);
   margin-top: 2px;
-}
-
-.status-badge {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  padding: var(--spacer-1) var(--spacer-2);
-  border-radius: var(--radius-full);
 }
 
 .status-badge.pending {

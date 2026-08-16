@@ -388,11 +388,7 @@ onMounted(() => {
 .tab-pane { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: var(--spacer-4); }
 
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--spacer-3); max-width: 800px; }
-.form-group { display: flex; flex-direction: column; gap: var(--spacer-1); }
 .form-group.full { grid-column: 1 / -1; }
-.form-group label { font-size: var(--font-size-sm); font-weight: 500; color: var(--text-secondary); }
-.form-group input, .form-group textarea { padding: var(--spacer-2) var(--spacer-3); background: var(--ctrl-fill-default); border: 1px solid var(--ctrl-border); border-radius: var(--radius-md); font-size: var(--font-size-sm); color: var(--text-primary); outline: none; font-family: inherit; resize: vertical; }
-.form-group input:focus, .form-group textarea:focus { border-color: var(--accent-base); }
 
 .ext-preview { display: flex; flex-wrap: wrap; gap: 4px; margin-top: var(--spacer-1); }
 .ext-chip { display: inline-flex; align-items: center; padding: 2px 8px; background: var(--accent-bg); color: var(--accent-base); border-radius: var(--radius-full); font-size: var(--font-size-xs); font-family: var(--font-mono, monospace); font-weight: 500; }
@@ -411,6 +407,5 @@ onMounted(() => {
 .prev-hint { font-size: var(--font-size-xs); color: var(--text-tertiary); }
 .preview-iframe { flex: 1; width: 100%; border: 1px solid var(--divider-stroke); border-radius: var(--radius-md); background: white; }
 
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+
 </style>

@@ -85,6 +85,18 @@
           <RibbonToolbar
             :editor-info="activeTab ? { title: activeTab.name, type: activeTab.type, icon: fileIcon(activeTab.path), lastUpdated: activeTab.data?.updated_at || '', lastEditor: '', editButtonLabel: '重命名' } : { title: '文件管理', type: 'Web Hosting', icon: 'ri-folder-open-line', editButtonLabel: '新建文件' }"
             :saving="saving"
+            :is-instance="false"
+            :can-undo="!!activeTab"
+            :can-redo="!!activeTab"
+            :can-save="!!activeTab"
+            :can-auto-save="!!activeTab"
+            :right-actions="[
+              { id: 'share', label: '分享', icon: 'ri-share-forward-line', enabled: !!activeTab },
+              { id: 'history', label: '操作记录', icon: 'ri-history-line', enabled: !!activeTab },
+              { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', enabled: !!activeTab },
+              { id: 'import', label: '导入', icon: 'ri-download-line', enabled: !!activeTab },
+              { id: 'export', label: '导出', icon: 'ri-upload-2-line', enabled: !!activeTab },
+            ]"
             @save="saveCurrentTab"
             @undo="handleUndo"
             @redo="handleRedo"
@@ -179,7 +191,7 @@
                 <!-- 右侧面板 -->
                 <div class="right-panel" :class="{ collapsed: rightPanelCollapsed }" :style="rightPanelCollapsed ? {} : { width: rightPanelWidth + '%' }">
                   <button class="panel-collapse-btn" @click="rightPanelCollapsed = !rightPanelCollapsed" :title="rightPanelCollapsed ? '展开面板' : '收起面板'">
-                    <Icon :icon="rightPanelCollapsed ? 'ri-layout-left-line' : 'ri-layout-right-line'" :size="14" />
+                    <Icon :icon="rightPanelCollapsed ? 'ri-menu-fold-line' : 'ri-menu-unfold-line'" :size="14" />
                   </button>
                   <template v-if="!rightPanelCollapsed">
                     <div class="right-tabs">
@@ -317,7 +329,7 @@
         <div class="ctx-menu" :style="{ left: ctxMenuPos.x + 'px', top: ctxMenuPos.y + 'px' }">
           <button v-if="!ctxMenuNode.is_directory" class="ctx-item" @click="openFileInTab(ctxMenuNode); ctxMenuNode = null"><Icon icon="ri-file-edit-line" :size="14" />打开</button>
           <button v-if="!ctxMenuNode.is_directory" class="ctx-item" @click="downloadFile(ctxMenuNode.path); ctxMenuNode = null"><Icon icon="ri-download-2-line" :size="14" />下载</button>
-          <button v-if="!ctxMenuNode.is_directory" class="ctx-item" @click="showShareDialog = true; ctxMenuNode = null"><Icon icon="ri-share-forward-line" :size="14" />分享</button>
+          <button v-if="!ctxMenuNode.is_directory" class="ctx-item" @click="openFileInTab(ctxMenuNode); showShareDialog = true; ctxMenuNode = null"><Icon icon="ri-share-line" :size="14" />分享</button>
           <button v-if="ctxMenuNode.is_directory" class="ctx-item" @click="toggleDir(ctxMenuNode.path); ctxMenuNode = null"><Icon :icon="expandedDirs.has(ctxMenuNode.path) ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'" :size="14" />{{ expandedDirs.has(ctxMenuNode.path) ? '折叠' : '展开' }}</button>
           <button class="ctx-item" @click="showNewFileDialog = true; ctxMenuNode = null"><Icon icon="ri-file-add-line" :size="14" />新建文件</button>
           <button class="ctx-item" @click="showNewDirDialog = true; ctxMenuNode = null"><Icon icon="ri-folder-add-line" :size="14" />新建目录</button>
@@ -351,10 +363,14 @@
     <!-- 分享对话框 -->
     <ShareDialog
       :visible="showShareDialog"
-      :file-id="activeTab?.source === 'cloud' ? activeTab.path : ''"
-      :file-name="activeTab?.name || ''"
-      :file-content="activeTab?.content || ''"
+      resource-type="cloud_file"
+      :resource-id="activeTab?.data?.id || ''"
+      :resource-name="activeTab?.name || ''"
+      resource-icon="ri-file-line"
+      resource-label="文件"
       @close="showShareDialog = false"
+      @created="refreshFiles"
+      @updated="refreshFiles"
     />
 
     <!-- 隐藏的上传 input -->
@@ -1016,9 +1032,6 @@ onMounted(async () => {
 
 .homepage-content { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: auto; padding: var(--spacer-5); gap: var(--spacer-4); }
 .homepage-content.content-immersive { padding: 0; overflow: hidden; gap: 0; }
-.page-header { display: flex; align-items: flex-start; justify-content: space-between; }
-.page-title { font-size: var(--font-size-2xl); font-weight: 700; color: var(--text-primary); margin: 0; }
-.page-subtitle { font-size: var(--font-size-sm); color: var(--text-tertiary); margin-top: 4px; display: block; }
 
 .stats-row { display: flex; gap: var(--spacer-3); flex-wrap: wrap; }
 .stat-card { flex: 1; min-width: 180px; display: flex; align-items: center; gap: var(--spacer-3); padding: var(--spacer-3) var(--spacer-4); background: var(--card-bg); border: 1px solid var(--card-stroke); border-radius: var(--radius-lg); position: relative; }
@@ -1058,7 +1071,7 @@ onMounted(async () => {
 
 .right-panel { display: flex; flex-direction: column; background: var(--layer-default); border-left: 1px solid var(--divider-stroke); flex-shrink: 0; min-width: 0; position: relative; }
 .right-panel.collapsed { width: 32px !important; min-width: 32px; }
-.panel-collapse-btn { position: absolute; left: -16px; top: 50%; transform: translateY(-50%); width: 16px; height: 32px; display: flex; align-items: center; justify-content: center; background: var(--layer-default); border: 1px solid var(--divider-stroke); border-right: none; border-radius: var(--radius-sm) 0 0 var(--radius-sm); color: var(--text-tertiary); cursor: pointer; z-index: 10; }
+.panel-collapse-btn { position: absolute; left: -16px; top: 50%; transform: translateY(-50%); width: 16px; height: 32px; padding: 2px; display: flex; align-items: center; justify-content: center; background: var(--layer-default); border: 1px solid var(--divider-stroke); border-right: none; border-radius: var(--radius-sm) 0 0 var(--radius-sm); color: var(--text-tertiary); cursor: pointer; z-index: 10; }
 .right-panel.collapsed .panel-collapse-btn { left: auto; right: 0; border-right: 1px solid var(--divider-stroke); border-left: none; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 .panel-collapse-btn:hover { color: var(--text-primary); background: var(--subtle-secondary); }
 .right-tabs { display: flex; border-bottom: 1px solid var(--divider-stroke); background: var(--subtle-secondary); flex-shrink: 0; position: relative; }
@@ -1122,42 +1135,19 @@ onMounted(async () => {
 .toggle-text { font-size: var(--font-size-sm); color: var(--text-secondary); }
 .settings-footer { display: flex; justify-content: flex-start; }
 
-.primary-btn { display: inline-flex; align-items: center; gap: var(--spacer-2); padding: var(--spacer-2) var(--spacer-4); background: var(--accent-base); color: var(--accent-text); border: none; border-radius: var(--radius-sm); font-size: var(--font-size-sm); font-weight: 500; cursor: pointer; transition: background var(--fast-duration); }
-.primary-btn:hover { background: var(--accent-hover); }
-.primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.secondary-btn { display: inline-flex; align-items: center; gap: var(--spacer-2); padding: var(--spacer-2) var(--spacer-4); background: var(--ctrl-fill-default); color: var(--text-primary); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); font-size: var(--font-size-sm); cursor: pointer; transition: background var(--fast-duration); }
-.secondary-btn:hover { background: var(--subtle-secondary); }
 .danger-btn { display: inline-flex; align-items: center; gap: var(--spacer-2); padding: var(--spacer-2) var(--spacer-4); background: var(--status-error); color: white; border: none; border-radius: var(--radius-sm); font-size: var(--font-size-sm); cursor: pointer; transition: opacity var(--fast-duration); }
 .danger-btn:hover { opacity: 0.9; }
 
 .loading-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: var(--spacer-8); gap: var(--spacer-3); color: var(--text-tertiary); }
-.loading-ring { width: 32px; height: 32px; border: 3px solid var(--subtle-secondary); border-top-color: var(--accent-base); border-radius: 50%; animation: spin 0.8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+
 .error-state { display: flex; align-items: center; justify-content: center; padding: var(--spacer-8); }
 .error-card { text-align: center; max-width: 400px; padding: var(--spacer-6); background: var(--card-bg); border: 1px solid var(--card-stroke); border-radius: var(--radius-xl); color: var(--text-tertiary); }
 .error-card h2 { color: var(--text-primary); margin: var(--spacer-3) 0 var(--spacer-2); }
 .error-card p { margin: 0 0 var(--spacer-4); font-size: var(--font-size-sm); line-height: 1.6; }
 
-.dialog-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 500; display: flex; align-items: center; justify-content: center; }
-.dialog-card { background: var(--flyout-bg); backdrop-filter: var(--flyout-backdrop); border: 1px solid var(--flyout-border); border-radius: var(--radius-lg); padding: var(--spacer-5); min-width: 360px; max-width: 480px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12); }
-.dialog-card h3 { font-size: var(--font-size-lg); font-weight: 600; color: var(--text-primary); margin: 0 0 var(--spacer-4); }
-.dialog-field { display: flex; flex-direction: column; gap: var(--spacer-1); margin-bottom: var(--spacer-4); }
-.dialog-field label { font-size: var(--font-size-sm); font-weight: 500; color: var(--text-secondary); }
-.dialog-input { height: 36px; padding: 0 var(--spacer-3); background: var(--ctrl-fill-default); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--font-size-sm); outline: none; }
-.dialog-input:focus { border-color: var(--accent-base); }
-.dialog-actions { display: flex; justify-content: flex-end; gap: var(--spacer-2); }
 .delete-message { font-size: var(--font-size-sm); color: var(--text-secondary); margin: 0 0 var(--spacer-4); line-height: 1.6; }
 .delete-message code { background: var(--subtle-secondary); padding: 1px var(--spacer-1); border-radius: var(--radius-xs); font-size: 12px; font-family: monospace; }
 .delete-warning { display: block; color: var(--status-error); margin-top: var(--spacer-2); font-size: var(--font-size-xs); }
-
-/* 右键菜单 */
-.ctx-overlay { position: fixed; inset: 0; z-index: 1000; }
-.ctx-menu { position: fixed; background: var(--flyout-bg); backdrop-filter: var(--flyout-backdrop); border: 1px solid var(--flyout-border); border-radius: var(--radius-md); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12); padding: var(--spacer-1); min-width: 160px; z-index: 1001; }
-.ctx-item { display: flex; align-items: center; gap: var(--spacer-2); width: 100%; padding: var(--spacer-2) var(--spacer-3); border: none; background: transparent; color: var(--text-primary); font-size: var(--font-size-sm); cursor: pointer; border-radius: var(--radius-sm); text-align: left; }
-.ctx-item:hover { background: var(--subtle-secondary); }
-.ctx-item.danger { color: var(--status-error); }
-.ctx-item.danger:hover { background: rgba(196, 43, 43, 0.08); }
-.ctx-divider { height: 1px; background: var(--divider-stroke); margin: var(--spacer-1) 0; }
 
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: var(--spacer-2); padding: var(--spacer-2) var(--spacer-4); border-radius: var(--radius-md); font-size: var(--font-size-sm); z-index: 600; animation: slideUp var(--fast-duration); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); }
 .toast-success { background: #10893e; color: white; }

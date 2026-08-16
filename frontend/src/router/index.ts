@@ -11,6 +11,12 @@ const routes = [
     meta: { title: 'CSES Cloud 智教云', requiresAuth: false }
   },
   {
+    path: '/share/preview',
+    name: 'SharePreview',
+    component: () => import('../views/share/SharePreviewPage.vue'),
+    meta: { title: '分享预览', requiresAuth: false }
+  },
+  {
     path: '/login',
     name: 'Login',
     component: () => import('../views/auth/LoginPage.vue'),
@@ -176,10 +182,10 @@ const routes = [
         meta: { title: '插件编辑器', icon: 'ri-edit-box-line' }
       },
       {
-        path: 'web-homepage',
-        name: 'WebHomepage',
-        component: () => import('../views/hosting/WebHomepage.vue'),
-        meta: { title: '班级主页', icon: 'ri-home-6-line' }
+        path: 'dataspace',
+        name: 'DataSpace',
+        component: () => import('../views/dataspace/DataSpace.vue'),
+        meta: { title: '数据空间', icon: 'ri-folder-3-line' }
       },
       {
         path: 'ai',

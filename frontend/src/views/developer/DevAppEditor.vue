@@ -946,35 +946,7 @@ onMounted(() => {
   max-width: 800px;
 }
 
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacer-1);
-}
-
 .form-group.full { grid-column: 1 / -1; }
-
-.form-group label {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.form-group input,
-.form-group textarea {
-  padding: var(--spacer-2) var(--spacer-3);
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  outline: none;
-  font-family: inherit;
-  resize: vertical;
-}
-
-.form-group input:focus,
-.form-group textarea:focus { border-color: var(--accent-base); }
 
 .manifest-hint {
   display: flex;
@@ -1049,9 +1021,6 @@ onMounted(() => {
   border-radius: var(--radius-md);
   background: white;
 }
-
-.spin { animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ===== Ribbon 可视化编辑器 ===== */
 .ribbon-ve {

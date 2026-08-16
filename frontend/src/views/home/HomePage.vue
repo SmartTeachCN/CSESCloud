@@ -119,7 +119,7 @@ const router = useRouter();
 const navItems = [
   { path: '/console/campus', icon: 'ri-school-line', title: '校园集控', desc: '连接与管理校园', bgColor: 'rgba(0, 103, 192, 0.1)', color: '#0067C0' },
   { path: '/console/instances', icon: 'ri-cloud-line', title: '实例云控', desc: '在云端管理实例', bgColor: 'rgba(16, 124, 16, 0.1)', color: '#107C10' },
-  { path: '/console/classes', icon: 'ri-group-line', title: '班级主页', desc: '在线网页托管', bgColor: 'rgba(202, 143, 4, 0.1)', color: '#CA8F04' },
+  { path: '/console/dataspace', icon: 'ri-folder-3-line', title: '数据空间', desc: '云文件与网页空间管理', bgColor: 'rgba(202, 143, 4, 0.1)', color: '#CA8F04' },
   { path: '/console/editor/light', icon: 'ri-edit-2-line', title: '轻编辑器', desc: '快速编辑配置文件', bgColor: 'rgba(196, 43, 28, 0.1)', color: '#C42B1C' },
   { path: '/console/editor/standard', icon: 'ri-code-s-slash-line', title: '标准编辑器', desc: '完整实例开发环境', bgColor: 'rgba(0, 103, 192, 0.1)', color: '#0067C0' },
   { path: '/console/developer', icon: 'ri-key-2-line', title: '开发者中心', desc: '平台接入与管理', bgColor: 'rgba(0, 103, 192, 0.1)', color: '#0067C0' }
@@ -209,58 +209,6 @@ function navigate(path: string) {
   flex-wrap: wrap;
 }
 
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  padding: var(--spacer-2) var(--spacer-4);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  transition: background var(--fast-duration), transform var(--fast-duration);
-  text-decoration: none;
-  border: none;
-}
-
-.btn-primary {
-  background: var(--accent-base);
-  color: var(--accent-text);
-}
-
-.btn-primary:hover {
-  background: var(--accent-hover);
-}
-
-.btn-secondary {
-  background: var(--card-bg);
-  border: 1px solid var(--card-stroke);
-  color: var(--text-primary);
-}
-
-.btn-secondary:hover {
-  background: var(--subtle-secondary);
-}
-
-.btn-ghost-sm {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  padding: var(--spacer-1) var(--spacer-2);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-  cursor: pointer;
-  transition: background var(--fast-duration);
-}
-
-.btn-ghost-sm:hover {
-  background: var(--subtle-secondary);
-  color: var(--text-primary);
-}
-
 .hero-stats {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -295,25 +243,6 @@ function navigate(path: string) {
   display: flex;
   flex-direction: column;
   gap: var(--spacer-6);
-}
-
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--spacer-3);
-}
-
-.section-title {
-  font-size: var(--font-size-xl);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.section-desc {
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
 }
 
 .nav-grid {
