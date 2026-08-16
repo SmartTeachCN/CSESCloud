@@ -108,6 +108,42 @@ function calcProjectedMeal(){
   return null;
 }
 
+// 检测当前科目结束时间是否横跨或靠近饭空时间
+function calcCurrentMeal(){
+  if(wizard.step!=='subject'||wizard.editIdx>=0)return null;
+  if(!wizard.dayDate||!wizard.startTime)return null;
+  var durEl=document.getElementById('wizDuration'),brkEl=document.getElementById('wizBreak');
+  var dur=durEl?parseInt(durEl.value)||SUBJECT_PRESETS[wizard.currentSubject]||60:60;
+  var curStart;
+  if(wizard.subjects.length>0){
+    var last=wizard.subjects[wizard.subjects.length-1];
+    var lastEnd=new Date(last.end);
+    curStart=new Date(lastEnd.getTime()+(last.break||0)*60000);
+  }else{
+    curStart=new Date(wizard.dayDate+'T'+wizard.startTime);
+  }
+  var curEnd=new Date(curStart.getTime()+dur*60000);
+  var endMin=curEnd.getHours()*60+curEnd.getMinutes();
+  // 横跨午饭时间 (11:50-13:00): 结束时间在11:50后 且 开始时间在13:00前
+  var startMin=curStart.getHours()*60+curStart.getMinutes();
+  if(startMin<780&&endMin>710&&!wizard.lunchSkipped){
+    return{type:'lunch',spans:true,label:'午饭休息',range:'11:50-13:00'};
+  }
+  // 结束时间临近午饭开始 (≤30分钟)
+  if(endMin>=680&&endMin<=710&&!wizard.lunchSkipped){
+    return{type:'lunch',spans:false,label:'午饭休息',range:'11:50-13:00',near:true};
+  }
+  // 横跨晚饭时间 (16:00-19:00)
+  if(startMin<1140&&endMin>960){
+    return{type:'dinner',spans:true,label:'晚饭休息',range:'16:00-19:00'};
+  }
+  // 结束时间临近晚饭开始 (≤30分钟)
+  if(endMin>=930&&endMin<=960){
+    return{type:'dinner',spans:false,label:'晚饭休息',range:'16:00-19:00',near:true};
+  }
+  return null;
+}
+
 function renderWizard(){
   document.getElementById('ea2DetailTitle').textContent='考试创建向导';
   var w=wizard,html='<div class="ea2-wizard"><h3>考试创建向导</h3>';
@@ -171,6 +207,18 @@ function renderWizard(){
         '<button class="ea2-btn danger" onclick="wizDeleteSubject('+w.editIdx+')">删除此场次</button>'+
         '<button class="ea2-btn" onclick="wizCancelEdit()">取消编辑</button>';
     }else{
+      var curMeal=calcCurrentMeal();
+      if(curMeal){
+        var mealLabel=curMeal.label;
+        if(curMeal.spans)html+='<div class="ea2-wizard-subtitle" style="color:var(--ea2-error)">当前考试已横跨'+mealLabel+'时段（'+curMeal.range+'）</div>';
+        else if(curMeal.near)html+='<div class="ea2-wizard-subtitle" style="color:var(--ea2-warning)">当前考试结束时间临近'+mealLabel+'时段（'+curMeal.range+'）</div>';
+        if(curMeal.spans){
+          html+='<button class="ea2-btn" onclick="wizGoMeal(\''+curMeal.type+'\')">'+mealLabel+'</button>';
+        }else{
+          html+='<button class="ea2-btn primary" onclick="wizSaveAndGoMeal(\''+curMeal.type+'\')">保存并配置'+mealLabel+'</button>'+
+            '<button class="ea2-btn" onclick="wizGoMeal(\''+curMeal.type+'\')">不保存配置'+mealLabel+'</button>';
+        }
+      }
       if(meal){html+='<button class="ea2-btn" onclick="wizGoMeal(\''+meal.type+'\')">'+meal.label+'</button>'}
       html+='<button class="ea2-btn primary" onclick="wizNextSubject()">当日下一场</button>'+
         '<button class="ea2-btn" onclick="wizEndDay()">第'+w.day+'天结束</button>'+
@@ -212,6 +260,12 @@ function wizConfirmTime(){var t=document.getElementById('wizTime').value;if(!t)r
 
 function wizGoMeal(type){wizard.step=type;renderAll()}
 
+function wizSaveAndGoMeal(type){
+  var subj=document.getElementById('wizSubject').value.trim();
+  if(subj){wizNextSubject()}
+  wizard.step=type;renderAll();
+}
+
 function wizConfirmMeal(){
   var t=document.getElementById('wizMealResume').value;if(!t)return;
   if(wizard.step==='lunch')wizard.lunchSkipped=true;
@@ -236,7 +290,11 @@ function wizNextSubject(){
   if(examEnd>dayEnd){examEnd=dayEnd;dur=Math.floor((dayEnd-curStart)/60000)}
   wizard.subjects.push({name:subj,start:formatLocal(curStart),end:formatLocal(examEnd),duration:dur,break:brk,alertTime:5,materials:wizard.materials.slice()});
   var nextStart=new Date(examEnd.getTime()+brk*60000);
-  if(nextStart>=dayEnd){wizEndDay();return}
+  if(nextStart>=dayEnd){
+    // 先清除表单防止 wizEndDay 递归调用 wizNextSubject 重复保存
+    wizard.currentSubject='';wizard.currentDuration='';wizard.currentBreak=getMostUsedBreak();wizard.materials=[];wizard.editIdx=-1;
+    wizEndDay();return;
+  }
   wizard.startTime=formatLocalTime(nextStart);
   wizard.currentSubject='';wizard.currentDuration='';wizard.currentBreak=getMostUsedBreak();wizard.materials=[];wizard.editIdx=-1;
   renderAll();

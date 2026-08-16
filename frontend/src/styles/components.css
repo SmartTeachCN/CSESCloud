@@ -18,6 +18,26 @@
   z-index: 1001;
 }
 
+/* 数据空间快捷右键菜单（ctx- 前缀） */
+.ctx-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.ctx-menu {
+  position: fixed;
+  min-width: 180px;
+  background: var(--flyout-bg);
+  backdrop-filter: var(--flyout-backdrop);
+  -webkit-backdrop-filter: var(--flyout-backdrop);
+  border: 1px solid var(--flyout-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  padding: var(--spacer-1);
+  z-index: 1001;
+}
+
 .ctx-item {
   display: flex;
   align-items: center;

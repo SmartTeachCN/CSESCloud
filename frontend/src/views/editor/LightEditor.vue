@@ -794,6 +794,7 @@ function onPluginSave(content: string) {
     currentFile.value.content = content;
     currentFile.value.dirty = false;
     dirty.value = false;
+    saveFile();
   }
 }
 

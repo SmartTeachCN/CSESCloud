@@ -455,6 +455,32 @@ const activeFields = computed(() => { const col = collections.value.find(c => c.
 
 const ribbonManifest = ref<any[] | undefined>(undefined);
 const activeRibbonTool = ref('');
+const activeRibbonPage = ref(''); // 当前 EA2 平台应用页面: connect/exams/config
+
+// EA2 平台应用各页面 Ribbon 操作组
+const ea2PageRibbonGroups: Record<string, any[]> = {
+  connect: [{
+    label: '设备操作',
+    tools: [
+      { id: 'ea2-enroll', label: '生成注册码', icon: 'ri-qr-code-line', command: 'show_enrollment' },
+      { id: 'ea2-refresh-devices', label: '刷新设备', icon: 'ri-refresh-line', command: 'refresh_devices' },
+    ]
+  }],
+  exams: [{
+    label: '考试操作',
+    tools: [
+      { id: 'ea2-new-exam', label: '新建考试', icon: 'ri-add-line', type: 'action', command: 'new_exam' },
+      { id: 'ea2-multi-edit', label: '多选编辑', icon: 'ri-checkbox-multiple-line', command: 'multi_edit' },
+      { id: 'ea2-group-mgmt', label: '分组管理', icon: 'ri-folder-line', command: 'group_mgmt' },
+    ]
+  }],
+  config: [{
+    label: '配置操作',
+    tools: [
+      { id: 'ea2-config-save', label: '保存配置', icon: 'ri-save-line', type: 'action', command: 'save' },
+    ]
+  }],
+};
 
 // 考试编辑器 Ribbon 组（考试专用操作）
 const examRibbonGroups = [
@@ -476,11 +502,14 @@ const examRibbonGroups = [
   },
 ];
 
-// 合并 Ribbon：实例 Ribbon 在前，考试编辑器 Ribbon 在后
+// 合并 Ribbon：实例 Ribbon 在前，页面操作组在后
 const effectiveRibbonManifest = computed(() => {
-  if (!examEditorMode.value) return ribbonManifest.value;
+  if (examEditorMode.value) {
+    return [...(ribbonManifest.value || []), ...examRibbonGroups];
+  }
   const instanceRibbon = ribbonManifest.value || [];
-  return [...instanceRibbon, ...examRibbonGroups];
+  const pageGroups = ea2PageRibbonGroups[activeRibbonPage.value] || [];
+  return [...instanceRibbon, ...pageGroups];
 });
 
 // ===== 右侧面板 =====
@@ -683,7 +712,13 @@ function onIframeLoad() {
   editorFrame.value?.contentWindow?.postMessage(JSON.parse(JSON.stringify({ __ceseInit: true, instance: { id: instanceId.value, name: instance.value?.name, uid: instance.value?.instance_uid }, config: instance.value?.config || {}, storageManifest: instance.value?.storage_manifest || {}, interfaceSchema: instance.value?.interface_schema || {} })), '*');
 }
 window.addEventListener('message', async (e) => {
-  if (!e.data || !e.data.__ceseRequest) return;
+  if (!e.data) return;
+  // 监听 iframe 页面切换
+  if (e.data.__ceseReportPage) {
+    activeRibbonPage.value = e.data.__ceseReportPage;
+    return;
+  }
+  if (!e.data.__ceseRequest) return;
   const { __ceseRequest: id, action, payload } = e.data;
   try {
     let result: any;
@@ -761,7 +796,7 @@ function closeExamEditor() {
   examEditorFile.value = null;
   examEditorPlugin.value = null;
   if (iframeReady.value && editorFrame.value) {
-    editorFrame.value.contentWindow?.postMessage({ __ceseCommand: 'back_to_list' }, '*');
+    editorFrame.value.contentWindow?.postMessage({ __ceseCommand: 'page_exams' }, '*');
   }
 }
 

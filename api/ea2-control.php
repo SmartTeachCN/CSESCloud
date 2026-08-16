@@ -176,15 +176,13 @@ switch ($action) {
     case 'device_unregister':
         $deviceId = $body['device_id'] ?? '';
         if (!$deviceId) Response::error('缺少 device_id');
-        DB::update('ea2_devices', [
-            'lifecycle_status' => 'revoked',
-            'updated_at' => date('Y-m-d H:i:s'),
-        ], 'instance_id = ? AND device_id = ?', [$instanceId, $deviceId]);
-        // 吊销凭证
-        DB::update('ea2_device_credentials', [
-            'revoked_at' => date('Y-m-d H:i:s'),
-        ], 'device_id = ?', [$deviceId]);
-        Response::success(['ok' => true], '设备已注销');
+        // 删除设备记录
+        DB::delete('ea2_devices', 'instance_id = ? AND device_id = ?', [$instanceId, $deviceId]);
+        // 删除凭证
+        DB::delete('ea2_device_credentials', 'device_id = ?', [$deviceId]);
+        // 删除该设备的待执行命令
+        DB::delete('ea2_commands', 'instance_id = ? AND device_id = ? AND status = ?', [$instanceId, $deviceId, 'pending']);
+        Response::success(['ok' => true], '设备已从列表移除并取消绑定');
 
     case 'device_update_state':
         $deviceId = $body['device_id'] ?? '';
@@ -235,6 +233,12 @@ switch ($action) {
             'revoked_at' => date('Y-m-d H:i:s'),
         ], 'id = ? AND instance_id = ?', [$codeId, $instanceId]);
         Response::success(['ok' => true], '注册码已吊销');
+
+    case 'enrollment_delete':
+        $codeId = $body['id'] ?? '';
+        if (!$codeId) Response::error('缺少 id');
+        DB::delete('ea2_enrollment_codes', 'id = ? AND instance_id = ?', [$codeId, $instanceId]);
+        Response::success(['ok' => true], '注册码已删除');
 
     // ===== 命令管理 =====
     case 'command_create':

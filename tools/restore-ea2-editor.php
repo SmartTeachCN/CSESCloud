@@ -16,7 +16,6 @@ $editorHtml = <<<'HTML'
       <div class="ea2-panel-header">
         <span>考试场次</span>
         <div class="ea2-panel-header-actions">
-          <button class="ea2-btn small primary" onclick="saveConfig()" title="Ctrl+S">保存</button>
           <button class="ea2-btn small" id="ea2WizardBtn" onclick="startWizard()" style="display:none">添加向导</button>
           <button class="ea2-btn small" id="ea2AddBtn" onclick="addExamInfo()">+ 新建</button>
           <button class="ea2-btn small" id="ea2CascadeBtn" onclick="wizCascadeAll()" style="display:none">顺延</button>

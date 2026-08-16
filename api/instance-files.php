@@ -281,4 +281,23 @@ if ($method === 'GET' && $action === 'file-tree') {
     ]);
 }
 
+// ===== 下载文件 =====
+if ($method === 'GET' && $action === 'download') {
+    $id = (int)($_GET['id'] ?? 0);
+    if ($id <= 0) Response::error('缺少文件 ID');
+    $file = DB::one("SELECT * FROM cloud_files WHERE id = ?", [$id]);
+    if (!$file) Response::error('文件不存在');
+    if ($file['instance_id'] && !Auth::canAccessInstance((int)$file['instance_id'])) {
+        Response::error('无权下载该文件', 403, 403);
+    }
+    $content = $file['content'] ?? '';
+    $name = $file['name'] ?? 'download';
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename="' . addslashes($name) . '"');
+    header('Content-Length: ' . strlen($content));
+    header('Cache-Control: no-cache');
+    echo $content;
+    exit;
+}
+
 Response::error('未知操作', 405, 405);
