@@ -64,7 +64,7 @@ const emit = defineEmits<{
 
 const rootEl = ref<HTMLElement | null>(null);
 const isOpen = ref(false);
-const dropStyle = ref({ top: '0px', left: '0px', width: '0px' });
+const dropStyle = ref<Record<string, string>>({ top: '0px', left: '0px', width: '0px' });
 
 const selectedLabel = computed(() => {
   return props.options.find(o => o.value === props.modelValue)?.label || '';
@@ -92,11 +92,30 @@ function updatePosition() {
   if (!rootEl.value) return;
   const rect = rootEl.value.getBoundingClientRect();
   const gap = 4;
-  dropStyle.value = {
-    top: `${rect.bottom + gap + window.scrollY}px`,
-    left: `${rect.left + window.scrollX}px`,
-    width: `${rect.width}px`,
-  };
+  const maxHeight = 240;
+  const spaceBelow = window.innerHeight - rect.bottom - gap;
+  const spaceAbove = rect.top - gap;
+
+  if (spaceBelow >= maxHeight || spaceBelow >= spaceAbove) {
+    // 向下展开
+    dropStyle.value = {
+      top: `${rect.bottom + gap}px`,
+      left: `${rect.left}px`,
+      width: `${rect.width}px`,
+      maxHeight: `${Math.min(maxHeight, spaceBelow)}px`,
+      bottom: 'auto',
+    };
+  } else {
+    // 向上展开
+    const h = Math.min(maxHeight, spaceAbove);
+    dropStyle.value = {
+      bottom: `${window.innerHeight - rect.top + gap}px`,
+      left: `${rect.left}px`,
+      width: `${rect.width}px`,
+      maxHeight: `${h}px`,
+      top: 'auto',
+    };
+  }
 }
 
 function onResize() {
@@ -194,7 +213,7 @@ onBeforeUnmount(() => {
 }
 
 .select-dropdown {
-  position: absolute;
+  position: fixed;
   z-index: 401;
   max-height: 240px;
   overflow-y: auto;
