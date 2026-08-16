@@ -1,0 +1,1531 @@
+<template>
+  <div class="app-editor">
+    <!-- 顶栏 -->
+    <header class="ae-header">
+      <div class="ae-left">
+        <button class="back-btn" @click="goBack" title="返回">
+          <Icon icon="ri-arrow-left-s-line" :size="18" />
+        </button>
+        <div class="app-icon"><Icon icon="ri-apps-2-line" :size="20" /></div>
+        <div class="app-meta">
+          <div class="app-title-row">
+            <span class="app-name">{{ app?.name || '加载中...' }}</span>
+            <span class="status-pill" :class="app?.status">{{ getStatusLabel(app?.status) }}</span>
+            <span v-if="app?.is_shared" class="shared-pill">
+              <Icon icon="ri-share-line" :size="10" /> 已共享
+            </span>
+            <span v-if="app?.forked_from" class="forked-pill">
+              <Icon icon="ri-git-branch-line" :size="10" /> Fork 自 {{ app.forked_by || '未知' }}
+            </span>
+            <span v-if="readonly" class="readonly-pill">
+              <Icon icon="ri-eye-line" :size="10" /> 只读
+            </span>
+          </div>
+          <div class="app-sub">
+            <Icon icon="ri-hashtag" :size="10" />
+            <code>{{ app?.app_key }}</code>
+            <span v-if="app?.category" class="cat-tag">{{ app.category }}</span>
+          </div>
+        </div>
+      </div>
+      <div class="ae-right">
+        <template v-if="readonly">
+          <button class="top-action primary" @click="forkFromReadonly" :disabled="busy">
+            <Icon icon="ri-git-branch-line" :size="14" />
+            Fork 到我的应用
+          </button>
+        </template>
+        <template v-else>
+          <button class="top-action" @click="toggleShare" :disabled="busy">
+            <Icon :icon="app?.is_shared ? 'ri-share-circle-line' : 'ri-share-line'" :size="14" />
+            {{ app?.is_shared ? '取消共享' : '共享到市场' }}
+          </button>
+          <button v-if="app?.status === 'draft'" class="top-action" @click="publish" :disabled="busy">
+            <Icon icon="ri-rocket-line" :size="14" /> 发布
+          </button>
+          <button v-else-if="app?.status === 'published'" class="top-action" @click="archive" :disabled="busy">
+            <Icon icon="ri-archive-line" :size="14" /> 归档
+          </button>
+          <button class="top-action primary" @click="saveCurrent" :disabled="busy || !dirty">
+            <Icon :icon="busy ? 'ri-loader-4-line' : 'ri-save-line'" :size="14" :class="{ spin: busy }" />
+            保存
+          </button>
+        </template>
+      </div>
+    </header>
+
+    <div v-if="loading" class="ae-loading">
+      <Icon icon="ri-loader-4-line" :size="24" class="spin" />
+      <span>加载应用...</span>
+    </div>
+
+    <template v-else>
+      <!-- 标签栏 -->
+      <nav class="ae-tabs">
+        <button
+          v-for="tab in tabs"
+          :key="tab.id"
+          class="ae-tab"
+          :class="{ active: activeTab === tab.id, dirty: dirtyTabs[tab.id] }"
+          @click="switchTab(tab.id)"
+        >
+          <Icon :icon="tab.icon" :size="14" />
+          <span>{{ tab.label }}</span>
+        </button>
+      </nav>
+
+      <!-- 内容区 -->
+      <div class="ae-body">
+        <!-- 基础信息 -->
+        <section v-show="activeTab === 'basic'" class="tab-pane">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>应用名称</label>
+              <input v-model="basicForm.name" :disabled="readonly" @input="markDirty('basic')" placeholder="应用名称" />
+            </div>
+            <div class="form-group">
+              <label>版本</label>
+              <input v-model="basicForm.version" :disabled="readonly" @input="markDirty('basic')" placeholder="1.0.0" />
+            </div>
+            <div class="form-group">
+              <label>分类</label>
+              <input v-model="basicForm.category" :disabled="readonly" @input="markDirty('basic')" placeholder="教学服务 / 评测服务 / AI 服务" />
+            </div>
+            <div class="form-group full">
+              <label>描述</label>
+              <textarea v-model="basicForm.description" :disabled="readonly" @input="markDirty('basic')" rows="3" placeholder="简短描述应用用途"></textarea>
+            </div>
+          </div>
+        </section>
+
+        <!-- 应用信息清单 -->
+        <section v-show="activeTab === 'app_info'" class="tab-pane">
+          <div class="manifest-hint">
+            <Icon icon="ri-information-line" :size="14" />
+            <span>应用信息清单 (app_info_manifest)：包含 name、version、description、category、author、icon、tags 等元数据，可在 ribbon 字段定义编辑器顶部 Ribbon 工具组</span>
+          </div>
+          <textarea
+            v-model="appInfoText"
+            :disabled="readonly"
+            @input="markDirty('app_info')"
+            class="code-area"
+            spellcheck="false"
+            placeholder='{ "name": "...", "ribbon": [{ "label": "文件", "tools": [{ "id": "save", "label": "保存", "icon": "ri-save-line", "command": "save" }] }] }'
+          ></textarea>
+        </section>
+
+        <!-- Ribbon 工具栏（可视化编辑） -->
+        <section v-show="activeTab === 'ribbon'" class="tab-pane">
+          <div class="manifest-hint">
+            <Icon icon="ri-information-line" :size="14" />
+            <span>Ribbon 工具栏：可视化定义编辑器顶部按钮组。修改后会自动同步到「应用信息清单」的 ribbon 字段。每个工具的 command 会通过 postMessage 发给 iframe 编辑器。</span>
+          </div>
+
+          <div class="ribbon-ve">
+            <div v-for="(group, gi) in ribbonGroups" :key="gi" class="rv-group">
+              <div class="rv-group-head">
+                <input
+                  v-model="group.label"
+                  :disabled="readonly"
+                  @input="onRibbonChange"
+                  class="rv-group-label"
+                  placeholder="组名（如：文件、编辑）"
+                />
+                <button v-if="!readonly" class="rv-del" @click="removeGroup(gi)" title="删除此组">
+                  <Icon icon="ri-delete-bin-line" :size="14" />
+                </button>
+              </div>
+              <div class="rv-tools">
+                <div v-for="(tool, ti) in group.tools" :key="ti" class="rv-tool">
+                  <div class="rv-tool-preview">
+                    <Icon :icon="tool.icon || 'ri-question-line'" :size="20" />
+                    <span class="rv-tool-label">{{ tool.label || '未命名' }}</span>
+                  </div>
+                  <div class="rv-tool-fields">
+                    <input v-model="tool.id" :disabled="readonly" @input="onRibbonChange" placeholder="id（如 save）" />
+                    <input v-model="tool.label" :disabled="readonly" @input="onRibbonChange" placeholder="显示名" />
+                    <input v-model="tool.icon" :disabled="readonly" @input="onRibbonChange" placeholder="ri-xxx-line" />
+                    <input v-model="tool.command" :disabled="readonly" @input="onRibbonChange" placeholder="command（如 save）" />
+                  </div>
+                  <button v-if="!readonly" class="rv-del-sm" @click="removeTool(gi, ti)" title="删除工具">
+                    <Icon icon="ri-close-line" :size="12" />
+                  </button>
+                </div>
+                <button v-if="!readonly" class="rv-add-tool" @click="addTool(gi)">
+                  <Icon icon="ri-add-line" :size="12" /> 添加工具
+                </button>
+              </div>
+            </div>
+            <button v-if="!readonly" class="rv-add-group" @click="addGroup">
+              <Icon icon="ri-add-line" :size="14" /> 添加工具组
+            </button>
+
+            <div v-if="ribbonGroups.length === 0" class="rv-empty">
+              <Icon icon="ri-toolbar-line" :size="32" />
+              <p>暂无 Ribbon 工具组，点击上方「添加工具组」开始</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- 编辑器 HTML -->
+        <section v-show="activeTab === 'editor_html'" class="tab-pane">
+          <div class="manifest-hint">
+            <Icon icon="ri-information-line" :size="14" />
+            <span>编辑器 HTML：会注入到 iframe 中作为编辑器主体结构，可使用 <code v-pre>{{variable}}</code> 模板占位（由 JS 渲染）</span>
+          </div>
+          <textarea
+            v-model="editorHtml"
+            :disabled="readonly"
+            @input="markDirty('editor_html')"
+            class="code-area"
+            spellcheck="false"
+            placeholder="<div id='app'></div>"
+          ></textarea>
+        </section>
+
+        <!-- 编辑器 JS -->
+        <section v-show="activeTab === 'editor_js'" class="tab-pane">
+          <div class="manifest-hint">
+            <Icon icon="ri-information-line" :size="14" />
+            <span>编辑器 JS：在 iframe 内执行。平台会注入 <code>window.CSES</code> 全局对象（含 instance、config、storageManifest 等）以与平台通信</span>
+          </div>
+          <textarea
+            v-model="editorJs"
+            :disabled="readonly"
+            @input="markDirty('editor_js')"
+            class="code-area code-js"
+            spellcheck="false"
+            placeholder="// 可使用 window.CSES.request(action, payload) 与平台通信"
+          ></textarea>
+        </section>
+
+        <!-- 存储清单 -->
+        <section v-show="activeTab === 'storage'" class="tab-pane">
+          <div class="manifest-hint">
+            <Icon icon="ri-information-line" :size="14" />
+            <span>存储清单 (storage_manifest)：声明此应用的 collections，每个 collection 含 key、name、fields。配置管理器会据此自动生成多类型编辑器</span>
+          </div>
+          <textarea
+            v-model="storageText"
+            :disabled="readonly"
+            @input="markDirty('storage')"
+            class="code-area"
+            spellcheck="false"
+            placeholder='{ "collections": [{ "key": "lessons", "name": "课程", "fields": [{ "key": "title", "name": "标题", "type": "string" }] }] }'
+          ></textarea>
+        </section>
+
+        <!-- 接口清单 -->
+        <section v-show="activeTab === 'interface'" class="tab-pane">
+          <div class="manifest-hint">
+            <Icon icon="ri-information-line" :size="14" />
+            <span>接口清单 (interface_schema)：声明应用对外暴露的数据接口，便于集控侧套餐调用</span>
+          </div>
+          <textarea
+            v-model="interfaceText"
+            :disabled="readonly"
+            @input="markDirty('interface')"
+            class="code-area"
+            spellcheck="false"
+            placeholder='{ "endpoints": [{ "method": "GET", "path": "/api/...", "description": "..." }] }'
+          ></textarea>
+        </section>
+
+        <!-- 设备控制清单 -->
+        <section v-show="activeTab === 'control'" class="tab-pane">
+          <div class="manifest-hint">
+            <Icon icon="ri-information-line" :size="14" />
+            <span>设备控制清单 (control_manifest)：声明此应用所需的设备控制能力。平台提供内置 REST API（<code>/api/control.php</code>），非 EA2 专属，任何实例侧应用均可使用。</span>
+          </div>
+
+          <div class="control-config">
+            <!-- 启用开关 -->
+            <div class="control-toggle-row">
+              <div class="toggle-info">
+                <h4><Icon icon="ri-remote-control-line" :size="18" /> 启用设备控制</h4>
+                <p>开启后，此应用将获得设备远程控制能力（注册、命令下发、状态上报）。客户端可通过注册码连接到此实例。</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" v-model="controlForm.enabled" :disabled="readonly" @change="onControlChange" />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <template v-if="controlForm.enabled">
+              <div class="control-divider"></div>
+
+              <!-- 协议版本 -->
+              <div class="control-field">
+                <label>协议版本</label>
+                <select v-model.number="controlForm.protocolVersion" :disabled="readonly" @change="onControlChange" class="ctrl-select">
+                  <option :value="1">v1 (REST 轮询)</option>
+                </select>
+                <span class="field-hint">当前平台支持 REST v1 协议，客户端通过轮询获取命令</span>
+              </div>
+
+              <!-- 描述 -->
+              <div class="control-field">
+                <label>API 描述</label>
+                <textarea
+                  v-model="controlForm.description"
+                  :disabled="readonly"
+                  @input="onControlChange"
+                  rows="3"
+                  placeholder="描述此应用的设备控制用途，如：用于 ExamAware 2 客户端远程管理考试配置..."
+                ></textarea>
+              </div>
+
+              <!-- 支持的指令类型 -->
+              <div class="control-field">
+                <label>支持的指令类型</label>
+                <div class="command-list">
+                  <div v-for="(cmd, idx) in controlForm.supportedCommands" :key="idx" class="command-item">
+                    <input
+                      v-model="controlForm.supportedCommands[idx]"
+                      :disabled="readonly"
+                      @input="onControlChange"
+                      placeholder="如：exam-config.prepare"
+                      class="cmd-input"
+                    />
+                    <button v-if="!readonly" class="cmd-remove" @click="removeCommand(idx)" title="移除">
+                      <Icon icon="ri-close-line" :size="14" />
+                    </button>
+                  </div>
+                  <button v-if="!readonly" class="cmd-add" @click="addCommand">
+                    <Icon icon="ri-add-line" :size="12" /> 添加指令类型
+                  </button>
+                </div>
+                <span class="field-hint">声明此应用支持的指令类型，客户端将根据此列表处理对应命令</span>
+              </div>
+
+              <div class="control-divider"></div>
+
+              <!-- API 端点预览 -->
+              <div class="control-api-preview">
+                <h4><Icon icon="ri-code-box-line" :size="16" /> API 端点预览</h4>
+                <p class="preview-hint">部署到实例后，客户端可通过以下 REST API 与此应用的设备控制功能交互：</p>
+                <div class="api-table">
+                  <div class="api-row api-header">
+                    <div class="api-col method">方法</div>
+                    <div class="api-col action">Action</div>
+                    <div class="api-col desc">说明</div>
+                  </div>
+                  <div v-for="ep in apiEndpoints" :key="ep.action" class="api-row">
+                    <div class="api-col method"><span class="method-badge" :class="ep.method">{{ ep.method }}</span></div>
+                    <div class="api-col action"><code>{{ ep.action }}</code></div>
+                    <div class="api-col desc">{{ ep.desc }}</div>
+                  </div>
+                </div>
+                <div class="api-base-url">
+                  <Icon icon="ri-link" :size="14" />
+                  <code>POST /api/control.php?instance_uid={uid}&action={action}</code>
+                </div>
+              </div>
+            </template>
+
+            <div v-else class="control-disabled-hint">
+              <Icon icon="ri-information-line" :size="16" />
+              <span>设备控制未启用。开启后，可通过平台内置 REST API 实现客户端远程控制。</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- 实时预览 -->
+        <section v-show="activeTab === 'preview'" class="tab-pane">
+          <div class="preview-toolbar">
+            <button class="prev-btn" @click="refreshPreview">
+              <Icon icon="ri-refresh-line" :size="14" /> 刷新预览
+            </button>
+            <span class="prev-hint">预览效果仅供展示，未保存的内容不会生效</span>
+          </div>
+          <iframe
+            ref="previewFrame"
+            class="preview-iframe"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+            :srcdoc="previewSrcDoc"
+          ></iframe>
+        </section>
+      </div>
+    </template>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { useAuth } from '../../composables/useAuth';
+import { devApi } from '../../api';
+
+const route = useRoute();
+const router = useRouter();
+const { user } = useAuth();
+const appId = computed(() => Number(route.params.id || 0));
+const readonly = computed(() => route.query.readonly === '1' && !user.value?.is_super_admin);
+
+const loading = ref(false);
+const busy = ref(false);
+const app = ref<any>(null);
+
+const activeTab = ref('basic');
+
+const tabs = [
+  { id: 'basic', icon: 'ri-settings-3-line', label: '基础信息' },
+  { id: 'app_info', icon: 'ri-file-list-3-line', label: '应用信息清单' },
+  { id: 'ribbon', icon: 'ri-toolbar-line', label: 'Ribbon 工具栏' },
+  { id: 'editor_html', icon: 'ri-html5-line', label: '编辑器 HTML' },
+  { id: 'editor_js', icon: 'ri-code-s-slash-line', label: '编辑器 JS' },
+  { id: 'storage', icon: 'ri-database-2-line', label: '存储清单' },
+  { id: 'interface', icon: 'ri-plug-line', label: '接口清单' },
+  { id: 'control', icon: 'ri-remote-control-line', label: '设备控制' },
+  { id: 'preview', icon: 'ri-eye-line', label: '实时预览' }
+];
+
+// 基础信息
+const basicForm = ref({ name: '', version: '', category: '', description: '' });
+
+// 各类清单文本（textarea 编辑）
+const appInfoText = ref('');
+const editorHtml = ref('');
+const editorJs = ref('');
+const storageText = ref('');
+const interfaceText = ref('');
+
+// 设备控制清单
+const controlForm = ref({
+  enabled: false,
+  protocolVersion: 1,
+  supportedCommands: [] as string[],
+  description: ''
+});
+
+const apiEndpoints = [
+  { method: 'POST', action: 'device_register', desc: '设备注册（注册码验证）' },
+  { method: 'POST', action: 'command_poll', desc: '设备轮询待执行命令' },
+  { method: 'POST', action: 'command_report', desc: '设备上报命令执行结果' },
+  { method: 'POST', action: 'device_update_state', desc: '更新设备状态（心跳）' },
+  { method: 'POST', action: 'device_errors', desc: '上报设备错误' },
+  { method: 'POST', action: 'command_create', desc: '创建命令（广播/呼叫监考/部署考试）' },
+  { method: 'GET', action: 'events_stream', desc: 'SSE 事件流（服务端推送）' },
+];
+
+function onControlChange() {
+  markDirty('control');
+}
+
+function addCommand() {
+  controlForm.value.supportedCommands.push('');
+  markDirty('control');
+}
+
+function removeCommand(idx: number) {
+  controlForm.value.supportedCommands.splice(idx, 1);
+  markDirty('control');
+}
+
+// ===== Ribbon 可视化编辑器状态 =====
+interface RibbonTool {
+  id: string;
+  label: string;
+  icon: string;
+  command?: string;
+}
+interface RibbonGroup {
+  label: string;
+  tools: RibbonTool[];
+}
+const ribbonGroups = ref<RibbonGroup[]>([]);
+
+// 从 appInfoText 解析 ribbon 到可视化编辑器
+function syncRibbonFromAppInfo() {
+  try {
+    const obj = appInfoText.value ? JSON.parse(appInfoText.value) : {};
+    const arr = Array.isArray(obj.ribbon) ? obj.ribbon : [];
+    ribbonGroups.value = arr.map((g: any) => ({
+      label: g.label || '',
+      tools: Array.isArray(g.tools) ? g.tools.map((t: any) => ({
+        id: t.id || '',
+        label: t.label || '',
+        icon: t.icon || 'ri-question-line',
+        command: t.command || ''
+      })) : []
+    }));
+  } catch {
+    // JSON 解析失败时保留当前可视化状态
+  }
+}
+
+// 将可视化 ribbon 同步回 appInfoText
+function onRibbonChange() {
+  try {
+    const obj = appInfoText.value ? JSON.parse(appInfoText.value) : {};
+    obj.ribbon = ribbonGroups.value;
+    appInfoText.value = JSON.stringify(obj, null, 2);
+    markDirty('app_info');
+  } catch {
+    // appInfoText 当前不是合法 JSON，先尝试覆盖为合法结构
+    const obj: any = { ribbon: ribbonGroups.value };
+    appInfoText.value = JSON.stringify(obj, null, 2);
+    markDirty('app_info');
+  }
+}
+
+function addGroup() {
+  ribbonGroups.value.push({ label: '新工具组', tools: [] });
+  onRibbonChange();
+}
+
+function removeGroup(gi: number) {
+  if (!confirm('确认删除此工具组及其所有工具？')) return;
+  ribbonGroups.value.splice(gi, 1);
+  onRibbonChange();
+}
+
+function addTool(gi: number) {
+  ribbonGroups.value[gi].tools.push({
+    id: 'tool_' + Date.now(),
+    label: '新工具',
+    icon: 'ri-tools-line',
+    command: ''
+  });
+  onRibbonChange();
+}
+
+function removeTool(gi: number, ti: number) {
+  ribbonGroups.value[gi].tools.splice(ti, 1);
+  onRibbonChange();
+}
+
+// 脏标志
+const dirtyTabs = ref<Record<string, boolean>>({});
+const dirty = computed(() => Object.values(dirtyTabs.value).some(v => v));
+
+const previewFrame = ref<HTMLIFrameElement | null>(null);
+const previewSrcDoc = computed(() => {
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>Preview</title>
+<style>
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#fff;color:#1a1a1a;}
+  body{overflow:auto;padding:12px;}
+  pre.err{color:#c42b1c;background:#fff0f0;padding:8px;border-radius:4px;}
+</style></head>
+<body>
+${editorHtml.value || '<!-- 无 HTML -->'}
+<script>
+  window.CSES = {
+    instance: { id: 0, name: '预览实例', uid: 'preview' },
+    config: {},
+    storageManifest: ${safeJson(storageText.value)},
+    interfaceSchema: ${safeJson(interfaceText.value)},
+    request: (action, payload) => {
+      console.log('[preview request]', action, payload);
+      return Promise.resolve({ ok: true, preview: true });
+    },
+    saveConfig: c => window.CSES.request('saveConfig', c),
+    loadConfig: () => window.CSES.request('loadConfig'),
+    listStorage: col => window.CSES.request('listStorage', { collection: col }),
+    saveStorage: (col, r) => window.CSES.request('saveStorage', { collection: col, record: r }),
+    deleteStorage: (col, id) => window.CSES.request('deleteStorage', { collection: col, recordId: id }),
+    notify: m => window.CSES.request('notify', { msg: m })
+  };
+  try {
+${editorJs.value || '// 无自定义 JS'}
+  } catch (e) {
+    document.body.insertAdjacentHTML('beforeend', '<pre class="err">脚本错误: ' + e.message + '</pre>');
+  }
+<\/script>
+</body></html>`;
+});
+
+function safeJson(text: string): string {
+  if (!text || !text.trim()) return '{}';
+  try { JSON.parse(text); return text; } catch { return '{}'; }
+}
+
+function getStatusLabel(status?: string): string {
+  const labels: Record<string, string> = { draft: '草稿', published: '已发布', archived: '已归档' };
+  return labels[status || ''] || status || '';
+}
+
+function markDirty(tab: string) {
+  dirtyTabs.value[tab] = true;
+}
+
+function switchTab(tab: string) {
+  activeTab.value = tab;
+  if (tab === 'preview') refreshPreview();
+  // 切到 ribbon 可视化编辑器时，从最新的 appInfoText 重新解析（避免外部修改 JSON 后可视化不同步）
+  if (tab === 'ribbon') syncRibbonFromAppInfo();
+}
+
+function refreshPreview() {
+  // 通过重新计算 srcDoc 触发 iframe 重载
+  if (previewFrame.value) {
+    previewFrame.value.srcdoc = previewSrcDoc.value;
+  }
+}
+
+async function loadApp() {
+  loading.value = true;
+  try {
+    const res = readonly.value
+      ? await devApi.sharedGet(appId.value)
+      : await devApi.getApp(appId.value);
+    app.value = res;
+    basicForm.value = {
+      name: res.name || '',
+      version: res.version || '1.0.0',
+      category: res.category || '通用',
+      description: res.description || ''
+    };
+    appInfoText.value = res.app_info_manifest ? JSON.stringify(res.app_info_manifest, null, 2) : '';
+    editorHtml.value = res.editor_html || '';
+    editorJs.value = res.editor_js || '';
+    storageText.value = res.storage_manifest ? JSON.stringify(res.storage_manifest, null, 2) : '';
+    interfaceText.value = res.interface_schema ? JSON.stringify(res.interface_schema, null, 2) : '';
+    if (res.control_manifest) {
+      controlForm.value = {
+        enabled: res.control_manifest.enabled || false,
+        protocolVersion: res.control_manifest.protocolVersion || 1,
+        supportedCommands: res.control_manifest.supportedCommands || [],
+        description: res.control_manifest.description || ''
+      };
+    }
+    syncRibbonFromAppInfo();
+    dirtyTabs.value = {};
+  } catch (e: any) {
+    alert(e.message || '加载失败');
+    router.push('/console/developer/apps');
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function saveCurrent() {
+  if (!dirty.value || busy.value) return;
+  busy.value = true;
+  try {
+    // 1. 基础信息
+    if (dirtyTabs.value.basic) {
+      await devApi.updateApp(appId.value, basicForm.value);
+      dirtyTabs.value.basic = false;
+    }
+    // 2. 各类清单（含校验）
+    if (dirtyTabs.value.app_info) {
+      const v = JSON.parse(appInfoText.value || '{}');
+      await devApi.saveManifest(appId.value, 'app_info', v);
+      dirtyTabs.value.app_info = false;
+    }
+    if (dirtyTabs.value.editor_html) {
+      await devApi.saveManifest(appId.value, 'editor_html', editorHtml.value);
+      dirtyTabs.value.editor_html = false;
+    }
+    if (dirtyTabs.value.editor_js) {
+      await devApi.saveManifest(appId.value, 'editor_js', editorJs.value);
+      dirtyTabs.value.editor_js = false;
+    }
+    if (dirtyTabs.value.storage) {
+      const v = JSON.parse(storageText.value || '{}');
+      await devApi.saveManifest(appId.value, 'storage', v);
+      dirtyTabs.value.storage = false;
+    }
+    if (dirtyTabs.value.interface) {
+      const v = JSON.parse(interfaceText.value || '{}');
+      await devApi.saveManifest(appId.value, 'interface', v);
+      dirtyTabs.value.interface = false;
+    }
+    if (dirtyTabs.value.control) {
+      await devApi.saveManifest(appId.value, 'control', {
+        enabled: controlForm.value.enabled,
+        protocolVersion: controlForm.value.protocolVersion,
+        supportedCommands: controlForm.value.supportedCommands.filter(c => c.trim() !== ''),
+        description: controlForm.value.description
+      });
+      dirtyTabs.value.control = false;
+    }
+    await loadApp();
+    alert('已保存');
+  } catch (e: any) {
+    alert(e.message || '保存失败');
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function publish() {
+  if (!confirm('确认发布此应用？发布后才能在实例创建时被选择。')) return;
+  busy.value = true;
+  try {
+    await devApi.publishApp(appId.value);
+    await loadApp();
+    alert('已发布');
+  } catch (e: any) {
+    alert(e.message || '发布失败');
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function archive() {
+  if (!confirm('确认归档此应用？')) return;
+  busy.value = true;
+  try {
+    await devApi.archiveApp(appId.value);
+    await loadApp();
+    alert('已归档');
+  } catch (e: any) {
+    alert(e.message || '归档失败');
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function toggleShare() {
+  busy.value = true;
+  try {
+    const res = await devApi.toggleShare(appId.value);
+    app.value.is_shared = res.is_shared;
+    alert(res.is_shared ? '已共享到市场' : '已取消共享');
+  } catch (e: any) {
+    alert(e.message || '操作失败');
+  } finally {
+    busy.value = false;
+  }
+}
+
+function goBack() {
+  if (!readonly.value && dirty.value && !confirm('有未保存的更改，确认离开？')) return;
+  if (readonly.value) {
+    router.push('/console/developer/market');
+  } else {
+    router.push('/console/developer/apps');
+  }
+}
+
+async function forkFromReadonly() {
+  if (!app.value) return;
+  if (!confirm(`确认 Fork 应用「${app.value.name}」到我的应用列表？\n\nFork 后可在「我的应用」中修改和发布。`)) return;
+  busy.value = true;
+  try {
+    const res = await devApi.forkApp(appId.value);
+    alert(`已 Fork 到我的应用，新 app_key: ${res.app_key}`);
+    router.push(`/console/developer/apps/${res.id}/edit`);
+  } catch (e: any) {
+    alert(e.message || 'Fork 失败');
+  } finally {
+    busy.value = false;
+  }
+}
+
+onMounted(() => {
+  loadApp();
+});
+</script>
+
+<style scoped>
+.app-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--app-bg);
+  overflow: hidden;
+}
+
+.ae-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  background: var(--layer-default);
+  border-bottom: 1px solid var(--divider-stroke);
+  padding: 0 var(--spacer-3);
+  gap: var(--spacer-3);
+  flex-shrink: 0;
+}
+
+.ae-left {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.back-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.back-btn:hover { background: var(--subtle-secondary); color: var(--text-primary); }
+
+.app-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 103, 192, 0.1);
+  color: #0067C0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.app-meta { flex: 1; min-width: 0; }
+
+.app-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+}
+
+.app-name {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+
+.status-pill {
+  display: inline-flex;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.status-pill.draft { background: rgba(202, 143, 4, 0.1); color: #CA8F04; }
+.status-pill.published { background: rgba(16, 124, 16, 0.1); color: #107C10; }
+.status-pill.archived { background: rgba(0,0,0,0.08); color: var(--text-tertiary); }
+
+.shared-pill, .forked-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  font-weight: 500;
+}
+
+.shared-pill { background: var(--accent-bg); color: var(--accent-base); }
+.forked-pill { background: var(--subtle-pressed); color: var(--text-secondary); }
+
+.app-sub {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.app-sub code {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+}
+
+.cat-tag {
+  padding-left: var(--spacer-1);
+  margin-left: var(--spacer-1);
+  border-left: 1px solid var(--divider-stroke);
+}
+
+.ae-right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  flex-shrink: 0;
+}
+
+.top-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--spacer-1) var(--spacer-3);
+  background: var(--subtle-secondary);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background var(--fast-duration);
+}
+
+.top-action:hover { background: var(--subtle-pressed); }
+.top-action:disabled { opacity: 0.5; cursor: not-allowed; }
+.top-action.primary { background: var(--accent-base); color: white; border-color: var(--accent-base); }
+.top-action.primary:hover { background: var(--accent-hover); }
+
+.ae-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-6);
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.ae-tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--subtle-secondary);
+  border-bottom: 1px solid var(--divider-stroke);
+  padding: 0 var(--spacer-3);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.ae-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--spacer-2) var(--spacer-3);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--fast-duration);
+  position: relative;
+}
+
+.ae-tab:hover { color: var(--text-primary); }
+
+.ae-tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent-base);
+  font-weight: 500;
+  background: var(--layer-default);
+}
+
+.ae-tab.dirty::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--status-warning, #CA8F04);
+  position: absolute;
+  top: 6px;
+  right: 4px;
+}
+
+.ae-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.tab-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--spacer-4);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacer-3);
+  max-width: 800px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-1);
+}
+
+.form-group.full { grid-column: 1 / -1; }
+
+.form-group label {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.form-group input,
+.form-group textarea {
+  padding: var(--spacer-2) var(--spacer-3);
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  outline: none;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.form-group input:focus,
+.form-group textarea:focus { border-color: var(--accent-base); }
+
+.manifest-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  padding: var(--spacer-2) var(--spacer-3);
+  background: var(--subtle-secondary);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  margin-bottom: var(--spacer-2);
+}
+
+.manifest-hint code {
+  background: var(--subtle-pressed);
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  font-size: 10px;
+}
+
+.code-area {
+  flex: 1;
+  width: 100%;
+  border: 1px solid var(--ctrl-border);
+  border-radius: var(--radius-md);
+  background: var(--ctrl-fill-default);
+  color: var(--text-primary);
+  font-family: var(--font-mono, 'Consolas', 'Monaco', monospace);
+  font-size: var(--font-size-xs);
+  padding: var(--spacer-3);
+  outline: none;
+  resize: none;
+  tab-size: 2;
+  line-height: 1.5;
+}
+
+.code-area:focus { border-color: var(--accent-base); }
+
+.code-js { min-height: 320px; }
+
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-2) 0;
+}
+
+.prev-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--spacer-1) var(--spacer-3);
+  background: var(--accent-base);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.prev-btn:hover { background: var(--accent-hover); }
+
+.prev-hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.preview-iframe {
+  flex: 1;
+  width: 100%;
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-md);
+  background: white;
+}
+
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===== Ribbon 可视化编辑器 ===== */
+.ribbon-ve {
+  flex: 1;
+  overflow: auto;
+  padding: var(--spacer-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-3);
+}
+
+.rv-group {
+  background: var(--layer-default);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-md);
+  padding: var(--spacer-3);
+}
+
+.rv-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  margin-bottom: var(--spacer-2);
+}
+
+.rv-group-label {
+  flex: 1;
+  padding: var(--spacer-1) var(--spacer-2);
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.rv-group-label:focus { border-color: var(--accent-base); }
+
+.rv-del {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.rv-del:hover { background: rgba(196, 43, 28, 0.1); color: var(--status-error); }
+
+.rv-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacer-2);
+  align-items: stretch;
+}
+
+.rv-tool {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-1);
+  background: var(--subtle-secondary);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-md);
+  padding: var(--spacer-2);
+  width: 220px;
+  position: relative;
+}
+
+.rv-tool-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacer-1);
+  padding: var(--spacer-2);
+  background: var(--layer-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+
+.rv-tool-label {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.rv-tool-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacer-1);
+}
+
+.rv-tool-fields input {
+  padding: 4px var(--spacer-2);
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border);
+  border-radius: var(--radius-xs);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+  outline: none;
+  font-family: var(--font-mono, monospace);
+}
+
+.rv-tool-fields input:focus { border-color: var(--accent-base); }
+
+.rv-del-sm {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.rv-del-sm:hover { background: rgba(196, 43, 28, 0.1); color: var(--status-error); }
+
+.rv-add-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--spacer-2) var(--spacer-3);
+  background: transparent;
+  border: 1px dashed var(--ctrl-border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.rv-add-tool:hover { background: var(--subtle-secondary); color: var(--accent-base); border-color: var(--accent-base); }
+
+.rv-add-group {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--spacer-2) var(--spacer-3);
+  background: var(--accent-base);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.rv-add-group:hover { background: var(--accent-hover); }
+
+.rv-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacer-6);
+  color: var(--text-tertiary);
+  gap: var(--spacer-2);
+  font-size: var(--font-size-sm);
+}
+
+/* ===== 设备控制清单 ===== */
+.control-config {
+  flex: 1;
+  overflow: auto;
+  padding: var(--spacer-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-3);
+  max-width: 800px;
+}
+
+.control-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacer-4);
+  padding: var(--spacer-3);
+  background: var(--layer-default);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-md);
+}
+
+.toggle-info h4 {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 var(--spacer-1);
+}
+
+.toggle-info p {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Switch toggle */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: var(--ctrl-border);
+  border-radius: 24px;
+  transition: background var(--fast-duration);
+}
+
+.switch-slider::before {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: transform var(--fast-duration);
+}
+
+.switch input:checked + .switch-slider {
+  background: var(--accent-base);
+}
+
+.switch input:checked + .switch-slider::before {
+  transform: translateX(20px);
+}
+
+.control-divider {
+  height: 1px;
+  background: var(--divider-stroke);
+}
+
+.control-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-1);
+}
+
+.control-field label {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.control-field textarea {
+  padding: var(--spacer-2) var(--spacer-3);
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  outline: none;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.control-field textarea:focus { border-color: var(--accent-base); }
+
+.ctrl-select {
+  padding: var(--spacer-2) var(--spacer-3);
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  outline: none;
+  cursor: pointer;
+  width: 200px;
+}
+
+.ctrl-select:focus { border-color: var(--accent-base); }
+
+.field-hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.command-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-1);
+}
+
+.command-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-1);
+}
+
+.cmd-input {
+  flex: 1;
+  padding: var(--spacer-1) var(--spacer-2);
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono, monospace);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.cmd-input:focus { border-color: var(--accent-base); }
+
+.cmd-remove {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.cmd-remove:hover { background: rgba(196, 43, 28, 0.1); color: var(--status-error); }
+
+.cmd-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--spacer-1) var(--spacer-2);
+  background: transparent;
+  border: 1px dashed var(--ctrl-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.cmd-add:hover { background: var(--subtle-secondary); color: var(--accent-base); border-color: var(--accent-base); }
+
+.control-api-preview {
+  background: var(--layer-default);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-md);
+  padding: var(--spacer-3);
+}
+
+.control-api-preview h4 {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 var(--spacer-1);
+}
+
+.preview-hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  margin: 0 0 var(--spacer-2);
+}
+
+.api-table {
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  margin-bottom: var(--spacer-2);
+}
+
+.api-row {
+  display: grid;
+  grid-template-columns: 80px 1.2fr 1fr;
+  gap: var(--spacer-2);
+  padding: var(--spacer-1) var(--spacer-2);
+  align-items: center;
+  font-size: var(--font-size-xs);
+}
+
+.api-row.api-header {
+  background: var(--subtle-secondary);
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.api-row:not(.api-header) {
+  border-top: 1px solid var(--divider-stroke);
+}
+
+.api-col code {
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+  background: var(--subtle-secondary);
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+}
+
+.method-badge {
+  display: inline-flex;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono, monospace);
+}
+
+.method-badge.POST { background: rgba(0, 103, 192, 0.1); color: #0067C0; }
+.method-badge.GET { background: rgba(16, 124, 16, 0.1); color: #107C10; }
+
+.api-base-url {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  padding: var(--spacer-2);
+  background: var(--subtle-secondary);
+  border-radius: var(--radius-sm);
+}
+
+.api-base-url code {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-secondary);
+}
+
+.control-disabled-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-4);
+  background: var(--subtle-secondary);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+}
+
+/* 只读模式 */
+.readonly-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  background: rgba(202, 143, 4, 0.1);
+  color: #CA8F04;
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+input:disabled, textarea:disabled, select:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+</style>
