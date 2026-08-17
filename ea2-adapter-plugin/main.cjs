@@ -89,7 +89,9 @@ module.exports = defineMainPlugin({
     }
 
     // 监听配置变更
+    var _updatingFromPolling = false;
     var settingsDisposer = ctx.api.settings.onChanged(function (newSettings) {
+      if (_updatingFromPolling) return;
       var prevServerUrl = serverUrl;
       var prevEnrollmentCode = enrollmentCode;
       var prevDeviceId = deviceId;
@@ -178,11 +180,11 @@ module.exports = defineMainPlugin({
       // 如果已有设备凭证，跳过注册，直接使用现有凭证轮询
       if (deviceId && credential) {
         log.info('[CSES Cloud] 已有设备凭证，跳过注册: ' + deviceId);
-        return;
+        return null;
       }
       if (!enrollmentCode) {
         log.warn('[CSES Cloud] 未配置注册码，跳过设备注册');
-        return;
+        return null;
       }
 
       var displayName = 'EA2-' + (os.hostname() || 'Device');
@@ -209,9 +211,9 @@ module.exports = defineMainPlugin({
         instanceUid = result.instanceUid;
         patchData.instanceUid = result.instanceUid;
       }
-      await ctx.api.settings.patch(patchData);
 
       log.info('[CSES Cloud] 设备注册成功: ' + result.deviceId + ' (名称: ' + displayName + ')');
+      return patchData;
     }
 
     // ===== 命令轮询 =====
@@ -229,12 +231,30 @@ module.exports = defineMainPlugin({
         }
       } catch (e) {
         log.warn('[CSES Cloud] 命令轮询失败: ' + e.message);
-        // 如果是认证失败，清除凭证重新注册
-        if (e.message.indexOf('凭证无效') >= 0 || e.message.indexOf('设备未注册') >= 0) {
+        var msg = e.message || '';
+        // 实例已删除或设备已注销：断开连接
+        if (msg.indexOf('实例不存在') >= 0 || msg.indexOf('设备未注册') >= 0 || msg.indexOf('已吊销') >= 0) {
+          stopPolling();
           deviceId = '';
           credential = '';
-          await ctx.api.settings.patch({ deviceId: '', credential: '' });
+          await ctx.api.settings.patch({
+            deviceId: '', credential: '',
+            connectionStatus: 'error: ' + msg
+          }).catch(function () {});
+          log.info('[CSES Cloud] 已断开连接: ' + msg);
+        } else if (msg.indexOf('凭证无效') >= 0) {
+          // 凭证失效：清除凭证，尝试重新注册
+          deviceId = '';
+          credential = '';
+          await ctx.api.settings.patch({ deviceId: '', credential: '' }).catch(function () {});
           log.info('[CSES Cloud] 凭证已失效，已清除本地凭证');
+          // 如果有注册码，尝试重新注册
+          if (enrollmentCode) {
+            log.info('[CSES Cloud] 尝试使用注册码重新注册...');
+            startPolling();
+          } else {
+            await ctx.api.settings.patch({ connectionStatus: 'error: 凭证已失效，需要重新输入连接码' }).catch(function () {});
+          }
         }
       }
     }
@@ -265,7 +285,7 @@ module.exports = defineMainPlugin({
             log.info('[CSES Cloud] 解除广播: ' + (payload.broadcastId || ''));
             break;
           case 'settings.apply':
-            log.info('[CSES Cloud] 应用 ' + ((payload.settings || []).length) + ' 项设置');
+            await handleSettingsApply(payload);
             break;
           default:
             throw new Error('不支持的命令类型: ' + commandType);
@@ -310,6 +330,40 @@ module.exports = defineMainPlugin({
     }
 
     /**
+     * 处理 settings.apply 命令：云端配置覆盖本地原有配置
+     * 更新原则：云端更改覆盖本地原有配置，防止云端配置项不全
+     */
+    async function handleSettingsApply(payload) {
+      var settings = payload.settings || [];
+      if (settings.length === 0) {
+        log.info('[CSES Cloud] 收到空配置更新，跳过');
+        return;
+      }
+      log.info('[CSES Cloud] 应用 ' + settings.length + ' 项配置设置（云端覆盖本地）');
+      try {
+        // 获取当前本地设置
+        var currentSettings = ctx.api.settings.getAll ? ctx.api.settings.getAll() : {};
+        // 云端配置覆盖本地（云端为主）
+        var updated = {};
+        // 先保留所有本地设置
+        for (var k in currentSettings) { updated[k] = currentSettings[k]; }
+        // 云端设置覆盖
+        for (var i = 0; i < settings.length; i++) {
+          var item = settings[i];
+          if (item && item.key) {
+            updated[item.key] = item.value;
+          }
+        }
+        // 保存合并后的设置
+        await ctx.api.settings.patch(updated);
+        log.info('[CSES Cloud] 配置已同步: ' + settings.length + ' 项云端设置已覆盖本地');
+      } catch (e) {
+        log.error('[CSES Cloud] 配置同步失败: ' + e.message);
+        throw e;
+      }
+    }
+
+    /**
      * 上报命令执行结果（官方 command.result 格式）
      */
     async function reportResult(commandId, status, error, state) {
@@ -345,15 +399,21 @@ module.exports = defineMainPlugin({
       stopPolling();
       log.info('[CSES Cloud] 开始轮询: ' + serverUrl + ' (实例: ' + instanceUid + ')');
 
-      registerDevice().then(function () {
+      registerDevice().then(function (patchData) {
         log.info('[CSES Cloud] 设备注册成功，开始轮询命令');
-        ctx.api.settings.patch({ connectionStatus: 'connected' }).catch(function () {});
-        // 注册成功后启动定时轮询
+        // 一次性提交所有变更，避免 onChanged 递归重入
+        _updatingFromPolling = true;
+        var statusPatch = { connectionStatus: 'connected' };
+        if (patchData) Object.assign(statusPatch, patchData);
+        ctx.api.settings.patch(statusPatch).catch(function () {});
+        _updatingFromPolling = false;
         pollTimer = setInterval(pollCommands, POLL_INTERVAL_MS);
         heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
       }).catch(function (e) {
         log.error('[CSES Cloud] 设备注册失败: ' + e.message);
+        _updatingFromPolling = true;
         ctx.api.settings.patch({ connectionStatus: 'error: ' + e.message }).catch(function () {});
+        _updatingFromPolling = false;
         // 注册失败，不启动轮询
       });
     }
@@ -361,6 +421,41 @@ module.exports = defineMainPlugin({
     function stopPolling() {
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
       if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    }
+
+    /**
+     * 断开连接：停止轮询，清除凭证，更新状态
+     */
+    async function disconnect() {
+      stopPolling();
+      deviceId = '';
+      credential = '';
+      instanceUid = '';
+      enrollmentCode = '';
+      try {
+        await ctx.api.settings.patch({
+          deviceId: '', credential: '', instanceUid: '', enrollmentCode: '',
+          connectionStatus: 'disconnected'
+        });
+      } catch (e) {}
+      log.info('[CSES Cloud] 已断开连接');
+    }
+
+    /**
+     * 重新连接：清除凭证，使用注册码重新注册
+     */
+    async function reconnect() {
+      stopPolling();
+      deviceId = '';
+      credential = '';
+      try {
+        await ctx.api.settings.patch({
+          deviceId: '', credential: '',
+          connectionStatus: 'reconnecting'
+        });
+      } catch (e) {}
+      // 重新开始轮询（使用已有的 enrollmentCode）
+      if (canStartPolling()) startPolling();
     }
 
     // 自动启动

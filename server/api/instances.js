@@ -143,7 +143,9 @@ module.exports = async (ctx) => {
     const groupId = parseInt(body.group_id ?? 0, 10) || 0;
     if (name === '') Response.error('实例名称不能为空');
     if (appId > 0) {
-      const app = DB.one("SELECT * FROM apps WHERE id = ? AND status = 'published'", [appId]);
+      const { AppFS } = require('../lib/dev-fs');
+      const allApps = AppFS.listPublished();
+      const app = allApps.find(a => a._id === appId);
       if (!app) Response.error('所选应用不存在或未发布');
       type = app.category;
     }

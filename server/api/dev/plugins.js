@@ -1,14 +1,17 @@
 /**
- * 开发者中心 - 编辑器插件 API（1:1 转换自 api/dev/plugins.php）
+ * 开发者中心 - 编辑器插件 API（纯文件系统存储）
+ *
+ * 共享市场插件存储在 data/dev/plugins/{plugin_key}/ 下
+ * 用户自己的插件存储在 data/dev-users/{username}/plugins/{plugin_key}/ 下
  *
  * 公开操作（无需登录）：
  *  - GET  action=resolver&ext=xxx        根据文件后缀解析对应的编辑器插件
- *  - GET  action=published               列出已发布插件（供编辑器使用）
+ *  - GET  action=published               列出已发布插件
  *  - GET  action=shared-list             列出共享市场插件
  *
  * 需要智教联盟登录：
  *  - GET  action=list                    列出当前开发者的插件
- *  - GET  action=get&id=N                获取插件详情
+ *  - GET  action=get&plugin_key=X        获取插件详情
  *  - POST action=create                  创建插件
  *  - POST action=update                  更新插件
  *  - POST action=publish                 发布插件
@@ -17,14 +20,21 @@
  */
 const crypto = require('crypto');
 const { nowStr } = require('../../lib/response');
+const { PluginFS } = require('../../lib/dev-fs');
 
-/** PHP json_decode(s, true) 等价：失败返回 null */
-function jsonDecodeSafe(s) {
-  try { return JSON.parse(s); } catch (_) { return null; }
+/** 按 plugin_key 查找插件（支持 id 兼容） */
+function findPlugin(fs, query) {
+  if (query.plugin_key) return fs.readByKey(query.plugin_key);
+  if (query.id) {
+    const id = parseInt(query.id, 10) || 0;
+    const all = fs.listAll();
+    return all.find(p => p._id === id) || null;
+  }
+  return null;
 }
 
 module.exports = async (ctx) => {
-  const { req, res, DB, Auth, Response, Helpers, query, body, files } = ctx;
+  const { req, res, Auth, Response, Helpers, query, body } = ctx;
 
   const method = req.method;
   const action = query.action ?? '';
@@ -33,76 +43,52 @@ module.exports = async (ctx) => {
   if (method === 'GET' && action === 'resolver') {
     const ext = String(query.ext ?? '').trim().toLowerCase();
     if (ext === '') Response.error('缺少文件后缀');
-    const rows = DB.all(
-      `SELECT id, plugin_key, name, editor_html, editor_js, editor_css, icon, is_official, extensions
-       FROM editor_plugins WHERE status = 'published' ORDER BY is_official DESC, id ASC`
-    );
-    for (const r of rows) {
-      const extensions = r.extensions ? jsonDecodeSafe(r.extensions) : [];
-      if (Array.isArray(extensions) && extensions.includes(ext)) {
-        r.extensions = extensions;
-        Response.success(r); // 内部抛 HttpSent，等价 PHP Response+exit
-      }
+    const plugin = PluginFS.resolveByExt(ext);
+    if (plugin) {
+      Response.success(plugin);
+    } else {
+      Response.success(null);
     }
-    Response.success(null);
   }
 
   // ===== [公开] 列出已发布插件 =====
   if (method === 'GET' && action === 'published') {
-    const rows = DB.all(
-      `SELECT id, plugin_key, name, version, description, extensions, editor_html, editor_js, editor_css, icon, is_official
-       FROM editor_plugins WHERE status = 'published' ORDER BY is_official DESC, id ASC`
-    );
-    for (const r of rows) {
-      r.extensions = r.extensions ? jsonDecodeSafe(r.extensions) : [];
-    }
-    Response.success(rows);
+    const plugins = PluginFS.listPublished();
+    Response.success(plugins);
   }
 
   // ===== [公开] 列出共享市场插件 =====
   if (method === 'GET' && action === 'shared-list') {
-    const keyword = String(query.keyword ?? '').trim();
-    let sql = `SELECT id, plugin_key, name, version, description, extensions, icon, status,
-                   developer_username, is_official, created_at, updated_at
-            FROM editor_plugins WHERE status = 'published' `;
-    let params = [];
-    if (keyword !== '') {
-      sql += ` AND (name LIKE ? OR description LIKE ? OR plugin_key LIKE ?) `;
-      const kw = '%' + keyword + '%';
-      params = [kw, kw, kw];
+    const keyword = String(query.keyword ?? '').trim().toLowerCase();
+    let plugins = PluginFS.listShared();
+    if (keyword) {
+      plugins = plugins.filter(p =>
+        (p.name || '').toLowerCase().includes(keyword) ||
+        (p.description || '').toLowerCase().includes(keyword) ||
+        (p.plugin_key || '').toLowerCase().includes(keyword)
+      );
     }
-    sql += ` ORDER BY is_official DESC, updated_at DESC`;
-    const rows = DB.all(sql, params);
-    for (const r of rows) {
-      r.extensions = r.extensions ? jsonDecodeSafe(r.extensions) : [];
-    }
-    Response.success(rows);
+    Response.success(plugins);
   }
 
   // ===== 以下需要联盟登录 =====
   Auth.requireAlliance();
   const developer = Auth.allianceUsername();
+  const effectiveDeveloper = developer !== '' ? developer : (Auth.user()?.username ?? 'super_admin');
 
   // ===== 列出我的插件 =====
   if (method === 'GET' && action === 'list') {
-    const rows = DB.all(
-      `SELECT id, plugin_key, name, version, description, extensions, icon, status, is_official, created_at, updated_at
-       FROM editor_plugins WHERE developer_username = ? ORDER BY id DESC`,
-      [developer]
-    );
-    // 解析 extensions JSON
-    for (const r of rows) {
-      r.extensions = r.extensions ? jsonDecodeSafe(r.extensions) : [];
-    }
-    Response.success(rows);
+    const plugins = PluginFS.listByUser(effectiveDeveloper);
+    Response.success(plugins);
   }
 
   // ===== 获取插件详情 =====
   if (method === 'GET' && action === 'get') {
-    const id = parseInt(query.id ?? 0, 10) || 0;
-    const plugin = DB.one('SELECT * FROM editor_plugins WHERE id = ? AND (developer_username = ? OR is_official = 1)', [id, developer]);
+    const plugin = findPlugin(PluginFS, query);
     if (!plugin) Response.error('插件不存在');
-    plugin.extensions = plugin.extensions ? jsonDecodeSafe(plugin.extensions) : [];
+    if (plugin.developer_username !== effectiveDeveloper && !plugin.is_official) {
+      Response.error('无权访问此插件');
+    }
     Response.success(plugin);
   }
 
@@ -112,75 +98,63 @@ module.exports = async (ctx) => {
     if (name === '') Response.error('插件名称不能为空');
     const extensions = body.extensions ?? [];
     if (!Array.isArray(extensions) || extensions.length === 0) Response.error('至少注册一个文件后缀');
-    const now = nowStr();
-    // PHP: 'plugin_' . substr(md5($developer . $name . microtime(true)), 0, 12)
     const pluginKey = 'plugin_' + crypto.createHash('md5')
-      .update(developer + name + (Date.now() / 1000))
+      .update(effectiveDeveloper + name + (Date.now() / 1000))
       .digest('hex').slice(0, 12);
-    const id = DB.insert('editor_plugins', {
-      developer_username: developer,
-      plugin_key: pluginKey,
-      name: name,
+    const plugin = PluginFS.createUserPlugin(effectiveDeveloper, pluginKey, {
+      name,
       version: body.version ?? '1.0.0',
       description: body.description ?? '',
-      extensions: JSON.stringify(extensions),
+      extensions,
       editor_html: body.editor_html ?? '<div id="app"></div>',
       editor_js: body.editor_js ?? '// 自定义编辑器 JS',
       editor_css: body.editor_css ?? '',
       icon: body.icon ?? 'ri-plug-line',
-      status: 'draft',
-      is_official: 0,
-      created_at: now,
-      updated_at: now,
     });
-    Response.success({ id: id, plugin_key: pluginKey });
+    Response.success({ _id: plugin._id, plugin_key: plugin.plugin_key });
   }
 
   // ===== 更新插件 =====
   if (method === 'POST' && action === 'update') {
-    const id = parseInt(body.id ?? 0, 10) || 0;
-    const plugin = DB.one('SELECT id FROM editor_plugins WHERE id = ? AND developer_username = ?', [id, developer]);
-    if (!plugin) Response.error('插件不存在或无权编辑');
+    const plugin = findPlugin(PluginFS, query);
+    if (!plugin) Response.error('插件不存在');
+    if (plugin.developer_username !== effectiveDeveloper) Response.error('无权编辑此插件');
     const now = nowStr();
-    const updates = { updated_at: now };
+    const fsUpdate = { updated_at: now };
     for (const k of ['name', 'version', 'description', 'editor_html', 'editor_js', 'editor_css', 'icon']) {
-      if (k in body) updates[k] = body[k];
+      if (k in body) fsUpdate[k] = body[k];
     }
     if ('extensions' in body && Array.isArray(body.extensions)) {
-      updates.extensions = JSON.stringify(body.extensions);
+      fsUpdate.extensions = body.extensions;
     }
-    // PHP 原文为 'id = :id' + ['id' => $id]；Node 版 DB.update 仅支持 ? 占位符，语义等价
-    DB.update('editor_plugins', updates, 'id = ?', [id]);
+    PluginFS.writeUser(effectiveDeveloper, plugin.plugin_key, fsUpdate);
     Response.success({ ok: true });
   }
 
   // ===== 发布插件 =====
   if (method === 'POST' && action === 'publish') {
-    const id = parseInt(body.id ?? 0, 10) || 0;
-    const plugin = DB.one('SELECT id FROM editor_plugins WHERE id = ? AND developer_username = ?', [id, developer]);
-    if (!plugin) Response.error('插件不存在或无权编辑');
-    // PHP 原文为 'id = :id' + ['id' => $id]；Node 版 DB.update 仅支持 ? 占位符，语义等价
-    DB.update('editor_plugins', { status: 'published', updated_at: nowStr() }, 'id = ?', [id]);
+    const plugin = findPlugin(PluginFS, query);
+    if (!plugin) Response.error('插件不存在');
+    if (plugin.developer_username !== effectiveDeveloper) Response.error('无权编辑此插件');
+    PluginFS.writeUser(effectiveDeveloper, plugin.plugin_key, { status: 'published', updated_at: nowStr() });
     Response.success({ ok: true });
   }
 
   // ===== 归档插件 =====
   if (method === 'POST' && action === 'archive') {
-    const id = parseInt(body.id ?? 0, 10) || 0;
-    const plugin = DB.one('SELECT id FROM editor_plugins WHERE id = ? AND developer_username = ?', [id, developer]);
-    if (!plugin) Response.error('插件不存在或无权编辑');
-    // PHP 原文为 'id = :id' + ['id' => $id]；Node 版 DB.update 仅支持 ? 占位符，语义等价
-    DB.update('editor_plugins', { status: 'archived', updated_at: nowStr() }, 'id = ?', [id]);
+    const plugin = findPlugin(PluginFS, query);
+    if (!plugin) Response.error('插件不存在');
+    if (plugin.developer_username !== effectiveDeveloper) Response.error('无权编辑此插件');
+    PluginFS.writeUser(effectiveDeveloper, plugin.plugin_key, { status: 'archived', updated_at: nowStr() });
     Response.success({ ok: true });
   }
 
   // ===== 删除插件 =====
   if (method === 'POST' && action === 'delete') {
-    const id = parseInt(body.id ?? 0, 10) || 0;
-    const plugin = DB.one('SELECT id FROM editor_plugins WHERE id = ? AND developer_username = ?', [id, developer]);
-    if (!plugin) Response.error('插件不存在或无权编辑');
-    // PHP 原文为 'id = :id' + ['id' => $id]；Node 版等价 ? 占位符
-    DB.delete('editor_plugins', 'id = ?', [id]);
+    const plugin = findPlugin(PluginFS, query);
+    if (!plugin) Response.error('插件不存在');
+    if (plugin.developer_username !== effectiveDeveloper) Response.error('无权删除此插件');
+    PluginFS.deleteUserPlugin(effectiveDeveloper, plugin.plugin_key);
     Response.success({ ok: true });
   }
 

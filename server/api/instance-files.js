@@ -43,19 +43,34 @@ module.exports = async (ctx) => {
   if (method === 'GET' && action === 'resolve-editor') {
     const ext = String(query.ext ?? '').trim().toLowerCase();
     if (ext === '') Response.error('缺少文件后缀');
-    const rows = DB.all(
-      `SELECT id, plugin_key, name, editor_html, editor_js, editor_css, icon, is_official, extensions
-       FROM editor_plugins WHERE status = 'published' ORDER BY is_official DESC, id ASC`
-    );
-    for (const r of rows) {
-      let extensions = [];
-      if (r.extensions) { try { extensions = JSON.parse(r.extensions); } catch (_) { extensions = []; } }
-      if (Array.isArray(extensions) && extensions.includes(ext)) {
-        r.extensions = extensions;
-        Response.success(r);
-      }
+    const { PluginFS } = require('../lib/dev-fs');
+    const plugin = PluginFS.resolveByExt(ext);
+    if (plugin) {
+      Response.success(plugin);
+    } else {
+      Response.success(null);
     }
-    Response.success(null);
+  }
+
+  // ===== [公开] 下载文件（供 EA2 客户端等外部调用） =====
+  if (method === 'GET' && action === 'download') {
+    const id = parseInt(query.id ?? 0, 10) || 0;
+    if (id <= 0) Response.error('缺少文件 ID');
+    const file = DB.one("SELECT * FROM cloud_files WHERE id = ?", [id]);
+    if (!file) Response.error('文件不存在');
+    // 兼容 better-sqlite3 返回 Buffer 的情况
+    const content = Buffer.isBuffer(file.content)
+      ? file.content.toString('utf8')
+      : (file.content ?? '');
+    const name = file.name ?? 'download';
+    const isJson = String(file.file_type ?? '').toLowerCase() === 'ea2' || String(name).endsWith('.ea2');
+    const contentBytes = Buffer.from(String(content), 'utf8');
+    res.set('Content-Type', isJson ? 'application/json; charset=utf-8' : 'application/octet-stream');
+    res.set('Content-Disposition', 'attachment; filename="' + addslashes(name) + '"');
+    res.set('Content-Length', String(contentBytes.length));
+    res.set('Cache-Control', 'no-cache');
+    res.end(contentBytes);
+    throw new ctx.HttpSent();
   }
 
   Auth.requireLogin();
@@ -297,25 +312,6 @@ module.exports = async (ctx) => {
       base_dir: baseDir,
       total_files: rows.length,
     });
-  }
-
-  // ===== 下载文件 =====
-  if (method === 'GET' && action === 'download') {
-    const id = parseInt(query.id ?? 0, 10) || 0;
-    if (id <= 0) Response.error('缺少文件 ID');
-    const file = DB.one("SELECT * FROM cloud_files WHERE id = ?", [id]);
-    if (!file) Response.error('文件不存在');
-    if (file.instance_id && !Auth.canAccessInstance(parseInt(file.instance_id, 10) || 0)) {
-      Response.error('无权下载该文件', 403, 403);
-    }
-    const content = file.content ?? '';
-    const name = file.name ?? 'download';
-    res.set('Content-Type', 'application/octet-stream');
-    res.set('Content-Disposition', 'attachment; filename="' + addslashes(name) + '"');
-    res.set('Content-Length', String(Buffer.byteLength(String(content), 'utf8')));
-    res.set('Cache-Control', 'no-cache');
-    res.end(content);
-    throw new ctx.HttpSent();
   }
 
   Response.error('未知操作', 405, 405);

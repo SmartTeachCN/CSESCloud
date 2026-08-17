@@ -844,45 +844,8 @@ async function sendMessage() {
   clearEditor();
   scrollToBottom();
 
-  // 非默认模型使用流式输出
-  if (selectedModel.value !== 'default') {
-    await sendStreaming(content);
-    return;
-  }
-
-  try {
-    const res = await aiApi.send(
-      currentSessionId.value,
-      content,
-      currentScope.value,
-      currentScopeRef.value,
-      selectedModel.value
-    );
-    if (res && res.session_id) {
-      currentSessionId.value = res.session_id;
-      await loadSessions();
-    }
-    if (res && res.reply) {
-      messages.value.push({
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: res.reply
-      });
-    }
-    scrollToBottom();
-  } catch (e: any) {
-    messages.value.push({
-      id: Date.now() + 2,
-      role: 'assistant',
-      content: '出错：' + (e.message || '请求失败')
-    });
-    scrollToBottom();
-  } finally {
-    sending.value = false;
-    if (inputEl.value) {
-      inputEl.value.focus();
-    }
-  }
+  // 统一走流式输出（服务端对规则引擎与真实模型均为 token 级流式）
+  await sendStreaming(content);
 }
 
 // ===== 流式发送 =====

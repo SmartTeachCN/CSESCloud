@@ -36,6 +36,12 @@
             <Icon icon="ri-file-copy-line" :size="12" />
           </button>
         </div>
+        <!-- 管理员禁用标签 -->
+        <div v-if="space?.disabled_by_admin" class="admin-disabled-badge">
+          <Icon icon="ri-forbid-line" :size="12" />
+          <span>已被管理员停用</span>
+          <div v-if="space?.disabled_reason" class="disabled-reason">{{ space.disabled_reason }}</div>
+        </div>
       </div>
     </aside>
 
@@ -44,6 +50,15 @@
       <div v-if="loading" class="loading-state">
         <div class="loading-ring"></div>
         <span>加载中...</span>
+      </div>
+
+      <!-- 审查状态横幅 -->
+      <div v-else-if="space?.review_status === 'pending_review' && activePage !== 'files'" class="review-banner">
+        <Icon icon="ri-error-warning-line" :size="16" />
+        <span>已于 {{ space.updated_at }} 编辑，新版本待管理员审查</span>
+        <span class="review-separator">|</span>
+        <span>当前版本修改时间：{{ space.updated_at }}</span>
+        <a :href="`/site/${space.slug}?preview=1`" target="_blank" class="review-preview-link">查看最新版本（仅编辑者）</a>
       </div>
 
       <div v-else-if="!isAlliance" class="error-state">
@@ -293,6 +308,7 @@
               <span class="status-item"><Icon icon="ri-file-2-line" :size="10" />{{ activeTab ? activeTab.path : '未选择文件' }}</span>
               <span class="status-item" v-if="activeTab?.isText">UTF-8</span>
               <span v-if="activeTab?.dirty" class="status-item dirty"><Icon icon="ri-circle-fill" :size="8" />未保存</span>
+              <span v-if="reviewStatus?.pending_count > 0" class="status-item pending-review"><Icon icon="ri-error-warning-line" :size="10" />{{ reviewStatus.pending_count }} 个文件待审查</span>
             </div>
             <div class="status-right">
               <span class="status-item">{{ autoSave ? '自动保存' : '手动保存' }}</span>
@@ -629,6 +645,7 @@ function onPluginSave(content: string) {
 }
 
 const usage = ref({ usedBytes: 0, quotaBytes: 0, usedDisplay: '0 B', quotaDisplay: '100 MB', percent: 0, fileCount: 0 });
+const reviewStatus = ref<any>(null);
 const statsItems = computed(() => [
   { icon: 'ri-hard-drive-2-line', label: '已用空间', value: usage.value.usedDisplay, bar: false },
   { icon: 'ri-stack-line', label: '总配额', value: usage.value.quotaDisplay, bar: false },
@@ -813,6 +830,7 @@ async function saveCurrentTab() {
     showToast('success', `文件已保存: ${tab.content.length} 字符${dbSize}`);
     await loadFiles();
     await loadUsage();
+    await loadReviewStatus();
   } catch (e: any) {
     showToast('error', e.message || '保存失败');
   } finally {
@@ -907,6 +925,12 @@ async function loadUsage() {
   try {
     const data = await hostingApi.getUsage();
     usage.value = { usedBytes: data.used_bytes || 0, quotaBytes: data.quota_bytes || 0, usedDisplay: formatBytes(data.used_bytes || 0), quotaDisplay: formatBytes(data.quota_bytes || 0), percent: data.used_percent || 0, fileCount: data.file_count || 0 };
+  } catch { /* ignore */ }
+}
+
+async function loadReviewStatus() {
+  try {
+    reviewStatus.value = await hostingApi.getReviewStatus();
   } catch { /* ignore */ }
 }
 
@@ -1005,7 +1029,7 @@ function goToLogin() { router.push('/login'); }
 onMounted(async () => {
   loading.value = true;
   if (isAlliance.value) {
-    await Promise.all([loadSpace(), loadFiles(), loadUsage()]);
+    await Promise.all([loadSpace(), loadFiles(), loadUsage(), loadReviewStatus()]);
   }
   loading.value = false;
 });
@@ -1153,4 +1177,49 @@ onMounted(async () => {
 .toast-success { background: #10893e; color: white; }
 .toast-error { background: var(--status-error); color: white; }
 @keyframes slideUp { from { transform: translateX(-50%) translateY(16px); opacity: 0; } to { transform: translateX(-50%) translateY(0); opacity: 1; } }
+
+/* 审查横幅 */
+.review-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-2) var(--spacer-4);
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  border: 1px solid #f59e0b;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: #92400e;
+  flex-shrink: 0;
+}
+.review-separator { color: #d97706; margin: 0 var(--spacer-1); }
+.review-preview-link { color: #b45309; font-weight: 600; text-decoration: underline; margin-left: var(--spacer-1); }
+.review-preview-link:hover { color: #92400e; }
+
+/* 管理员禁用标签 */
+.admin-disabled-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: var(--spacer-2);
+  padding: var(--spacer-2);
+  background: rgba(196, 43, 28, 0.08);
+  border: 1px solid rgba(196, 43, 28, 0.2);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: #C42B1C;
+  font-weight: 500;
+}
+.admin-disabled-badge .disabled-reason {
+  font-size: 11px;
+  color: #999;
+  font-weight: 400;
+  font-style: italic;
+}
+
+/* 审查状态栏项 */
+.status-item.pending-review {
+  color: #d97706;
+  font-weight: 500;
+}
 </style>

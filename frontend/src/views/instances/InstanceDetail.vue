@@ -305,7 +305,7 @@ const instanceId = computed(() => Number(route.params.id || 0));
 const controlBaseUrl = computed(() => {
   const inst = instance.value as any;
   const uid = inst?.instance_uid || 'inst-xxx';
-  return `/api/control.php?instance_uid=${uid}`;
+  return `/api/control?instance_uid=${uid}`;
 });
 
 const tabs = [
@@ -366,7 +366,7 @@ async function apiFetch(url: string, options?: RequestInit) {
 
 async function loadDevices() {
   try {
-    devices.value = await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=device_list');
+    devices.value = await apiFetch('/api/control?instance_uid=' + (instance.value as any).instance_uid + '&action=device_list');
   } catch (e) {
     console.error('加载设备列表失败', e);
   }
@@ -374,7 +374,7 @@ async function loadDevices() {
 
 async function loadEnrollmentCodes() {
   try {
-    enrollmentCodes.value = await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_list');
+    enrollmentCodes.value = await apiFetch('/api/control?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_list');
   } catch (e) {
     console.error('加载注册码列表失败', e);
   }
@@ -382,7 +382,7 @@ async function loadEnrollmentCodes() {
 
 async function loadCommands() {
   try {
-    commands.value = await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=command_list');
+    commands.value = await apiFetch('/api/control?instance_uid=' + (instance.value as any).instance_uid + '&action=command_list');
   } catch (e) {
     console.error('加载命令列表失败', e);
   }
@@ -402,7 +402,7 @@ async function sendCommand() {
   }
   busy.value = true;
   try {
-    await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=command_create', {
+    await apiFetch('/api/control?instance_uid=' + (instance.value as any).instance_uid + '&action=command_create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -428,7 +428,7 @@ async function createEnrollmentCode() {
   if (busy.value) return;
   busy.value = true;
   try {
-    const data = await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_create', {
+    const data = await apiFetch('/api/control?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -450,7 +450,7 @@ async function revokeCode(code: any) {
   if (!confirm('确认吊销此注册码？')) return;
   busy.value = true;
   try {
-    await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_revoke', {
+    await apiFetch('/api/control?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_revoke', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: code.id }),
@@ -467,7 +467,7 @@ async function deleteCode(code: any) {
   if (!confirm('确认永久删除此注册码？此操作不可撤销。')) return;
   busy.value = true;
   try {
-    await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_delete', {
+    await apiFetch('/api/control?instance_uid=' + (instance.value as any).instance_uid + '&action=enrollment_delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: code.id }),
@@ -484,7 +484,7 @@ async function unregisterDevice(dev: any) {
   if (!confirm(`确认注销设备 ${dev.display_name}？`)) return;
   busy.value = true;
   try {
-    await apiFetch('/api/control.php?instance_uid=' + (instance.value as any).instance_uid + '&action=device_unregister', {
+    await apiFetch('/api/control?instance_uid=' + (instance.value as any).instance_uid + '&action=device_unregister', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deviceId: dev.device_id }),

@@ -362,15 +362,19 @@ module.exports = async (ctx) => {
       created_at: now,
     });
 
-    // 每个文件最多保留 10 个版本元数据，但只保留最近 3 个版本的文件内容
+    // 从工作区配置读取限制
+    const config = getWorkspaceConfig(username, 'light_editor');
+    const versionEntryLimit = parseInt(config?.version_entry_limit ?? 30, 10) || 30;
+    const versionFileLimit = parseInt(config?.version_file_limit ?? 10, 10) || 10;
+
     const count = DB.scalar(
       `SELECT COUNT(*) FROM cloud_file_versions WHERE file_id = ? AND created_by = ?`,
       [fileId, username]
     );
 
-    // 清理超出 10 个的版本记录
-    if (count > 10) {
-      const limit = count - 10;
+    // 清理超出条目限制的版本记录（删除最旧的）
+    if (count > versionEntryLimit) {
+      const limit = count - versionEntryLimit;
       DB.delete(
         'cloud_file_versions',
         `id IN (SELECT id FROM cloud_file_versions WHERE file_id = ? AND created_by = ? ORDER BY created_at ASC LIMIT ?)`,
@@ -378,16 +382,15 @@ module.exports = async (ctx) => {
       );
     }
 
-    // 只保留最近 3 个版本的内容，其余清空内容字段
+    // 只保留最近 N 个版本的完整内容，其余清空内容字段（仅保留条目）
     const allVersions = DB.all(
       `SELECT id FROM cloud_file_versions WHERE file_id = ? AND created_by = ? ORDER BY created_at DESC`,
       [fileId, username]
     );
-    const keepContent = 3;
     let index = 0;
     for (const v of allVersions) {
       index++;
-      if (index > keepContent) {
+      if (index > versionFileLimit) {
         DB.update('cloud_file_versions', { content: null }, 'id = ?', [v.id]);
       }
     }
@@ -439,13 +442,140 @@ module.exports = async (ctx) => {
     });
   }
 
-  // === 存储规则 ===
+  // === 版本删除（仅持有者可删除） ===
+
+  if (method === 'POST' && action === 'version-delete') {
+    const versionId = parseInt(body.version_id ?? 0, 10) || 0;
+    if (versionId <= 0) Response.error('缺少 version_id 参数');
+
+    const row = DB.one(
+      "SELECT * FROM cloud_file_versions WHERE id = ? AND created_by = ?",
+      [versionId, username]
+    );
+    if (!row) Response.error('版本不存在或无权删除');
+
+    DB.delete('cloud_file_versions', 'id = ?', [versionId]);
+    Auth.logAudit(schoolId, 0, 'version_delete', `删除版本: ${username} -> v${versionId}`);
+    Response.success(null, '版本已删除');
+  }
+
+  // === 版本对比（diff） ===
+
+  if (method === 'GET' && action === 'version-diff') {
+    const versionId1 = parseInt(query.v1 ?? 0, 10) || 0;
+    const versionId2 = parseInt(query.v2 ?? 0, 10) || 0;
+    if (versionId1 <= 0 || versionId2 <= 0) Response.error('缺少版本参数');
+
+    const v1 = DB.one("SELECT * FROM cloud_file_versions WHERE id = ? AND created_by = ?", [versionId1, username]);
+    const v2 = DB.one("SELECT * FROM cloud_file_versions WHERE id = ? AND created_by = ?", [versionId2, username]);
+    if (!v1 || !v2) Response.error('版本不存在');
+
+    const content1 = v1.content ?? '';
+    const content2 = v2.content ?? '';
+
+    Response.success({
+      v1: { id: v1.id, label: v1.version_label, created_at: v1.created_at },
+      v2: { id: v2.id, label: v2.version_label, created_at: v2.created_at },
+      content1: content1,
+      content2: content2,
+    });
+  }
+
+  // === 操作日志（每次操作都记录） ===
+
+  if (method === 'POST' && action === 'operation-log') {
+    const fileId = parseInt(body.file_id ?? 0, 10) || 0;
+    const fileName = String(body.file_name ?? '').trim();
+    const actionType = String(body.action_type ?? 'edit').trim();
+    const actionLabel = String(body.action_label ?? '').trim();
+    const contentSnapshot = body.content_snapshot ?? '';
+    const details = body.details ?? '';
+
+    const now = nowStr();
+
+    DB.insert('cloud_operation_logs', {
+      file_id: fileId,
+      file_name: fileName,
+      action_type: actionType,
+      action_label: actionLabel,
+      content_snapshot: contentSnapshot,
+      details: details,
+      created_by: username,
+      created_at: now,
+    });
+
+    // 清理超出限制的旧记录
+    const config = getWorkspaceConfig(username, 'light_editor');
+    const opLimit = parseInt(config?.operation_cloud_limit ?? 50, 10) || 50;
+    const count = DB.scalar(
+      "SELECT COUNT(*) FROM cloud_operation_logs WHERE file_id = ? AND created_by = ?",
+      [fileId, username]
+    );
+    if (count > opLimit) {
+      const limit = count - opLimit;
+      DB.delete(
+        'cloud_operation_logs',
+        "id IN (SELECT id FROM cloud_operation_logs WHERE file_id = ? AND created_by = ? ORDER BY created_at ASC LIMIT ?)",
+        [fileId, username, limit]
+      );
+    }
+
+    Response.success(null, '操作已记录');
+  }
+
+  if (method === 'GET' && action === 'operation-list') {
+    const fileId = parseInt(query.file_id ?? 0, 10) || 0;
+    const limit = parseInt(query.limit ?? 50, 10) || 50;
+    if (fileId <= 0) Response.error('缺少 file_id 参数');
+
+    const rows = DB.all(
+      "SELECT * FROM cloud_operation_logs WHERE file_id = ? AND created_by = ? ORDER BY created_at DESC LIMIT ?",
+      [fileId, username, limit]
+    );
+
+    const result = rows.map((row) => ({
+      id: row.id,
+      file_id: row.file_id,
+      file_name: row.file_name,
+      action_type: row.action_type,
+      action_label: row.action_label,
+      content_snapshot: row.content_snapshot,
+      details: row.details,
+      created_by: row.created_by,
+      created_at: row.created_at,
+    }));
+
+    Response.success(result);
+  }
+
+  // === 工作区配置 ===
+
+  if (method === 'GET' && action === 'workspace-config') {
+    const workspaceKey = String(query.workspace ?? 'light_editor').trim();
+    const config = getWorkspaceConfig(username, workspaceKey);
+    Response.success(config);
+  }
+
+  if (method === 'POST' && action === 'workspace-config-update') {
+    const workspaceKey = String(body.workspace ?? 'light_editor').trim();
+    const config = body.config ?? {};
+
+    if (typeof config !== 'object' || Array.isArray(config)) Response.error('config 必须为对象');
+
+    saveWorkspaceConfig(username, workspaceKey, config);
+    Auth.logAudit(schoolId, 0, 'workspace_config_update', `更新工作区配置: ${username} -> ${workspaceKey}`);
+    Response.success(config, '工作区配置已更新');
+  }
+
+  // === 存储规则（兼容旧接口） ===
 
   if (method === 'GET' && action === 'storage-rules') {
+    const config = getWorkspaceConfig(username, 'light_editor');
     Response.success({
-      history_limit: 5,
-      version_limit: 10,
-      version_file_limit: 3,
+      history_limit: parseInt(config?.operation_cloud_limit ?? 50, 10) || 50,
+      version_limit: parseInt(config?.version_entry_limit ?? 30, 10) || 30,
+      version_file_limit: parseInt(config?.version_file_limit ?? 10, 10) || 10,
+      operation_local_limit: parseInt(config?.operation_local_limit ?? 100, 10) || 100,
     });
   }
 
@@ -456,17 +586,15 @@ module.exports = async (ctx) => {
       Response.error('仅管理员可更新存储规则');
     }
 
-    const historyLimit = parseInt(body.history_limit ?? 5, 10) || 0;
-    const versionLimit = parseInt(body.version_limit ?? 10, 10) || 0;
-    const versionFileLimit = parseInt(body.version_file_limit ?? 3, 10) || 0;
+    const config = {
+      operation_cloud_limit: parseInt(body.history_limit ?? 50, 10) || 50,
+      version_entry_limit: parseInt(body.version_limit ?? 30, 10) || 30,
+      version_file_limit: parseInt(body.version_file_limit ?? 10, 10) || 10,
+      operation_local_limit: parseInt(body.operation_local_limit ?? 100, 10) || 100,
+    };
 
-    // 存储规则目前返回固定值，如需持久化可存入配置表
-    // 这里返回确认后的值
-    Response.success({
-      history_limit: historyLimit,
-      version_limit: versionLimit,
-      version_file_limit: versionFileLimit,
-    }, '存储规则已更新');
+    saveWorkspaceConfig(username, 'light_editor', config);
+    Response.success(config, '存储规则已更新');
   }
 
   Response.error('未知的操作');
@@ -602,4 +730,51 @@ function getDefaultCloudIndexHtml(username)
     </div>
 </body>
 </html>`;
+}
+
+// 获取工作区配置（默认值）
+function getWorkspaceConfig(username, workspaceKey) {
+  const row = DB.one(
+    "SELECT config FROM workspace_configs WHERE username = ? AND workspace_key = ?",
+    [username, workspaceKey]
+  );
+  if (row && row.config) {
+    try {
+      const config = JSON.parse(row.config);
+      if (config && typeof config === 'object' && !Array.isArray(config)) return config;
+    } catch (_) {}
+  }
+  // 返回默认配置
+  return {
+    operation_cloud_limit: 50,
+    operation_local_limit: 100,
+    version_entry_limit: 30,
+    version_file_limit: 10,
+  };
+}
+
+// 保存工作区配置
+function saveWorkspaceConfig(username, workspaceKey, config) {
+  const configJson = JSON.stringify(config);
+  const now = nowStr();
+
+  const exists = DB.scalar(
+    "SELECT 1 FROM workspace_configs WHERE username = ? AND workspace_key = ?",
+    [username, workspaceKey]
+  );
+
+  if (exists) {
+    DB.update('workspace_configs', {
+      config: configJson,
+      updated_at: now,
+    }, 'username = ? AND workspace_key = ?', [username, workspaceKey]);
+  } else {
+    DB.insert('workspace_configs', {
+      username: username,
+      workspace_key: workspaceKey,
+      config: configJson,
+      created_at: now,
+      updated_at: now,
+    });
+  }
 }

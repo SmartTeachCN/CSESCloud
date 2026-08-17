@@ -49,6 +49,31 @@
         <slot name="binary-actions" :tab="activeTab"></slot>
       </div>
 
+      <!-- Diff 差异查看器 -->
+      <div v-else-if="activeTab.isDiff" class="ep-diff-viewer">
+        <div class="diff-header-bar">
+          <Icon icon="ri-contrast-2-line" :size="14" />
+          <span>{{ activeTab.diffLabel || activeTab.name }}</span>
+          <span class="diff-summary-badge">
+            <span class="diff-add">+{{ diffAddCount }}</span>
+            <span class="diff-del">-{{ diffDelCount }}</span>
+          </span>
+        </div>
+        <div class="diff-lines-container">
+          <div
+            v-for="(line, li) in (activeTab.diffLines || [])"
+            :key="li"
+            class="diff-row"
+            :class="line.type"
+          >
+            <span class="diff-row-num old">{{ line.oldNum || '' }}</span>
+            <span class="diff-row-num new">{{ line.newNum || '' }}</span>
+            <span class="diff-row-sign">{{ line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ' }}</span>
+            <span class="diff-row-text">{{ line.text }}</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Monaco 代码编辑器 -->
       <MonacoEditor
         v-else
@@ -80,6 +105,12 @@ export interface TabInfo {
   dirty: boolean;
   language: string;
   ext?: string;
+  /** Diff 标签：差异行数据 */
+  diffLines?: Array<{ type: string; oldNum: number | null; newNum: number | null; text: string }>;
+  /** 是否为 diff 查看标签 */
+  isDiff?: boolean;
+  /** Diff 标签的版本标签 */
+  diffLabel?: string;
 }
 
 const props = defineProps<{
@@ -135,6 +166,15 @@ defineExpose({
 });
 
 const activeTab = computed(() => props.tabs.find(t => t.id === props.activeTabId) || null);
+
+const diffAddCount = computed(() => {
+  if (!activeTab.value?.isDiff || !activeTab.value.diffLines) return 0;
+  return activeTab.value.diffLines.filter(l => l.type === 'add').length;
+});
+const diffDelCount = computed(() => {
+  if (!activeTab.value?.isDiff || !activeTab.value.diffLines) return 0;
+  return activeTab.value.diffLines.filter(l => l.type === 'del').length;
+});
 
 const pluginFileInfo = computed(() => ({
   name: activeTab.value?.name || '',
@@ -302,5 +342,93 @@ function onPluginNotify(msg: string) {
 .ep-binary span {
   font-size: var(--font-size-sm);
   font-family: var(--font-mono, monospace);
+}
+
+/* Diff 查看器 */
+.ep-diff-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--app-bg);
+}
+
+.diff-header-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-1) var(--spacer-3);
+  background: var(--subtle-secondary);
+  border-bottom: 1px solid var(--divider-stroke);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.diff-summary-badge {
+  margin-left: auto;
+  display: flex;
+  gap: var(--spacer-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+.diff-summary-badge .diff-add { color: var(--status-success); }
+.diff-summary-badge .diff-del { color: var(--status-error); }
+
+.diff-lines-container {
+  flex: 1;
+  overflow: auto;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  tab-size: 4;
+}
+
+.diff-row {
+  display: flex;
+  min-height: 22px;
+  border-bottom: 1px solid transparent;
+}
+.diff-row.add {
+  background: rgba(16, 124, 16, 0.1);
+  border-bottom-color: rgba(16, 124, 16, 0.15);
+}
+.diff-row.del {
+  background: rgba(196, 43, 28, 0.1);
+  border-bottom-color: rgba(196, 43, 28, 0.15);
+}
+.diff-row.context {
+  background: transparent;
+}
+
+.diff-row-num {
+  width: 44px;
+  min-width: 44px;
+  text-align: right;
+  padding: 0 8px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  user-select: none;
+  border-right: 1px solid var(--divider-stroke);
+  line-height: 22px;
+}
+
+.diff-row-sign {
+  width: 20px;
+  min-width: 20px;
+  text-align: center;
+  font-weight: 700;
+  user-select: none;
+  line-height: 22px;
+}
+.diff-row.add .diff-row-sign { color: var(--status-success); }
+.diff-row.del .diff-row-sign { color: var(--status-error); }
+
+.diff-row-text {
+  flex: 1;
+  padding: 0 8px;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--text-primary);
+  line-height: 22px;
 }
 </style>

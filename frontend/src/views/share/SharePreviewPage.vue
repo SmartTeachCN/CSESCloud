@@ -128,11 +128,11 @@ async function loadShare() {
   loading.value = true;
   error.value = '';
   try {
-    const data = await api.get<any>(`/share.php?action=get-preview&token=${encodeURIComponent(token.value)}`);
+    const data = await api.get<any>(`/share?action=get-preview&token=${encodeURIComponent(token.value)}`);
     shareData.value = data;
     if (data?.share_id && user.value) {
       try {
-        const accepted = await api.get<any>(`/share.php?action=get-share-detail&share_id=${data.share_id}`);
+        const accepted = await api.get<any>(`/share?action=get-share-detail&share_id=${data.share_id}`);
         alreadyAccepted.value = !!accepted;
       } catch {
         alreadyAccepted.value = false;
@@ -166,7 +166,7 @@ async function loadShare() {
 async function acceptShare() {
   accepting.value = true;
   try {
-    await api.post('/share.php?action=accept-preview-link', { token: token.value });
+    await api.post('/share?action=accept-preview-link', { token: token.value });
     alreadyAccepted.value = true;
   } catch (e: any) {
     alert(e.message || '接受失败');

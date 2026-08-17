@@ -381,8 +381,11 @@ CREATE TABLE IF NOT EXISTS web_hosting_spaces (
     title TEXT,                                -- 站点标题
     description TEXT,                          -- 站点描述
     storage_quota INTEGER NOT NULL DEFAULT 104857600,  -- 存储配额（字节，默认 100MB）
-    is_enabled INTEGER NOT NULL DEFAULT 1,     -- 是否启用
+    is_enabled INTEGER NOT NULL DEFAULT 1,     -- 是否启用（用户自控）
     is_web_space INTEGER DEFAULT 0,            -- 是否为网页空间（1=网页空间, 0/NULL=数据空间）
+    review_status TEXT NOT NULL DEFAULT 'published',  -- 审查状态：published / pending_review
+    disabled_by_admin INTEGER NOT NULL DEFAULT 0,      -- 是否被管理员禁用（0/1）
+    disabled_reason TEXT,                               -- 管理员禁用原因
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE (alliance_username, slug)
@@ -397,7 +400,10 @@ CREATE TABLE IF NOT EXISTS web_hosting_files (
     file_path TEXT NOT NULL,                   -- 文件相对路径（以 / 开头，如 /index.html）
     file_size INTEGER NOT NULL DEFAULT 0,      -- 文件大小（字节）
     content_type TEXT,                         -- MIME 类型
-    content BLOB,                              -- 文件内容（存储为 BLOB）
+    content BLOB,                              -- 文件内容（存储为 BLOB，最新版本）
+    published_content BLOB,                    -- 已公开版本内容（管理员审查通过后同步）
+    published_size INTEGER NOT NULL DEFAULT 0, -- 已公开版本大小
+    review_status TEXT NOT NULL DEFAULT 'published',  -- 审查状态：published / pending_review
     is_directory INTEGER NOT NULL DEFAULT 0,   -- 是否为目录
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -496,6 +502,33 @@ CREATE TABLE IF NOT EXISTS cloud_file_versions (
 CREATE INDEX IF NOT EXISTS idx_cloud_file_versions_file_id ON cloud_file_versions(file_id);
 CREATE INDEX IF NOT EXISTS idx_cloud_file_versions_created_by ON cloud_file_versions(created_by);
 
+-- 操作日志表（记录每一步操作）
+CREATE TABLE IF NOT EXISTS cloud_operation_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  file_id INTEGER NOT NULL,
+  file_name TEXT,
+  action_type TEXT NOT NULL DEFAULT 'edit',
+  action_label TEXT,
+  content_snapshot TEXT,
+  details TEXT,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cloud_operation_logs_file ON cloud_operation_logs(file_id);
+CREATE INDEX IF NOT EXISTS idx_cloud_operation_logs_created_by ON cloud_operation_logs(created_by);
+
+-- 工作区配置表
+CREATE TABLE IF NOT EXISTS workspace_configs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL,
+  workspace_key TEXT NOT NULL,
+  config TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (username, workspace_key)
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_configs_user ON workspace_configs(username);
+
 -- ===== EA2 设备控制 =====
 -- 注册的设备
 CREATE TABLE IF NOT EXISTS ea2_devices (
@@ -509,6 +542,7 @@ CREATE TABLE IF NOT EXISTS ea2_devices (
     protocol_version INTEGER NOT NULL DEFAULT 1, -- 协议版本
     lifecycle_status TEXT NOT NULL DEFAULT 'active', -- active / revoked
     labels TEXT DEFAULT '[]',                    -- JSON 标签数组
+    notes TEXT DEFAULT '',                         -- 设备备注
     last_seen_at TEXT,                           -- 最后在线时间
     last_reported_state TEXT,                    -- JSON：最后上报状态
     enrolled_at TEXT NOT NULL,                   -- 注册时间

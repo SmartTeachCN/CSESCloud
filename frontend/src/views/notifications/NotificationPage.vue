@@ -369,7 +369,7 @@ async function acceptShare(item: Notification) {
   if (!item.share_id) return;
   busy.value = true;
   try {
-    await api.post('/share.php?action=accept', { share_id: item.share_id });
+    await api.post('/share?action=accept', { share_id: item.share_id });
     // 更新通知状态
     item.target_type = 'share_accepted';
     item.is_read = 1;
@@ -386,7 +386,7 @@ async function rejectShare(item: Notification) {
   if (!item.share_id) return;
   busy.value = true;
   try {
-    await api.post('/share.php?action=reject', { share_id: item.share_id });
+    await api.post('/share?action=reject', { share_id: item.share_id });
     // 更新通知状态
     item.target_type = 'share_rejected';
     item.is_read = 1;

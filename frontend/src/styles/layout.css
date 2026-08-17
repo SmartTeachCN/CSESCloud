@@ -83,6 +83,11 @@
   flex-shrink: 0;
 }
 
+.overview-icon > svg {
+  width: 24px;
+  height: 24px;
+}
+
 .overview-meta {
   flex: 1;
   min-width: 0;
@@ -127,6 +132,11 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.metric-icon > svg {
+  width: 28px;
+  height: 28px;
 }
 
 .metric-meta {

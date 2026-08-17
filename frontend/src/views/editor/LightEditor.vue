@@ -113,7 +113,7 @@
             v-for="tab in editorTabs"
             :key="tab.id"
             class="editor-tab"
-            :class="{ active: tab.id === (currentFile?.id || ''), dirty: tab.dirty }"
+            :class="{ active: tab.id === activeEditorTabId, dirty: tab.dirty, 'diff-tab': tab.isDiff }"
             @click="onTabClick(tab.id)"
           >
             <Icon :icon="tab.icon" :size="14" class="tab-icon" />
@@ -135,12 +135,14 @@
         :can-redo="!!currentFile"
         :can-save="!!currentFile"
         :can-auto-save="!!currentFile"
-        :right-actions="[
-          { id: 'share', label: '分享', icon: 'ri-share-forward-line', enabled: !!currentFile },
-          { id: 'history', label: '操作记录', icon: 'ri-history-line', enabled: !!currentFile },
-          { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', enabled: !!currentFile && currentFile?.source === 'cloud' },
-          { id: 'import', label: '导入', icon: 'ri-download-line', enabled: !!currentFile },
-          { id: 'export', label: '导出', icon: 'ri-upload-2-line', enabled: !!currentFile },
+        :right-actions="diffTabs.length > 0 && !currentFile
+          ? [{ id: 'export', label: '导出', icon: 'ri-upload-2-line', command: 'export', enabled: true }]
+          : [
+          { id: 'share', label: '分享', icon: 'ri-share-forward-line', command: 'share', enabled: !!currentFile },
+          { id: 'history', label: '操作记录', icon: 'ri-history-line', command: 'history', enabled: !!currentFile },
+          { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', command: 'version', enabled: !!currentFile && currentFile?.source === 'cloud' },
+          { id: 'import', label: '导入', icon: 'ri-download-line', command: 'import', enabled: !!currentFile },
+          { id: 'export', label: '导出', icon: 'ri-upload-2-line', command: 'export', enabled: !!currentFile },
         ]"
         @save="saveFile"
         @undo="handleUndo"
@@ -156,7 +158,7 @@
           <EditorPane
             ref="editorPaneRef"
             :tabs="editorTabs"
-            :active-tab-id="currentFile?.id || ''"
+            :active-tab-id="activeEditorTabId"
             :read-only="false"
             :hide-tabs="true"
             @tab-click="onTabClick"
@@ -322,17 +324,29 @@
               </div>
               <OperationHistoryPanel
                 v-else-if="activePanel === 'history'"
+                ref="operationHistoryRef"
                 :file-id="currentFile?.source === 'cloud' ? currentFile.id : ''"
                 :file-name="currentFile?.name || ''"
                 :local-history="localHistory"
                 :is-logged-in="isLoggedIn"
+                workspace-key="light_editor"
                 @restore="onHistoryRestore"
+                @open-workspace-config="openPanel('workspace')"
               />
               <VersionHistoryPanel
                 v-else-if="activePanel === 'version'"
+                ref="versionHistoryRef"
                 :file-id="currentFile?.source === 'cloud' ? currentFile.id : ''"
                 :file-name="currentFile?.name || ''"
+                :is-owner="currentFile?.source !== 'shared'"
+                workspace-key="light_editor"
                 @restore="onVersionRestore"
+                @open-workspace-config="openPanel('workspace')"
+                @view-diff="openDiffTab"
+              />
+              <WorkspaceConfig
+                v-else-if="activePanel === 'workspace'"
+                workspace-key="light_editor"
               />
               <div v-else-if="activePanel === 'props'" class="props-panel">
                 <div class="panel-placeholder" v-if="!currentFile">
@@ -444,6 +458,7 @@ import AiAssistantPanel from '../../components/editor/panels/AiAssistantPanel.vu
 import ShareDialog from '../../components/editor/panels/ShareDialog.vue';
 import OperationHistoryPanel from '../../components/editor/panels/OperationHistoryPanel.vue';
 import VersionHistoryPanel from '../../components/editor/panels/VersionHistoryPanel.vue';
+import WorkspaceConfig from '../../components/editor/panels/WorkspaceConfig.vue';
 import StatusBarExtensions from '../../components/editor/panels/StatusBarExtensions.vue';
 import { pluginApi } from '../../api';
 import { useAuth } from '../../composables/useAuth';
@@ -507,6 +522,8 @@ const aiEditorContext = computed(() => {
 const saving = ref(false);
 const autoSave = ref(true);
 const editorPaneRef = ref<InstanceType<typeof EditorPane> | null>(null);
+const versionHistoryRef = ref<InstanceType<typeof VersionHistoryPanel> | null>(null);
+const operationHistoryRef = ref<InstanceType<typeof OperationHistoryPanel> | null>(null);
 
 function onAiApplyEdit(payload: { content: string; replaceAll?: boolean }) {
   if (!currentFile.value) return;
@@ -522,26 +539,104 @@ function onAiApplyEdit(payload: { content: string; replaceAll?: boolean }) {
 const rightPanelCollapsed = ref(false);
 const showShareDialog = ref(false);
 
+// 当 diff 标签激活时强制折叠右侧面板
+const effectiveRightPanelCollapsed = computed(() => {
+  return rightPanelCollapsed.value || (diffTabs.value.length > 0 && !currentFile.value);
+});
+
 // ===== 本地操作记录 =====
 interface HistoryEntry {
-  step: number;
-  content: string;
+  id: number;
+  action_type: string;
+  action_label: string;
+  content_snapshot?: string;
   time: string;
 }
 const localHistory = ref<HistoryEntry[]>([]);
 let localHistoryStep = 0;
 
 // ===== EditorPane 标签映射 =====
-const editorTabs = computed<TabInfo[]>(() => openTabs.value.map(t => ({
-  id: t.id,
-  name: t.name,
-  icon: t.icon,
-  isText: true,
-  content: t.content || '',
-  dirty: t.dirty,
-  language: t.ext || 'plaintext',
-  ext: t.ext,
-})));
+interface DiffTab {
+  id: string;
+  name: string;
+  label1: string;
+  label2: string;
+  diffLines: any[];
+  additions: number;
+  deletions: number;
+}
+const diffTabs = ref<DiffTab[]>([]);
+
+const isDiffTabActive = computed(() => {
+  if (!currentFile.value) {
+    // 检查是否有 diff tab 激活
+    return diffTabs.value.some(dt => dt.id === (currentFile.value?.id || ''));
+  }
+  return false;
+});
+
+// 当前激活的 EditorPane tab ID
+const activeEditorTabId = computed(() => {
+  if (currentFile.value) return currentFile.value.id;
+  // 检查 diff tabs
+  if (diffTabs.value.length > 0) {
+    // 返回最后一个 diff tab（最新打开的）
+    return diffTabs.value[diffTabs.value.length - 1].id;
+  }
+  return '';
+});
+
+const editorTabs = computed<TabInfo[]>(() => {
+  const fileTabs = openTabs.value.map(t => ({
+    id: t.id,
+    name: t.name,
+    icon: t.icon,
+    isText: true,
+    content: t.content || '',
+    dirty: t.dirty,
+    language: t.ext || 'plaintext',
+    ext: t.ext,
+  }));
+  const dTabs = diffTabs.value.map(dt => ({
+    id: dt.id,
+    name: dt.name,
+    icon: 'ri-contrast-2-line',
+    isText: false,
+    content: '',
+    dirty: false,
+    language: 'diff',
+    isDiff: true,
+    diffLines: dt.diffLines,
+    diffLabel: `${dt.label1} → ${dt.label2}`,
+  }));
+  return [...fileTabs, ...dTabs];
+});
+
+function openDiffTab(payload: { label1: string; label2: string; diffLines: any[]; additions: number; deletions: number }) {
+  const id = `diff-${Date.now()}`;
+  const name = `差异: ${payload.label1} → ${payload.label2}`;
+  diffTabs.value.push({
+    id,
+    name,
+    label1: payload.label1,
+    label2: payload.label2,
+    diffLines: payload.diffLines,
+    additions: payload.additions,
+    deletions: payload.deletions,
+  });
+  // 取消当前文件选中，激活 diff 标签
+  currentFile.value = null;
+  // 折叠右侧面板
+  rightPanelCollapsed.value = true;
+}
+
+function closeDiffTab(tabId: string) {
+  diffTabs.value = diffTabs.value.filter(dt => dt.id !== tabId);
+  // 如果 diff 标签全部关闭，恢复第一个文件标签
+  if (diffTabs.value.length === 0 && openTabs.value.length > 0) {
+    currentFile.value = openTabs.value[0];
+  }
+}
 
 const cloudFiles = ref<CloudFile[]>([]);
 const cloudLoading = ref(false);
@@ -558,11 +653,11 @@ function onCloudFileCtxMenu(file: CloudFile, e: MouseEvent) {
 
 // ===== 云文件 API 封装 =====
 const cloudApi = {
-  list: () => api.get<any[]>('/cloud-files.php?action=list'),
-  get: (id: number) => api.get<any>(`/cloud-files.php?action=get&id=${id}`),
-  create: (body: any) => api.post('/cloud-files.php?action=create', body),
-  update: (body: any) => api.post('/cloud-files.php?action=update', body),
-  delete: (id: number) => api.post('/cloud-files.php?action=delete', { id }),
+  list: () => api.get<any[]>('/cloud-files?action=list'),
+  get: (id: number) => api.get<any>(`/cloud-files?action=get&id=${id}`),
+  create: (body: any) => api.post('/cloud-files?action=create', body),
+  update: (body: any) => api.post('/cloud-files?action=update', body),
+  delete: (id: number) => api.post('/cloud-files?action=delete', { id }),
 };
 
 async function loadCloudFiles() {
@@ -627,7 +722,7 @@ async function createCloudDir() {
   showCloudNewDirDialog.value = false;
   newCloudDirName.value = '';
   try {
-    await api.post('/cloud-files.php?action=create-dir', { name });
+    await api.post('/cloud-files?action=create-dir', { name });
     await loadCloudFiles();
   } catch (e: any) {
     console.error('创建目录失败', e);
@@ -711,7 +806,7 @@ async function confirmRename() {
   if (!newName || !renameTargetFile) return;
   showRenameDialog.value = false;
   try {
-    await api.post('/cloud-files.php?action=rename', { id: Number(renameTargetFile.id), name: newName });
+    await api.post('/cloud-files?action=rename', { id: Number(renameTargetFile.id), name: newName });
     // Update local tab if open
     const tab = openTabs.value.find(t => t.id === renameTargetFile!.id);
     if (tab) {
@@ -771,12 +866,26 @@ const charCount = computed(() => currentFile.value?.content ? currentFile.value.
 // ===== EditorPane 事件处理 =====
 function onTabClick(tabId: string) {
   const tab = openTabs.value.find(t => t.id === tabId);
-  if (tab) selectTab(tab);
+  if (tab) {
+    selectTab(tab);
+    return;
+  }
+  // Check diff tabs
+  const diffTab = diffTabs.value.find(dt => dt.id === tabId);
+  if (diffTab) {
+    currentFile.value = null;
+    rightPanelCollapsed.value = true;
+  }
 }
 
 function onTabClose(tabId: string) {
   const tab = openTabs.value.find(t => t.id === tabId);
-  if (tab) closeTab(tab);
+  if (tab) {
+    closeTab(tab);
+    return;
+  }
+  // Check diff tabs
+  closeDiffTab(tabId);
 }
 
 function onContentUpdate(payload: { tabId: string; content: string }) {
@@ -785,7 +894,7 @@ function onContentUpdate(payload: { tabId: string; content: string }) {
     tab.content = payload.content;
     tab.dirty = true;
     dirty.value = true;
-    addLocalHistory(payload.content);
+    addLocalHistory(payload.content, 'edit', `编辑: ${tab.name}`);
   }
 }
 
@@ -812,6 +921,7 @@ const allAvailablePanels: PanelDef[] = [
   { id: 'find', label: '查找替换', icon: 'ri-search-line', closable: true },
   { id: 'history', label: '操作记录', icon: 'ri-history-line', closable: true },
   { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', closable: true },
+  { id: 'workspace', label: '工作区配置', icon: 'ri-settings-3-line', closable: true },
 ];
 const visiblePanels = ref<PanelDef[]>([
   allAvailablePanels[0],
@@ -1037,6 +1147,19 @@ async function saveFile() {
         content: currentFile.value.content || '',
         file_type: currentFile.value.ext,
       });
+      // 自动保存版本历史
+      if (versionHistoryRef.value) {
+        const label = `保存 ${new Date().toLocaleString('zh-CN')}`;
+        await versionHistoryRef.value.saveVersion(currentFile.value.content || '', label);
+      }
+      // 记录操作日志
+      if (operationHistoryRef.value) {
+        await operationHistoryRef.value.logOperation({
+          action_type: 'save',
+          action_label: `保存文件: ${currentFile.value.name}`,
+          content_snapshot: currentFile.value.content || '',
+        });
+      }
     }
     currentFile.value.dirty = false;
     currentFile.value.modified = '刚刚';
@@ -1113,15 +1236,17 @@ function handleExport() {
   URL.revokeObjectURL(url);
 }
 
-function addLocalHistory(content: string) {
+function addLocalHistory(content: string, actionType = 'edit', actionLabel = '编辑内容') {
   localHistoryStep++;
   localHistory.value.push({
-    step: localHistoryStep,
-    content,
+    id: localHistoryStep,
+    action_type: actionType,
+    action_label: actionLabel,
+    content_snapshot: content,
     time: new Date().toLocaleTimeString()
   });
-  if (localHistory.value.length > 30) {
-    localHistory.value = localHistory.value.slice(-30);
+  if (localHistory.value.length > 100) {
+    localHistory.value = localHistory.value.slice(-100);
   }
 }
 

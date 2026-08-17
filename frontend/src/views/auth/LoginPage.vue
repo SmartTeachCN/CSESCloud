@@ -186,12 +186,14 @@
             <span>保留的登录</span>
           </div>
           <div class="saved-list">
-            <button
+            <div
               v-for="entry in savedLogins"
               :key="entry.id"
-              type="button"
               class="saved-item"
+              role="button"
+              tabindex="0"
               @click="applySavedEntry(entry)"
+              @keydown.enter.prevent="applySavedEntry(entry)"
             >
               <Icon :icon="entry.entry_type === 'instance_sub' ? 'ri-cloud-line' : 'ri-school-line'" :size="16" />
               <div class="saved-meta">
@@ -209,7 +211,7 @@
               >
                 <Icon icon="ri-close-line" :size="14" />
               </button>
-            </button>
+            </div>
           </div>
         </div>
 

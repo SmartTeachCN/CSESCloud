@@ -98,6 +98,22 @@ function ensureSchema() {
   // cloud_files 目录索引
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_cloud_files_directory ON cloud_files(directory)'); } catch (_) {}
   try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_files_path ON cloud_files(instance_id, directory, name)'); } catch (_) {}
+
+  // ea2_devices 设备备注
+  addMissingColumn('ea2_devices', 'notes', "TEXT DEFAULT ''");
+
+  // 网页空间审查系统
+  addMissingColumn('web_hosting_spaces', 'review_status', "TEXT NOT NULL DEFAULT 'published'");
+  addMissingColumn('web_hosting_spaces', 'disabled_by_admin', 'INTEGER NOT NULL DEFAULT 0');
+  addMissingColumn('web_hosting_spaces', 'disabled_reason', 'TEXT');
+  addMissingColumn('web_hosting_files', 'published_content', 'BLOB');
+  addMissingColumn('web_hosting_files', 'published_size', 'INTEGER NOT NULL DEFAULT 0');
+  addMissingColumn('web_hosting_files', 'review_status', "TEXT NOT NULL DEFAULT 'published'");
+
+  // 初始化已存在的文件：将 content 同步到 published_content
+  try {
+    db.exec("UPDATE web_hosting_files SET published_content = content, published_size = file_size WHERE published_content IS NULL AND is_directory = 0");
+  } catch (_) {}
 }
 
 /** 为表添加缺失的列（SQLite 不支持 IF NOT EXISTS，用 try-catch） */

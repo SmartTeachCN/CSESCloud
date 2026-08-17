@@ -216,6 +216,12 @@ const routes = [
         name: 'AdminAiConfig',
         component: () => import('../views/admin/AdminPanel.vue'),
         meta: { title: 'AI 配置', icon: 'ri-brain-line' }
+      },
+      {
+        path: 'admin/web-hosting',
+        name: 'AdminWebHosting',
+        component: () => import('../views/admin/AdminPanel.vue'),
+        meta: { title: '网页空间', icon: 'ri-global-line' }
       }
     ]
   }

@@ -146,6 +146,10 @@
                     <input v-model="tool.label" :disabled="readonly" @input="onRibbonChange" placeholder="显示名" />
                     <input v-model="tool.icon" :disabled="readonly" @input="onRibbonChange" placeholder="ri-xxx-line" />
                     <input v-model="tool.command" :disabled="readonly" @input="onRibbonChange" placeholder="command（如 save）" />
+                    <select v-model="tool.type" :disabled="readonly" @change="onRibbonChange" class="rv-tool-type">
+                      <option value="action">点击按钮</option>
+                      <option value="select">页面切换</option>
+                    </select>
                   </div>
                   <button v-if="!readonly" class="rv-del-sm" @click="removeTool(gi, ti)" title="删除工具">
                     <Icon icon="ri-close-line" :size="12" />
@@ -235,7 +239,7 @@
         <section v-show="activeTab === 'control'" class="tab-pane">
           <div class="manifest-hint">
             <Icon icon="ri-information-line" :size="14" />
-            <span>设备控制清单 (control_manifest)：声明此应用所需的设备控制能力。平台提供内置 REST API（<code>/api/control.php</code>），非 EA2 专属，任何实例侧应用均可使用。</span>
+            <span>设备控制清单 (control_manifest)：声明此应用所需的设备控制能力。平台提供内置 REST API（<code>/api/control</code>），非 EA2 专属，任何实例侧应用均可使用。</span>
           </div>
 
           <div class="control-config">
@@ -318,7 +322,7 @@
                 </div>
                 <div class="api-base-url">
                   <Icon icon="ri-link" :size="14" />
-                  <code>POST /api/control.php?instance_uid={uid}&action={action}</code>
+                  <code>POST /api/control?instance_uid={uid}&action={action}</code>
                 </div>
               </div>
             </template>
@@ -428,6 +432,7 @@ interface RibbonTool {
   label: string;
   icon: string;
   command?: string;
+  type?: string;  // 'select' = 组内页面切换, 'action' = 点击型按钮（默认）
 }
 interface RibbonGroup {
   label: string;
@@ -446,7 +451,8 @@ function syncRibbonFromAppInfo() {
         id: t.id || '',
         label: t.label || '',
         icon: t.icon || 'ri-question-line',
-        command: t.command || ''
+        command: t.command || '',
+        type: t.type || 'action'
       })) : []
     }));
   } catch {
@@ -485,7 +491,8 @@ function addTool(gi: number) {
     id: 'tool_' + Date.now(),
     label: '新工具',
     icon: 'ri-tools-line',
-    command: ''
+    command: '',
+    type: 'action'
   });
   onRibbonChange();
 }
@@ -1129,6 +1136,19 @@ onMounted(() => {
 }
 
 .rv-tool-fields input:focus { border-color: var(--accent-base); }
+
+.rv-tool-type {
+  padding: 4px var(--spacer-2);
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border);
+  border-radius: var(--radius-xs);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+  outline: none;
+  font-family: var(--font-mono, monospace);
+  grid-column: 1 / -1;
+}
+.rv-tool-type:focus { border-color: var(--accent-base); }
 
 .rv-del-sm {
   position: absolute;

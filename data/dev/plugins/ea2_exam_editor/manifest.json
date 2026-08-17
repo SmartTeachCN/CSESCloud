@@ -1,0 +1,15 @@
+{
+  "plugin_key": "ea2_exam_editor",
+  "name": "EA2 考试档案编辑器",
+  "version": "2.0.0",
+  "description": "ExamAware2 考试档案结构化编辑器。支持考试场次管理、材料清单、时间重叠检查、实时验证。注册 .ea2 后缀。",
+  "extensions": [
+    "ea2"
+  ],
+  "icon": "ri-file-settings-line",
+  "status": "published",
+  "developer_username": "system",
+  "is_official": true,
+  "created_at": "2026-08-15 13:49:29",
+  "updated_at": "2026-08-16 19:54:13"
+}

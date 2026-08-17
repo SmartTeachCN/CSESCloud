@@ -307,14 +307,14 @@ watch(() => props.visible, async (val) => {
 async function loadShareDetail() {
   try {
     // 先列出我分享的，找到匹配的
-    const shares = await api.get<any[]>('/share.php?action=list-shared-by-me');
+    const shares = await api.get<any[]>('/share?action=list-shared-by-me');
     const match = (shares || []).find((s: any) =>
       s.resource_type === props.resourceType &&
       String(s.resource_id) === String(props.resourceId)
     );
     if (match) {
       // 获取完整详情
-      const detail = await api.get<any>(`/share.php?action=get-share-detail&share_id=${match.id}`);
+      const detail = await api.get<any>(`/share?action=get-share-detail&share_id=${match.id}`);
       shareDetail.value = detail;
       mode.value = 'detail';
     } else {
@@ -336,7 +336,7 @@ async function onUserSearch() {
   searchTimer = setTimeout(async () => {
     userSearching.value = true;
     try {
-      const results = await api.get<any[]>(`/share.php?action=search-users&keyword=${encodeURIComponent(keyword)}`);
+      const results = await api.get<any[]>(`/share?action=search-users&keyword=${encodeURIComponent(keyword)}`);
       userSearchResults.value = (results || []).filter(
         (u: any) => !selectedUsers.value.some(su => su.username === u.username)
       );
@@ -389,7 +389,7 @@ async function createShare() {
       }));
     }
 
-    const result = await api.post<any>('/share.php?action=share', body);
+    const result = await api.post<any>('/share?action=share', body);
     shareResult.value = result;
     shareResultMessage.value = shareDetail.value ? '分享已更新' : '分享已创建';
     emit('created');
@@ -406,7 +406,7 @@ async function createShare() {
 
 async function updateUserPermission(permId: number, newPermission: string) {
   try {
-    await api.post('/share.php?action=update-permission', {
+    await api.post('/share?action=update-permission', {
       permission_id: permId,
       permission: newPermission,
     });
@@ -419,7 +419,7 @@ async function updateUserPermission(permId: number, newPermission: string) {
 async function removeSharedUser(permId: number) {
   if (!confirm('确定移除此用户的分享权限？')) return;
   try {
-    await api.post('/share.php?action=remove-user', { permission_id: permId });
+    await api.post('/share?action=remove-user', { permission_id: permId });
     await loadShareDetail();
   } catch (e: any) {
     alert(e.message || '移除用户失败');
@@ -429,7 +429,7 @@ async function removeSharedUser(permId: number) {
 async function resendInvite(perm: any) {
   try {
     // 重新邀请就是重新分享
-    await api.post('/share.php?action=share', {
+    await api.post('/share?action=share', {
       resource_type: props.resourceType,
       resource_id: Number(props.resourceId),
       resource_name: props.resourceName,
@@ -448,7 +448,7 @@ async function togglePreviewLink() {
   if (!shareDetail.value) return;
   const newState = !shareDetail.value.preview_enabled;
   try {
-    const result = await api.post<any>('/share.php?action=toggle-preview-link', {
+    const result = await api.post<any>('/share?action=toggle-preview-link', {
       share_id: shareDetail.value.id,
       enable: newState,
     });
@@ -463,7 +463,7 @@ async function deleteShare() {
   if (!confirm('确定删除此分享？所有被分享的用户将无法继续访问。')) return;
   deleting.value = true;
   try {
-    await api.post('/share.php?action=delete-share', { share_id: shareDetail.value.id });
+    await api.post('/share?action=delete-share', { share_id: shareDetail.value.id });
     shareDetail.value = null;
     mode.value = 'create';
     emit('updated');

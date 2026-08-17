@@ -338,7 +338,8 @@ const sidebarItems = computed(() => {
       { path: '/console/admin', icon: 'ri-shield-keyhole-line', title: '系统配置' },
       { path: '/console/admin/users', icon: 'ri-team-line', title: '用户管理' },
       { path: '/console/admin/notifications', icon: 'ri-notification-3-line', title: '通知管理' },
-      { path: '/console/admin/ai-config', icon: 'ri-brain-line', title: 'AI 配置' }
+      { path: '/console/admin/ai-config', icon: 'ri-brain-line', title: 'AI 配置' },
+      { path: '/console/admin/web-hosting', icon: 'ri-global-line', title: '网页空间' }
     ];
   }
   return [

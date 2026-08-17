@@ -3,6 +3,7 @@
     <div class="panel-header">
       <Icon icon="ri-history-line" :size="14" />
       <span>操作记录</span>
+      <span class="op-count" v-if="totalCount">{{ totalCount }} 条记录</span>
       <button class="refresh-btn" @click="loadCloudHistory" title="刷新" v-if="fileId && isLoggedIn">
         <Icon icon="ri-refresh-line" :size="12" />
       </button>
@@ -14,7 +15,7 @@
         <div class="section-title">
           <Icon icon="ri-cloud-line" :size="12" />
           <span>云备份</span>
-          <span class="section-badge">最近 5 步</span>
+          <span class="section-badge">最近 {{ cloudLimit }} 条</span>
         </div>
         <div v-if="loadingCloud" class="loading-state">
           <Icon icon="ri-loader-4-line" :size="16" class="spin" />
@@ -31,16 +32,18 @@
             :class="{ active: restoringId === item.id }"
             @click="previewRestore('cloud', item)"
           >
-            <div class="item-index">#{{ i + 1 }}</div>
+            <div class="item-icon">
+              <Icon :icon="getActionIcon(item.action_type)" :size="14" />
+            </div>
             <div class="item-content">
+              <div class="item-action">{{ item.action_label || item.action_type }}</div>
               <div class="item-time">
                 <Icon icon="ri-time-line" :size="10" />
-                {{ item.time || item.created_at }}
+                {{ formatTime(item.created_at || item.time) }}
               </div>
-              <div class="item-preview">{{ truncate(item.content, 50) }}</div>
             </div>
             <div v-if="restoringId === item.id" class="item-actions">
-              <button class="action-btn restore-btn" @click.stop="confirmRestore('cloud', item)">
+              <button class="action-btn restore-btn" @click.stop="confirmRestore('cloud', item)" v-if="item.content_snapshot">
                 <Icon icon="ri-arrow-go-back-line" :size="12" />
               </button>
             </div>
@@ -53,7 +56,7 @@
         <div class="section-title">
           <Icon icon="ri-computer-line" :size="12" />
           <span>本地记录</span>
-          <span class="section-badge">最近 30 步</span>
+          <span class="section-badge">最近 {{ localLimit }} 条</span>
         </div>
         <div v-if="localHistory.length === 0" class="empty-hint">
           <span>暂无本地记录</span>
@@ -61,20 +64,22 @@
         <div v-else class="history-list">
           <div
             v-for="(item, i) in localHistory"
-            :key="'local-' + (item.step ?? i)"
+            :key="'local-' + (item.id ?? i)"
             class="history-item local-item"
-            :class="{ active: restoringStep === item.step }"
-            @click="restoringStep === item.step ? (restoringStep = null) : (restoringStep = item.step)"
+            :class="{ active: restoringId === item.id }"
+            @click="previewRestore('local', item)"
           >
-            <div class="item-index">#{{ item.step }}</div>
+            <div class="item-icon">
+              <Icon :icon="getActionIcon(item.action_type)" :size="14" />
+            </div>
             <div class="item-content">
+              <div class="item-action">{{ item.action_label || item.action_type }}</div>
               <div class="item-time">
                 <Icon icon="ri-time-line" :size="10" />
-                {{ item.time }}
+                {{ formatTime(item.time || item.created_at) }}
               </div>
-              <div class="item-preview">{{ truncate(item.content, 50) }}</div>
             </div>
-            <div v-if="restoringStep === item.step" class="item-actions">
+            <div v-if="restoringId === item.id && item.content_snapshot" class="item-actions">
               <button class="action-btn restore-btn" @click.stop="confirmRestore('local', item)">
                 <Icon icon="ri-arrow-go-back-line" :size="12" />
               </button>
@@ -82,9 +87,17 @@
           </div>
         </div>
       </div>
+
+      <!-- 工作区配置链接 -->
+      <div class="panel-footer-link">
+        <button class="config-link" @click="$emit('openWorkspaceConfig')">
+          <Icon icon="ri-settings-3-line" :size="12" />
+          <span>工作区配置</span>
+        </button>
+      </div>
     </div>
 
-    <!-- 确认弹窗 -->
+    <!-- 恢复确认弹窗 -->
     <div v-if="showConfirm" class="confirm-overlay" @click.self="showConfirm = false">
       <div class="confirm-dialog">
         <div class="confirm-header">
@@ -92,10 +105,10 @@
           <span>恢复确认</span>
         </div>
         <div class="confirm-body">
-          <p>确定要恢复到此版本吗？</p>
+          <p>确定要恢复到此操作记录吗？</p>
           <p class="confirm-warning">
             <Icon icon="ri-error-warning-line" :size="12" />
-            若此时编辑将删除更新的记录
+            当前编辑器内容将被替换为此快照内容
           </p>
         </div>
         <div class="confirm-footer">
@@ -114,32 +127,79 @@ import { api } from '../../../api/client';
 const props = defineProps<{
   fileId: string;
   fileName: string;
-  localHistory: Array<{ step: number; content: string; time: string }>;
+  localHistory: Array<{ id?: number; action_type: string; action_label: string; content_snapshot?: string; time: string }>;
   isLoggedIn: boolean;
+  workspaceKey?: string;
 }>();
 
 const emit = defineEmits<{
   restore: [content: string];
+  /** 请求记录操作日志到云端 */
+  logOperation: [payload: { action_type: string; action_label: string; content_snapshot?: string }];
+  /** 打开工作区配置 */
+  openWorkspaceConfig: [];
 }>();
 
 const cloudHistory = ref<any[]>([]);
 const loadingCloud = ref(false);
 const restoringId = ref<number | null>(null);
-const restoringStep = ref<number | null>(null);
 const showConfirm = ref(false);
 const pendingRestore = ref<{ type: 'cloud' | 'local'; item: any } | null>(null);
 
-function truncate(text: string, maxLen: number): string {
-  if (!text) return '';
-  return text.length > maxLen ? text.slice(0, maxLen) + '...' : text;
+const cloudLimit = ref(50);
+const localLimit = ref(100);
+const totalCount = ref(0);
+
+function getActionIcon(type: string): string {
+  const icons: Record<string, string> = {
+    'edit': 'ri-edit-line',
+    'save': 'ri-save-line',
+    'open': 'ri-folder-open-line',
+    'close': 'ri-close-line',
+    'create': 'ri-file-add-line',
+    'delete': 'ri-delete-bin-line',
+    'undo': 'ri-arrow-go-back-line',
+    'redo': 'ri-arrow-go-forward-line',
+    'import': 'ri-download-line',
+    'export': 'ri-upload-2-line',
+    'restore': 'ri-arrow-go-back-line',
+    'rename': 'ri-edit-line',
+    'share': 'ri-share-forward-line',
+    'auto_save': 'ri-save-3-line',
+  };
+  return icons[type] || 'ri-record-circle-line';
+}
+
+function formatTime(t: string): string {
+  if (!t) return '';
+  try {
+    const d = new Date(t);
+    if (isNaN(d.getTime())) return t;
+    return d.toLocaleString('zh-CN', {
+      month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+  } catch { return t; }
+}
+
+async function loadConfig() {
+  try {
+    const wk = props.workspaceKey || 'light_editor';
+    const result = await api.get<any>(`/cloud-files?action=workspace-config&workspace=${wk}`);
+    if (result) {
+      cloudLimit.value = result.operation_cloud_limit ?? 50;
+      localLimit.value = result.operation_local_limit ?? 100;
+    }
+  } catch { /* use defaults */ }
 }
 
 async function loadCloudHistory() {
   if (!props.fileId || !props.isLoggedIn) return;
   loadingCloud.value = true;
   try {
-    const result = await api.get<any[]>('/cloud-files.php?action=history-list&file_id=' + props.fileId);
-    cloudHistory.value = Array.isArray(result) ? result.slice(0, 5) : [];
+    const result = await api.get<any[]>(`/cloud-files?action=operation-list&file_id=${props.fileId}&limit=${cloudLimit.value}`);
+    cloudHistory.value = Array.isArray(result) ? result : [];
+    totalCount.value = cloudHistory.value.length + (props.localHistory?.length || 0);
   } catch {
     cloudHistory.value = [];
   } finally {
@@ -147,14 +207,24 @@ async function loadCloudHistory() {
   }
 }
 
-function previewRestore(type: 'cloud' | 'local', item: any) {
-  if (type === 'cloud') {
-    restoringId.value = restoringId.value === item.id ? null : item.id;
-    restoringStep.value = null;
-  } else {
-    restoringStep.value = restoringStep.value === item.step ? null : item.step;
-    restoringId.value = null;
+/** 记录操作到云端 */
+async function logOperation(payload: { action_type: string; action_label: string; content_snapshot?: string }) {
+  if (!props.fileId || !props.isLoggedIn) return;
+  try {
+    await api.post('/cloud-files?action=operation-log', {
+      file_id: parseInt(props.fileId),
+      file_name: props.fileName,
+      action_type: payload.action_type,
+      action_label: payload.action_label,
+      content_snapshot: payload.content_snapshot || '',
+    });
+  } catch {
+    // 静默失败
   }
+}
+
+function previewRestore(type: 'cloud' | 'local', item: any) {
+  restoringId.value = restoringId.value === item.id ? null : item.id;
 }
 
 function confirmRestore(type: 'cloud' | 'local', item: any) {
@@ -167,35 +237,31 @@ async function doRestore() {
   const { type, item } = pendingRestore.value;
   showConfirm.value = false;
 
-  if (type === 'cloud') {
-    try {
-      const result = await api.post<any>('/cloud-files.php?action=history-restore', { history_id: item.id });
-      if (result && result.content) {
-        emit('restore', result.content);
-      }
-    } catch {
-      // 静默失败
-    }
-  } else {
-    emit('restore', item.content);
+  if (type === 'cloud' && item.content_snapshot) {
+    emit('restore', item.content_snapshot);
+  } else if (type === 'local' && item.content_snapshot) {
+    emit('restore', item.content_snapshot);
   }
 
   pendingRestore.value = null;
   restoringId.value = null;
-  restoringStep.value = null;
 }
 
 watch(() => props.fileId, () => {
   if (props.fileId && props.isLoggedIn) {
     loadCloudHistory();
+    loadConfig();
   }
 });
 
 onMounted(() => {
   if (props.fileId && props.isLoggedIn) {
     loadCloudHistory();
+    loadConfig();
   }
 });
+
+defineExpose({ logOperation, loadCloudHistory });
 </script>
 
 <style scoped>
@@ -218,6 +284,16 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
+.op-count {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  background: var(--subtle-secondary);
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  margin-left: 4px;
+}
+
 .refresh-btn {
   margin-left: auto;
   width: 22px;
@@ -231,7 +307,6 @@ onMounted(() => {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-
 .refresh-btn:hover {
   background: var(--subtle-secondary);
   color: var(--accent-base);
@@ -246,7 +321,6 @@ onMounted(() => {
 .section {
   margin-bottom: var(--spacer-3);
 }
-
 .section:last-child {
   margin-bottom: 0;
 }
@@ -304,29 +378,27 @@ onMounted(() => {
   cursor: pointer;
   transition: background var(--fast-duration);
 }
-
 .history-item:hover {
   background: var(--subtle-secondary);
 }
-
 .history-item.active {
   background: var(--accent-bg);
   border: 1px solid var(--accent-base);
 }
-
 .cloud-item {
   border-left: 2px solid var(--accent-base);
 }
-
 .local-item {
   border-left: 2px solid var(--text-tertiary);
 }
 
-.item-index {
-  font-size: 10px;
-  font-weight: 600;
+.item-icon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-tertiary);
-  min-width: 24px;
   flex-shrink: 0;
 }
 
@@ -334,23 +406,19 @@ onMounted(() => {
   flex: 1;
   min-width: 0;
 }
-
+.item-action {
+  font-size: 11px;
+  color: var(--text-primary);
+  font-weight: 500;
+  line-height: 1.3;
+}
 .item-time {
   display: flex;
   align-items: center;
   gap: 3px;
   font-size: 10px;
   color: var(--text-tertiary);
-  margin-bottom: 2px;
-}
-
-.item-preview {
-  font-size: 11px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: monospace;
+  margin-top: 2px;
 }
 
 .item-actions {
@@ -358,7 +426,6 @@ onMounted(() => {
   gap: 2px;
   flex-shrink: 0;
 }
-
 .action-btn {
   width: 24px;
   height: 24px;
@@ -371,7 +438,6 @@ onMounted(() => {
   color: var(--text-tertiary);
   cursor: pointer;
 }
-
 .restore-btn:hover {
   background: var(--accent-base);
   border-color: var(--accent-base);
@@ -388,7 +454,6 @@ onMounted(() => {
   justify-content: center;
   z-index: 100;
 }
-
 .confirm-dialog {
   width: 280px;
   background: var(--layer-default);
@@ -396,7 +461,6 @@ onMounted(() => {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   overflow: hidden;
 }
-
 .confirm-header {
   display: flex;
   align-items: center;
@@ -407,17 +471,14 @@ onMounted(() => {
   font-weight: 600;
   color: var(--status-warning);
 }
-
 .confirm-body {
   padding: var(--spacer-2) var(--spacer-3);
 }
-
 .confirm-body p {
   font-size: var(--font-size-xs);
   color: var(--text-primary);
   margin: 0 0 var(--spacer-1);
 }
-
 .confirm-warning {
   display: flex;
   align-items: center;
@@ -425,7 +486,6 @@ onMounted(() => {
   color: var(--status-warning) !important;
   font-size: 11px !important;
 }
-
 .confirm-footer {
   display: flex;
   justify-content: flex-end;
@@ -433,7 +493,6 @@ onMounted(() => {
   padding: var(--spacer-2) var(--spacer-3);
   border-top: 1px solid var(--divider-stroke);
 }
-
 .btn-cancel {
   height: 28px;
   padding: 0 12px;
@@ -444,12 +503,10 @@ onMounted(() => {
   color: var(--text-secondary);
   cursor: pointer;
 }
-
 .btn-cancel:hover {
   background: var(--subtle-secondary);
   color: var(--text-primary);
 }
-
 .btn-confirm {
   height: 28px;
   padding: 0 12px;
@@ -460,9 +517,33 @@ onMounted(() => {
   color: white;
   cursor: pointer;
 }
-
 .btn-confirm:hover {
   background: var(--accent-hover);
 }
 
+/* 工作区配置链接 */
+.panel-footer-link {
+  padding: var(--spacer-1) var(--spacer-2);
+  border-top: 1px solid var(--divider-stroke);
+  text-align: center;
+  flex-shrink: 0;
+  margin-top: auto;
+}
+.config-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid var(--ctrl-border-rest);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.config-link:hover {
+  background: var(--subtle-secondary);
+  color: var(--accent-base);
+  border-color: var(--accent-base);
+}
 </style>

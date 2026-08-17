@@ -275,7 +275,7 @@ module.exports = async (ctx) => {
   }
 
   // 管理类操作需要实例管理权限
-  const needsAdmin = ['device_list', 'device_get', 'device_unregister', 'enrollment_create', 'enrollment_revoke',
+  const needsAdmin = ['device_list', 'device_get', 'device_unregister', 'device_update_notes', 'enrollment_create', 'enrollment_revoke',
     'enrollment_delete', 'command_create', 'command_list', 'command_get', 'exam_config_list', 'events_stream'];
 
   if (needsAdmin.includes(action)) {
@@ -295,7 +295,7 @@ module.exports = async (ctx) => {
     case 'device_list': {
       const rows = DB.all(
         `SELECT device_id, display_name, platform, architecture, app_version,
-                lifecycle_status, labels, last_seen_at, enrolled_at, created_at
+                lifecycle_status, labels, notes, last_seen_at, enrolled_at, created_at
          FROM ea2_devices WHERE instance_id = ? AND lifecycle_status = 'active' ORDER BY enrolled_at DESC`,
         [instanceId]
       );
@@ -343,11 +343,22 @@ module.exports = async (ctx) => {
       Response.success({ ok: true });
     }
 
+    case 'device_update_notes': {
+      const deviceId = body.device_id ?? '';
+      const notes = String(body.notes ?? '').trim();
+      if (deviceId === '') Response.error('缺少 device_id');
+      DB.update('ea2_devices', {
+        notes: notes,
+        updated_at: nowStr(),
+      }, 'instance_id = ? AND device_id = ?', [instanceId, deviceId]);
+      Response.success({ ok: true, notes: notes }, '备注已更新');
+    }
+
     // ===== 注册码管理 =====
     case 'enrollment_create': {
       const maxUses = Math.max(1, parseInt(body.max_uses ?? 1, 10) || 0);
-      const validityHours = Math.max(1, parseInt(body.validity_hours ?? 24, 10) || 0);
-      const label = String(body.label ?? '').trim();
+      const expiresInSeconds = parseInt(body.expires_in_seconds ?? 86400, 10) || 86400;
+      const label = String(body.display_name ?? body.label ?? '').trim();
       const code = 'EA2-' + randomCode();
       const codeHash = sha256(code);
       const now = nowStr();
@@ -356,11 +367,12 @@ module.exports = async (ctx) => {
         code_hash: codeHash,
         max_uses: maxUses,
         used_count: 0,
+        display_name: label,
         label: label,
-        expires_at: dateStr(new Date(Date.now() + validityHours * 3600 * 1000)),
+        expires_at: dateStr(new Date(Date.now() + expiresInSeconds * 1000)),
         created_at: now,
       });
-      Response.success({ code: code, max_uses: maxUses, validity_hours: validityHours }, '注册码已创建');
+      Response.success({ code: code, max_uses: maxUses, expires_in_seconds: expiresInSeconds }, '注册码已创建');
     }
 
     case 'enrollment_list': {
@@ -559,11 +571,24 @@ module.exports = async (ctx) => {
     // ===== 考试配置列表 =====
     case 'exam_config_list': {
       const rows = DB.all(
-        `SELECT id, name, file_path, file_size, created_at, updated_at
-         FROM cloud_files WHERE instance_id = ? AND file_name LIKE '%.ea2' ORDER BY updated_at DESC`,
+        `SELECT id, directory, name, content, file_type, file_size, file_category, created_at, updated_at
+         FROM cloud_files WHERE instance_id = ? AND file_type = 'ea2' ORDER BY updated_at DESC`,
         [instanceId]
       );
-      Response.success(rows);
+      // 解析考试配置名称
+      const result = rows.map((f) => {
+        const content = Buffer.isBuffer(f.content) ? f.content.toString('utf8') : (f.content ?? '{}');
+        const config = jsonDecodeOr(content, []);
+        return {
+          id: f.id,
+          name: f.name,
+          exam_name: config.examName ?? '未命名考试',
+          exam_infos_count: (config.examInfos ?? []).length,
+          file_size: f.file_size,
+          updated_at: f.updated_at,
+        };
+      });
+      Response.success(result);
     }
 
     // ===== SSE 事件流 =====

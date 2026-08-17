@@ -185,7 +185,28 @@
           </div>
           <div class="split-content">
             <AiAssistantPanel v-if="activePanel === 'ai'" scope="instance" :scope-ref="instanceId" :editor-context="aiEditorContext" @apply-edit="onAiApplyEdit" />
-            <EditHistoryPanel v-else-if="activePanel === 'history'" :instance-id="instanceId" />
+            <EditHistoryPanel v-else-if="activePanel === 'history_old'" :instance-id="instanceId" />
+            <OperationHistoryPanel
+              v-else-if="activePanel === 'history'"
+              :file-id="selectedFile?.id ? String(selectedFile.id) : String(instanceId)"
+              :file-name="selectedFile?.name || instance?.name || '实例'"
+              :local-history="[]"
+              :is-logged-in="true"
+              workspace-key="instance_editor"
+              @open-workspace-config="openPanel('workspace')"
+            />
+            <VersionHistoryPanel
+              v-else-if="activePanel === 'version'"
+              :file-id="selectedFile?.id ? String(selectedFile.id) : String(instanceId)"
+              :file-name="selectedFile?.name || instance?.name || '实例'"
+              :is-owner="true"
+              workspace-key="instance_editor"
+              @open-workspace-config="openPanel('workspace')"
+            />
+            <WorkspaceConfig
+              v-else-if="activePanel === 'workspace'"
+              workspace-key="instance_editor"
+            />
             <FindReplacePanel v-else-if="activePanel === 'find'" :content="findReplaceContent" @replace="onReplace" @find="onFind" />
             <InstancePropertiesPanel v-else-if="activePanel === 'props'" :instance="instance" :can-write="canWrite" @saved="onPropsSaved" />
             <!-- 文件面板 -->
@@ -342,6 +363,9 @@ import RibbonToolbar from '../../components/editor/RibbonToolbar.vue';
 import PluginEditorFrame from '../../components/editor/PluginEditorFrame.vue';
 import AiAssistantPanel from '../../components/editor/panels/AiAssistantPanel.vue';
 import EditHistoryPanel from '../../components/editor/panels/EditHistoryPanel.vue';
+import VersionHistoryPanel from '../../components/editor/panels/VersionHistoryPanel.vue';
+import OperationHistoryPanel from '../../components/editor/panels/OperationHistoryPanel.vue';
+import WorkspaceConfig from '../../components/editor/panels/WorkspaceConfig.vue';
 import FindReplacePanel from '../../components/editor/panels/FindReplacePanel.vue';
 import InstancePropertiesPanel from '../../components/editor/panels/InstancePropertiesPanel.vue';
 import StatusBarExtensions from '../../components/editor/panels/StatusBarExtensions.vue';
@@ -482,30 +506,16 @@ const ea2PageRibbonGroups: Record<string, any[]> = {
   }],
 };
 
-// 考试编辑器 Ribbon 组（考试专用操作）
-const examRibbonGroups = [
-  {
-    label: '考试操作',
-    tools: [
-      { id: 'exam-deploy', label: '部署', icon: 'ri-send-plane-line', command: 'deploy' },
-      { id: 'exam-proctor', label: '监考', icon: 'ri-eye-line', command: 'proctor' },
-      { id: 'exam-preview', label: '预览', icon: 'ri-play-circle-line', command: 'preview' },
-    ]
-  },
-  {
-    label: '考试管理',
-    tools: [
-      { id: 'exam-sessions', label: '场次', icon: 'ri-calendar-check-line', command: 'sessions' },
-      { id: 'exam-students', label: '考生', icon: 'ri-user-star-line', command: 'students' },
-      { id: 'exam-grading', label: '阅卷', icon: 'ri-check-double-line', command: 'grading' },
-    ]
-  },
-];
+// 考试编辑器 Ribbon 组（仅保留页面切换，不显示多余操作）
+const examRibbonGroups: any[] = [];
 
 // 合并 Ribbon：实例 Ribbon 在前，页面操作组在后
 const effectiveRibbonManifest = computed(() => {
   if (examEditorMode.value) {
-    return [...(ribbonManifest.value || []), ...examRibbonGroups];
+    // 考试编辑模式：仅显示页面切换组，不显示考试操作/管理
+    return (ribbonManifest.value || []).filter((g: any) =>
+      g.tools && g.tools.some((t: any) => t.type === 'select')
+    );
   }
   const instanceRibbon = ribbonManifest.value || [];
   const pageGroups = ea2PageRibbonGroups[activeRibbonPage.value] || [];
@@ -518,8 +528,10 @@ const allPanels: PanelDef[] = [
   { id: 'ai', label: 'AI助理', icon: 'ri-brain-line', closable: false },
   { id: 'files', label: '文件', icon: 'ri-folder-open-line', closable: false },
   { id: 'props', label: '实例属性', icon: 'ri-settings-3-line', closable: false },
-  { id: 'history', label: '编辑历史', icon: 'ri-history-line', closable: true },
+  { id: 'history', label: '操作记录', icon: 'ri-history-line', closable: true },
+  { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', closable: true },
   { id: 'find', label: '查找替换', icon: 'ri-search-line', closable: true },
+  { id: 'workspace', label: '工作区配置', icon: 'ri-settings-3-line', closable: true },
 ];
 const visiblePanels = ref<PanelDef[]>([allPanels[0], allPanels[1]]);
 const activePanel = ref('ai');
@@ -582,11 +594,11 @@ const editorInfo = computed(() => ({
 
 // 实例右侧操作区按钮（始终启用）
 const instanceRightActions = computed(() => [
-  { id: 'share', label: '分享', icon: 'ri-share-forward-line', enabled: true },
-  { id: 'history', label: '操作记录', icon: 'ri-history-line', enabled: true },
-  { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', enabled: true },
-  { id: 'import', label: '导入', icon: 'ri-download-line', enabled: true },
-  { id: 'export', label: '导出', icon: 'ri-upload-2-line', enabled: true },
+  { id: 'share', label: '分享', icon: 'ri-share-forward-line', command: 'share', enabled: true },
+  { id: 'history', label: '操作记录', icon: 'ri-history-line', command: 'history', enabled: true },
+  { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', command: 'version', enabled: true },
+  { id: 'import', label: '导入', icon: 'ri-download-line', command: 'import', enabled: true },
+  { id: 'export', label: '导出', icon: 'ri-upload-2-line', command: 'export', enabled: true },
 ]);
 
 // ===== 加载实例 =====
@@ -672,11 +684,33 @@ async function onFileContextDelete() {
   try { await instanceFilesApi.delete(file.id); if (selectedFile.value?.id === file.id) { selectedFile.value = null; selectedFilePlugin.value = null; } await loadFileTree(); await loadStorageStats(); }
   catch (e: any) { alert(e.message || '删除失败'); }
 }
-function onFileContextDownload() {
+async function onFileContextDownload() {
   const file = fileContextMenu.value.file; if (!file) return;
   fileContextMenu.value.visible = false;
-  const blob = new Blob([file.content || ''], { type: 'application/octet-stream' });
-  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = file.name; a.click(); URL.revokeObjectURL(url);
+  // 通过 fetch + Blob 下载，避免 SPA 路由拦截
+  try {
+    const resp = await fetch(`/api/instance-files?action=download&id=${file.id}`, {
+      credentials: 'include',
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ message: '下载失败' }));
+      throw new Error(err.message || '下载失败');
+    }
+    const blob = await resp.blob();
+    if (blob.size === 0) {
+      throw new Error('文件内容为空');
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (e: any) {
+    alert('下载失败: ' + (e.message || '未知错误'));
+  }
 }
 function getFileIcon(fileType: string): string {
   const icons: Record<string, string> = { ea2: 'ri-file-settings-line', json: 'ri-braces-line', php: 'ri-code-line', html: 'ri-html5-line', js: 'ri-javascript-line', css: 'ri-css3-line', md: 'ri-markdown-line', txt: 'ri-file-text-line' };
@@ -690,7 +724,7 @@ function formatFileSize(bytes: number): string {
 
 async function loadCollections() {
   try {
-    const resp = await fetch(`/api/instance-storage.php?action=collections&instance_id=${instanceId.value}`, { credentials: 'include' });
+    const resp = await fetch(`/api/instance-storage?action=collections&instance_id=${instanceId.value}`, { credentials: 'include' });
     const json = await resp.json(); const data = json.data?.collections || [];
     collections.value = data;
     if (data.length > 0 && !activeCollection.value) { activeCollection.value = data[0].key; await loadRecords(); }
@@ -700,7 +734,7 @@ async function loadRecords() {
   if (!activeCollection.value) return;
   recordsLoading.value = true;
   try {
-    const url = `/api/instance-storage.php?action=list&instance_id=${instanceId.value}&collection_key=${encodeURIComponent(activeCollection.value)}&keyword=${encodeURIComponent(searchKeyword.value)}`;
+    const url = `/api/instance-storage?action=list&instance_id=${instanceId.value}&collection_key=${encodeURIComponent(activeCollection.value)}&keyword=${encodeURIComponent(searchKeyword.value)}`;
     const resp = await fetch(url, { credentials: 'include' }); const json = await resp.json(); records.value = json.data || [];
   } catch { records.value = []; }
   finally { recordsLoading.value = false; }
@@ -724,6 +758,8 @@ window.addEventListener('message', async (e) => {
     let result: any;
     if (action === 'loadConfig') result = instance.value?.config || {};
     else if (action === 'saveConfig') { if (!canWrite.value) throw new Error('无写权限'); await instancesApi.setConfig(instanceId.value, payload); instance.value.config = payload; result = { ok: true }; }
+    else if (action === 'loadConfigFile') { result = await loadConfigFile(payload.file); }
+    else if (action === 'saveConfigFile') { if (!canWrite.value) throw new Error('无写权限'); result = await saveConfigFile(payload.file, payload.content); }
     else if (action === 'listStorage') result = await storageApi.list(instanceId.value, payload.collection);
     else if (action === 'saveStorage') { if (!canWrite.value) throw new Error('无写权限'); result = await storageApi.save(instanceId.value, payload.collection, payload.record); }
     else if (action === 'deleteStorage') { if (!canWrite.value) throw new Error('无写权限'); result = await storageApi.delete(instanceId.value, payload.collection, payload.recordId); }
@@ -750,7 +786,7 @@ function onRibbonTool(tool: any) {
   }
   if (tool.command === 'find') openPanel('find');
   else if (tool.command === 'history') openPanel('history');
-  else if (tool.command === 'version') openPanel('history');
+  else if (tool.command === 'version') openPanel('version');
   else if (tool.command === 'fullscreen') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }
   else if (tool.command === 'refresh') loadInstance();
   else if (tool.command === 'share') showShareDialog.value = true;
@@ -765,27 +801,27 @@ async function openExamInEditor(payload: any) {
   const recordId = payload.record_id || '';
   const existingName = payload.fileName || null;
   const rand = Math.random().toString(36).substring(2, 8);
-  // 确保 fileName 不以 .ea2 结尾时再追加
   const fileName = existingName
     ? (existingName.endsWith('.ea2') ? existingName : existingName + '.ea2')
     : ('exam-' + rand + '.ea2');
   const ea2Content = JSON.stringify(examData, null, 2);
+  const examDir = 'exams';
   try {
-    await loadFileTree(currentDir.value);
+    await loadFileTree(examDir);
     const existing = (fileTree.value.files || []).find((f: any) => f.name === fileName);
     let fileId: number;
     if (existing) {
       fileId = existing.id;
     } else {
-      const saveRes = await instanceFilesApi.save({ instance_id: instanceId.value, directory: currentDir.value || '', name: fileName, content: ea2Content, file_type: 'ea2', file_category: 'instance_config' });
+      const saveRes = await instanceFilesApi.save({ instance_id: instanceId.value, directory: examDir, name: fileName, content: ea2Content, file_type: 'ea2', file_category: 'instance_config' });
       fileId = saveRes.id;
     }
     let plugin = null;
     try { plugin = await instanceFilesApi.resolveEditor('ea2'); } catch { }
-    examEditorFile.value = { id: fileId, name: fileName, content: ea2Content, file_type: 'ea2', directory: currentDir.value || '' };
+    examEditorFile.value = { id: fileId, name: fileName, content: ea2Content, file_type: 'ea2', directory: examDir + '/' };
     examEditorPlugin.value = plugin;
     examEditorMode.value = true;
-    await loadFileTree(currentDir.value);
+    await loadFileTree(examDir);
   } catch (e: any) {
     alert('打开编辑器失败: ' + (e.message || '未知错误'));
   }
@@ -823,7 +859,7 @@ function triggerExamPluginCommand(command: string) {
 const examButtonCommands = ['deploy', 'proctor', 'preview', 'sessions', 'students', 'grading'];
 
 async function listEa2Files() {
-  await loadFileTree(currentDir.value);
+  await loadFileTree('exams');
   const ea2Files = (fileTree.value.files || []).filter((f: any) => (f.file_type || '').toLowerCase() === 'ea2' || (f.name || '').endsWith('.ea2'));
   const result = [];
   for (const f of ea2Files) {
@@ -845,8 +881,8 @@ async function saveEa2File(payload: any) {
     await instanceFilesApi.save({ id: existing.id, instance_id: instanceId.value, name, content, file_type: 'ea2', file_category: 'instance_config' });
     return { fileId: existing.id, name };
   }
-  const res = await instanceFilesApi.save({ instance_id: instanceId.value, directory: currentDir.value || '', name, content, file_type: 'ea2', file_category: 'instance_config' });
-  await loadFileTree(currentDir.value);
+  const res = await instanceFilesApi.save({ instance_id: instanceId.value, directory: 'exams', name, content, file_type: 'ea2', file_category: 'instance_config' });
+  await loadFileTree('exams');
   return { fileId: res.id, name };
 }
 
@@ -854,7 +890,32 @@ async function deleteEa2File(payload: any) {
   if (!canWrite.value) throw new Error('无写权限');
   const name = (payload.name || '') + '.ea2';
   const existing = (fileTree.value.files || []).find((f: any) => f.name === name);
-  if (existing) { await instanceFilesApi.delete(existing.id); await loadFileTree(currentDir.value); }
+  if (existing) { await instanceFilesApi.delete(existing.id); await loadFileTree('exams'); }
+  return { ok: true };
+}
+
+// 加载配置文件（从实例存储空间的 config/ 子目录）
+async function loadConfigFile(fileName: string) {
+  await loadFileTree('config');
+  const existing = (fileTree.value.files || []).find((f: any) => f.name === fileName);
+  if (!existing) return {};
+  try {
+    const full = await instanceFilesApi.get(existing.id);
+    return JSON.parse(full.content || '{}');
+  } catch { return {}; }
+}
+
+// 保存配置文件（到实例存储空间的 config/ 子目录）
+async function saveConfigFile(fileName: string, content: any) {
+  await loadFileTree('config');
+  const existing = (fileTree.value.files || []).find((f: any) => f.name === fileName);
+  const contentStr = JSON.stringify(content, null, 2);
+  if (existing) {
+    await instanceFilesApi.save({ id: existing.id, instance_id: instanceId.value, name: fileName, content: contentStr, file_type: 'json', file_category: 'instance_config' });
+  } else {
+    await instanceFilesApi.save({ instance_id: instanceId.value, directory: 'config', name: fileName, content: contentStr, file_type: 'json', file_category: 'instance_config' });
+  }
+  await loadFileTree('config');
   return { ok: true };
 }
 
@@ -862,7 +923,7 @@ async function callControlApi(action: string, payload: any = {}) {
   const uid = instance.value?.instance_uid;
   if (!uid) throw new Error('实例 UID 不可用');
   const params = new URLSearchParams({ instance_uid: uid, action });
-  const resp = await fetch(`/api/ea2-control.php?${params.toString()}`, {
+  const resp = await fetch(`/api/rest-control?${params.toString()}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',

@@ -166,7 +166,7 @@ module.exports = async (ctx) => {
   const protocol = req.secure ? 'https' : 'http';
   const host = req.headers.host ?? 'localhost';
   const baseUrl = protocol + '://' + host;
-  const websocketUrl = baseUrl + '/api/ea2-control.php?instance_uid=' + encodeURIComponent(instanceUid) + '&action=command_poll';
+  const websocketUrl = baseUrl + '/api/rest-control.php?instance_uid=' + encodeURIComponent(instanceUid) + '&action=command_poll';
 
   Response.success({
     deviceId: deviceId,

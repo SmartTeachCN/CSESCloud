@@ -314,7 +314,7 @@
 
             <div class="api-section">
               <h4>API 端点</h4>
-              <code class="api-url">POST /api/control.php?instance_uid={uid}&action={action}</code>
+              <code class="api-url">POST /api/control?instance_uid={uid}&action={action}</code>
             </div>
 
             <div class="api-section">

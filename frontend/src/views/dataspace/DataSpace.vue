@@ -129,11 +129,11 @@
           :can-save="!!activeTab && !isReadOnly"
           :can-auto-save="!!activeTab && !isReadOnly"
           :right-actions="[
-            { id: 'share', label: '分享', icon: 'ri-share-forward-line', enabled: !!activeTab },
-            { id: 'history', label: '操作记录', icon: 'ri-history-line', enabled: !!activeTab },
-            { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', enabled: !!activeTab && activeTab?.source === 'webspace_file' },
-            { id: 'import', label: '导入', icon: 'ri-download-line', enabled: !!activeTab },
-            { id: 'export', label: '导出', icon: 'ri-upload-2-line', enabled: !!activeTab },
+            { id: 'share', label: '分享', icon: 'ri-share-forward-line', command: 'share', enabled: !!activeTab },
+            { id: 'history', label: '操作记录', icon: 'ri-history-line', command: 'history', enabled: !!activeTab },
+            { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', command: 'version', enabled: !!activeTab && activeTab?.source === 'webspace_file' },
+            { id: 'import', label: '导入', icon: 'ri-download-line', command: 'import', enabled: !!activeTab },
+            { id: 'export', label: '导出', icon: 'ri-upload-2-line', command: 'export', enabled: !!activeTab },
           ]"
           @save="saveCurrentTab"
           @undo="handleUndo"
@@ -250,6 +250,27 @@
                     <button class="action-item danger" @click="confirmDeleteActive" v-if="!activeTab.protected"><Icon icon="ri-delete-bin-line" :size="16" /><div><div class="action-title">删除</div><div class="action-desc">删除此文件</div></div></button>
                   </div>
                 </div>
+                <OperationHistoryPanel
+                  v-else-if="activePanel === 'history'"
+                  :file-id="activeTab?.source === 'webspace_file' || activeTab?.source === 'cloud_file' ? String(activeTab?.data?.file_id || '') : ''"
+                  :file-name="activeTab?.name || ''"
+                  :local-history="[]"
+                  :is-logged-in="isAlliance"
+                  workspace-key="dataspace"
+                  @open-workspace-config="openPanel('workspace')"
+                />
+                <VersionHistoryPanel
+                  v-else-if="activePanel === 'version'"
+                  :file-id="activeTab?.source === 'webspace_file' || activeTab?.source === 'cloud_file' ? String(activeTab?.data?.file_id || '') : ''"
+                  :file-name="activeTab?.name || ''"
+                  :is-owner="true"
+                  workspace-key="dataspace"
+                  @open-workspace-config="openPanel('workspace')"
+                />
+                <WorkspaceConfig
+                  v-else-if="activePanel === 'workspace'"
+                  workspace-key="dataspace"
+                />
                 <div v-else-if="activePanel === 'webspace-config'" class="webspace-config-panel">
                   <div v-if="!webspaceConfig" class="panel-empty"><Icon icon="ri-globe-line" :size="36" /><span>选择网页空间配置</span></div>
                   <div v-else class="settings-card">
@@ -374,6 +395,9 @@ import EditorPane from '../../components/editor/EditorPane.vue';
 import type { TabInfo } from '../../components/editor/EditorPane.vue';
 import RibbonToolbar from '../../components/editor/RibbonToolbar.vue';
 import AiAssistantPanel from '../../components/editor/panels/AiAssistantPanel.vue';
+import OperationHistoryPanel from '../../components/editor/panels/OperationHistoryPanel.vue';
+import VersionHistoryPanel from '../../components/editor/panels/VersionHistoryPanel.vue';
+import WorkspaceConfig from '../../components/editor/panels/WorkspaceConfig.vue';
 
 const router = useRouter();
 const { user } = useAuth();
@@ -501,7 +525,10 @@ const allPanels: PanelDef[] = [
   { id: 'ai', label: 'AI助理', icon: 'ri-brain-line', closable: false },
   { id: 'props', label: '属性', icon: 'ri-settings-3-line', closable: false },
   { id: 'find', label: '查找替换', icon: 'ri-search-line', closable: true },
+  { id: 'history', label: '操作记录', icon: 'ri-history-line', closable: true },
+  { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', closable: true },
   { id: 'actions', label: '操作', icon: 'ri-tools-line', closable: true },
+  { id: 'workspace', label: '工作区配置', icon: 'ri-settings-3-line', closable: true },
 ];
 const visiblePanels = ref<PanelDef[]>([allPanels[0], allPanels[1]]);
 const activePanel = ref('ai');
@@ -584,8 +611,8 @@ function handleRedo() {
 function onRibbonTool(tool: any) {
   if (tool.command === 'find') openPanel('find');
   else if (tool.command === 'replace') openPanel('find');
-  else if (tool.command === 'history') openPanel('actions');
-  else if (tool.command === 'version') openPanel('actions');
+  else if (tool.command === 'history') openPanel('history');
+  else if (tool.command === 'version') openPanel('version');
   else if (tool.command === 'share') { /* share */ }
   else if (tool.command === 'import') { /* import */ }
   else if (tool.command === 'export') downloadFile();

@@ -290,5 +290,116 @@ module.exports = async (ctx) => {
     Response.success({ ok: true });
   }
 
+  // ===== 网页空间管理 =====
+  // 列出所有网页空间
+  if (method === 'GET' && action === 'list-web-spaces') {
+    const spaces = DB.all(
+      "SELECT s.*, (SELECT COUNT(*) FROM web_hosting_files WHERE space_id = s.id AND is_directory = 0) AS file_count, (SELECT COUNT(*) FROM web_hosting_files WHERE space_id = s.id AND review_status = 'pending_review' AND is_directory = 0) AS pending_count FROM web_hosting_spaces s ORDER BY s.created_at DESC"
+    );
+    Response.success(spaces);
+  }
+
+  // 管理员禁用/启用网页空间
+  if (method === 'POST' && action === 'toggle-web-space-admin') {
+    const spaceId = parseInt(body.space_id ?? 0, 10) || 0;
+    const disabled = !Helpers.empty(body.disabled);
+    const reason = String(body.reason ?? '').trim();
+    if (!spaceId) Response.error('缺少空间 ID');
+    const space = DB.one('SELECT * FROM web_hosting_spaces WHERE id = ?', [spaceId]);
+    if (!space) Response.error('网页空间不存在');
+    const updates = {
+      disabled_by_admin: disabled ? 1 : 0,
+      disabled_reason: disabled ? reason : null,
+      updated_at: nowStr(),
+    };
+    // 如果管理员禁用，同时取消 is_enabled
+    if (disabled) {
+      updates.is_enabled = 0;
+    }
+    DB.update('web_hosting_spaces', updates, 'id = ?', [spaceId]);
+    Auth.logAudit(0, 0, 'web_space_admin_toggle',
+      `${disabled ? '禁用' : '启用'}网页空间: ${space.alliance_username} (reason: ${reason})`,
+      'success');
+    Response.success({ ok: true, disabled: disabled });
+  }
+
+  // 列出待审查的网页空间（仅显示有 pending 审核的）
+  if (method === 'GET' && action === 'list-pending-reviews') {
+    const spaces = DB.all(
+      "SELECT s.* FROM web_hosting_spaces s WHERE s.review_status = 'pending_review' ORDER BY s.updated_at DESC"
+    );
+    // 为每个空间获取待审查文件列表
+    const result = [];
+    for (const space of spaces) {
+      const pendingFiles = DB.all(
+        "SELECT id, file_path, file_size, published_size, content, published_content, updated_at FROM web_hosting_files WHERE space_id = ? AND review_status = 'pending_review' AND is_directory = 0",
+        [space.id]
+      );
+      result.push({
+        ...space,
+        pending_files: pendingFiles.map(f => ({
+          id: f.id,
+          file_path: f.file_path,
+          file_size: f.file_size,
+          published_size: f.published_size,
+          content: f.content ? (Buffer.isBuffer(f.content) ? f.content.toString('utf8') : String(f.content)) : '',
+          published_content: f.published_content ? (Buffer.isBuffer(f.published_content) ? f.published_content.toString('utf8') : String(f.published_content)) : '',
+          updated_at: f.updated_at,
+        })),
+      });
+    }
+    Response.success(result);
+  }
+
+  // 审批通过网页空间（将所有 pending_review 文件同步到 published_content）
+  if (method === 'POST' && action === 'approve-review') {
+    const spaceId = parseInt(body.space_id ?? 0, 10) || 0;
+    if (!spaceId) Response.error('缺少空间 ID');
+    const space = DB.one('SELECT * FROM web_hosting_spaces WHERE id = ?', [spaceId]);
+    if (!space) Response.error('网页空间不存在');
+    const now = nowStr();
+    // 将所有 pending_review 文件的内容同步到 published_content
+    const pendingFiles = DB.all(
+      "SELECT id FROM web_hosting_files WHERE space_id = ? AND review_status = 'pending_review' AND is_directory = 0",
+      [spaceId]
+    );
+    for (const file of pendingFiles) {
+      DB.update('web_hosting_files', {
+        published_content: DB.scalar("SELECT content FROM web_hosting_files WHERE id = ?", [file.id]),
+        published_size: DB.scalar("SELECT file_size FROM web_hosting_files WHERE id = ?", [file.id]) || 0,
+        review_status: 'published',
+        updated_at: now,
+      }, 'id = ?', [file.id]);
+    }
+    // 更新空间状态
+    DB.update('web_hosting_spaces', { review_status: 'published', updated_at: now }, 'id = ?', [spaceId]);
+    Auth.logAudit(0, 0, 'web_space_approve_review',
+      `审批通过网页空间: ${space.alliance_username}`,
+      'success');
+    Response.success({ ok: true });
+  }
+
+  // 获取审查文件 diff
+  if (method === 'GET' && action === 'get-review-diff') {
+    const fileId = parseInt(query.file_id ?? 0, 10) || 0;
+    if (!fileId) Response.error('缺少文件 ID');
+    const file = DB.one(
+      "SELECT * FROM web_hosting_files WHERE id = ? AND review_status = 'pending_review' AND is_directory = 0",
+      [fileId]
+    );
+    if (!file) Response.error('文件不存在或无需审查');
+    const content = file.content ? (Buffer.isBuffer(file.content) ? file.content.toString('utf8') : String(file.content)) : '';
+    const published = file.published_content ? (Buffer.isBuffer(file.published_content) ? file.published_content.toString('utf8') : String(file.published_content)) : '';
+    Response.success({
+      id: file.id,
+      file_path: file.file_path,
+      content: content,
+      published_content: published,
+      file_size: file.file_size,
+      published_size: file.published_size,
+      updated_at: file.updated_at,
+    });
+  }
+
   Response.error('未知操作');
 };

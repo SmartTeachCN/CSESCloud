@@ -432,6 +432,194 @@
       </section>
     </template>
 
+    <!-- ===== 网页空间管理 ===== -->
+    <template v-if="currentSection === 'web-hosting'">
+      <!-- 审查项目 -->
+      <section class="admin-section">
+        <h2 class="section-title">
+          <Icon icon="ri-shield-check-line" :size="20" />
+          审查项目
+        </h2>
+        <div class="config-cards">
+          <div class="config-card config-card-full">
+            <div class="config-card-header">
+              <Icon icon="ri-git-pull-request-line" :size="24" />
+              <div>
+                <h3>待审查网页空间</h3>
+                <p>审查用户提交的网页空间更新，审批通过后公开展示</p>
+              </div>
+            </div>
+            <div class="config-card-body">
+              <div v-if="reviewLoading" class="loading-state">
+                <Icon icon="ri-loader-4-line" :size="24" class="spin" />
+                <span>加载中...</span>
+              </div>
+              <div v-else-if="pendingReviews.length === 0" class="model-empty">
+                <Icon icon="ri-check-line" :size="32" />
+                <p>暂无待审查项目</p>
+                <span>所有网页空间均已通过审查</span>
+              </div>
+              <div v-else class="review-list">
+                <div v-for="review in pendingReviews" :key="review.id" class="review-item">
+                  <div class="review-item-header">
+                    <div class="review-user">
+                      <Icon icon="ri-user-line" :size="14" />
+                      <span>{{ review.alliance_username }}</span>
+                      <a :href="`/site/${review.slug}`" target="_blank" class="review-site-link">
+                        <Icon icon="ri-external-link-line" :size="12" /> /site/{{ review.slug }}
+                      </a>
+                    </div>
+                    <span class="review-time">{{ review.updated_at }}</span>
+                  </div>
+                  <div class="review-files">
+                    <div v-for="file in review.pending_files" :key="file.id" class="review-file-item">
+                      <div class="review-file-header">
+                        <Icon :icon="fileIcon(file.file_path)" :size="14" />
+                        <code class="review-file-path">{{ file.file_path }}</code>
+                        <span class="review-file-size">{{ formatBytes(file.file_size) }}</span>
+                        <span v-if="file.published_size > 0" class="review-file-diff">（已公开：{{ formatBytes(file.published_size) }}）</span>
+                        <span v-else class="review-file-new">新文件</span>
+                      </div>
+                      <div class="review-file-actions">
+                        <button class="secondary-btn" @click="showDiffDialog(file)" :disabled="diffBusy">
+                          <Icon icon="ri-git-branch-line" :size="14" />
+                          查看差异
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="review-item-actions">
+                    <button class="primary-btn" @click="approveReviewSpace(review.id)" :disabled="reviewBusy">
+                      <Icon icon="ri-check-line" :size="14" />
+                      {{ reviewBusy ? '审批中...' : '审批通过' }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 所有网页空间 -->
+      <section class="admin-section">
+        <h2 class="section-title">
+          <Icon icon="ri-global-line" :size="20" />
+          所有网页空间
+        </h2>
+        <div class="config-cards">
+          <div class="config-card config-card-full">
+            <div class="config-card-header">
+              <Icon icon="ri-list-check" :size="24" />
+              <div>
+                <h3>用户网页空间列表</h3>
+                <p>管理所有用户的网页空间，可随时暂停访问权限</p>
+              </div>
+            </div>
+            <div class="config-card-body">
+              <div v-if="webSpaceLoading" class="loading-state">
+                <Icon icon="ri-loader-4-line" :size="24" class="spin" />
+                <span>加载中...</span>
+              </div>
+              <div v-else-if="webSpaces.length === 0" class="model-empty">
+                <Icon icon="ri-global-line" :size="32" />
+                <p>暂无网页空间</p>
+              </div>
+              <div v-else class="webspace-list">
+                <div v-for="ws in webSpaces" :key="ws.id" class="webspace-item" :class="{ 'admin-disabled': ws.disabled_by_admin }">
+                  <div class="webspace-info">
+                    <div class="webspace-name">
+                      <Icon icon="ri-home-6-line" :size="14" />
+                      <span>{{ ws.alliance_username }}</span>
+                      <a :href="`/site/${ws.slug}`" target="_blank" class="webspace-slug">/site/{{ ws.slug }}</a>
+                      <span v-if="ws.review_status === 'pending_review'" class="review-pending-tag">待审查</span>
+                      <span v-if="ws.disabled_by_admin" class="admin-disabled-tag">已停用</span>
+                    </div>
+                    <div class="webspace-meta">
+                      <span>{{ ws.file_count || 0 }} 个文件</span>
+                      <span v-if="ws.pending_count > 0" class="webspace-pending-count">{{ ws.pending_count }} 个待审查</span>
+                      <span>{{ ws.title || '无标题' }}</span>
+                    </div>
+                  </div>
+                  <div class="webspace-actions">
+                    <button
+                      v-if="!ws.disabled_by_admin"
+                      class="secondary-btn danger-btn-outline"
+                      @click="openDisableDialog(ws)"
+                    >
+                      <Icon icon="ri-forbid-line" :size="14" />
+                      停用
+                    </button>
+                    <button
+                      v-else
+                      class="secondary-btn"
+                      @click="enableWebSpace(ws)"
+                      :disabled="reviewBusy"
+                    >
+                      <Icon icon="ri-check-line" :size="14" />
+                      启用
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 差异查看器对话框 -->
+      <Teleport to="body">
+        <div v-if="diffDialog.visible" class="dialog-overlay" @click.self="diffDialog.visible = false">
+          <div class="dialog diff-dialog">
+            <div class="dialog-header">
+              <h3>差异对比 - {{ diffDialog.filePath }}</h3>
+              <button class="dialog-close" @click="diffDialog.visible = false">
+                <Icon icon="ri-close-line" :size="18" />
+              </button>
+            </div>
+            <div class="dialog-body diff-body">
+              <div class="diff-panel">
+                <div class="diff-panel-header">已公开版本 ({{ formatBytes(diffDialog.publishedSize) }})</div>
+                <pre class="diff-content">{{ diffDialog.publishedContent }}</pre>
+              </div>
+              <div class="diff-divider"></div>
+              <div class="diff-panel">
+                <div class="diff-panel-header pending">待审查版本 ({{ formatBytes(diffDialog.fileSize) }})</div>
+                <pre class="diff-content pending">{{ diffDialog.content }}</pre>
+              </div>
+            </div>
+            <div class="dialog-footer">
+              <button class="secondary-btn" @click="diffDialog.visible = false">关闭</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
+
+      <!-- 禁用对话框 -->
+      <Teleport to="body">
+        <div v-if="disableDialog.visible" class="dialog-overlay" @click.self="disableDialog.visible = false">
+          <div class="dialog">
+            <div class="dialog-header">
+              <h3>停用网页空间 - {{ disableDialog.username }}</h3>
+              <button class="dialog-close" @click="disableDialog.visible = false">
+                <Icon icon="ri-close-line" :size="18" />
+              </button>
+            </div>
+            <div class="dialog-body">
+              <div class="form-group">
+                <label>停用原因 <span class="required">*</span></label>
+                <textarea v-model="disableDialog.reason" placeholder="请输入停用原因（用户可见）" rows="3"></textarea>
+              </div>
+            </div>
+            <div class="dialog-footer">
+              <button class="btn btn-ghost" @click="disableDialog.visible = false">取消</button>
+              <button class="btn btn-primary danger-btn" @click="confirmDisable" :disabled="reviewBusy || !disableDialog.reason">确认停用</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
+    </template>
+
     <!-- 角色设置对话框 -->
     <Teleport to="body">
       <div v-if="roleDialogUser" class="dialog-overlay" @click.self="roleDialogUser = null">
@@ -511,6 +699,7 @@ const currentSection = computed(() => {
   if (route.path.endsWith('/users')) return 'users';
   if (route.path.endsWith('/notifications')) return 'notifications';
   if (route.path.endsWith('/ai-config')) return 'ai-config';
+  if (route.path.endsWith('/web-hosting')) return 'web-hosting';
   return 'overview';
 });
 
@@ -518,6 +707,7 @@ const sectionTitle = computed(() => {
   if (currentSection.value === 'users') return '用户管理';
   if (currentSection.value === 'notifications') return '通知管理';
   if (currentSection.value === 'ai-config') return 'AI 配置';
+  if (currentSection.value === 'web-hosting') return '网页空间';
   return '系统配置';
 });
 
@@ -762,6 +952,115 @@ const showKbForm = ref(false);
 const editingKbId = ref<number | null>(null);
 const kbForm = ref({ title: '', content: '', category: '' });
 
+// 网页空间管理
+const webSpaceLoading = ref(false);
+const reviewLoading = ref(false);
+const reviewBusy = ref(false);
+const diffBusy = ref(false);
+const webSpaces = ref<any[]>([]);
+const pendingReviews = ref<any[]>([]);
+const diffDialog = ref({ visible: false, filePath: '', content: '', publishedContent: '', fileSize: 0, publishedSize: 0 });
+const disableDialog = ref({ visible: false, spaceId: 0, username: '', reason: '' });
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return '0 B';
+  const k = 1024; const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function fileIcon(name: string): string {
+  const ext = (name || '').split('.').pop()?.toLowerCase() || '';
+  const map: Record<string, string> = {
+    html: 'ri-html5-line', htm: 'ri-html5-line', css: 'ri-css3-line',
+    js: 'ri-javascript-line', json: 'ri-braces-line',
+    md: 'ri-markdown-line', txt: 'ri-file-text-line',
+    png: 'ri-image-line', jpg: 'ri-image-line', jpeg: 'ri-image-line',
+    gif: 'ri-image-line', svg: 'ri-image-line', ico: 'ri-image-line',
+  };
+  return map[ext] || 'ri-file-line';
+}
+
+async function loadWebSpaces() {
+  webSpaceLoading.value = true;
+  try {
+    webSpaces.value = await adminApi.listWebSpaces();
+  } catch { webSpaces.value = []; }
+  finally { webSpaceLoading.value = false; }
+}
+
+async function loadPendingReviews() {
+  reviewLoading.value = true;
+  try {
+    pendingReviews.value = await adminApi.listPendingReviews();
+  } catch { pendingReviews.value = []; }
+  finally { reviewLoading.value = false; }
+}
+
+async function approveReviewSpace(spaceId: number) {
+  if (!confirm('确认审批通过此网页空间？通过后最新版本将公开展示。')) return;
+  reviewBusy.value = true;
+  try {
+    await adminApi.approveReview(spaceId);
+    alert('审批通过');
+    await loadPendingReviews();
+    await loadWebSpaces();
+  } catch (e: any) {
+    alert(e.message || '审批失败');
+  } finally {
+    reviewBusy.value = false;
+  }
+}
+
+function showDiffDialog(file: any) {
+  diffDialog.value = {
+    visible: true,
+    filePath: file.file_path,
+    content: file.content || '',
+    publishedContent: file.published_content || '',
+    fileSize: file.file_size,
+    publishedSize: file.published_size,
+  };
+}
+
+function openDisableDialog(ws: any) {
+  disableDialog.value = {
+    visible: true,
+    spaceId: ws.id,
+    username: ws.alliance_username,
+    reason: '',
+  };
+}
+
+async function confirmDisable() {
+  if (!disableDialog.value.reason.trim()) return;
+  reviewBusy.value = true;
+  try {
+    await adminApi.toggleWebSpaceAdmin(disableDialog.value.spaceId, true, disableDialog.value.reason);
+    alert('已停用该网页空间');
+    disableDialog.value.visible = false;
+    await loadWebSpaces();
+  } catch (e: any) {
+    alert(e.message || '操作失败');
+  } finally {
+    reviewBusy.value = false;
+  }
+}
+
+async function enableWebSpace(ws: any) {
+  if (!confirm(`确认启用「${ws.alliance_username}」的网页空间？`)) return;
+  reviewBusy.value = true;
+  try {
+    await adminApi.toggleWebSpaceAdmin(ws.id, false, '');
+    alert('已启用该网页空间');
+    await loadWebSpaces();
+  } catch (e: any) {
+    alert(e.message || '操作失败');
+  } finally {
+    reviewBusy.value = false;
+  }
+}
+
 async function loadAiConfig() {
   try {
     const res = await adminApi.aiConfig();
@@ -896,6 +1195,7 @@ watch(currentSection, (section) => {
   if (section === 'users') loadUsers();
   if (section === 'notifications') { loadSchools(); loadUsers(); }
   if (section === 'ai-config') { loadAiConfig(); loadAiModels(); loadKbEntries(); }
+  if (section === 'web-hosting') { loadWebSpaces(); loadPendingReviews(); }
 }, { immediate: true });
 
 onMounted(loadConfig);
@@ -1444,6 +1744,276 @@ onMounted(loadConfig);
 .kb-item-actions {
   display: flex;
   gap: 2px;
+}
+
+/* ===== 网页空间管理 ===== */
+.review-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-3);
+}
+
+.review-item {
+  background: var(--subtle-secondary);
+  border-radius: var(--radius-md);
+  padding: var(--spacer-3);
+  border: 1px solid var(--divider-stroke);
+}
+
+.review-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacer-2);
+}
+
+.review-user {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.review-site-link {
+  font-size: var(--font-size-xs);
+  color: var(--accent-base);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 400;
+}
+
+.review-site-link:hover { text-decoration: underline; }
+
+.review-time {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.review-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-1);
+  margin-bottom: var(--spacer-2);
+}
+
+.review-file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacer-1) var(--spacer-2);
+  background: var(--ctrl-fill-default);
+  border-radius: var(--radius-sm);
+}
+
+.review-file-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  flex: 1;
+  min-width: 0;
+}
+
+.review-file-path {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+  background: var(--subtle-secondary);
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+}
+
+.review-file-size { color: var(--text-tertiary); }
+.review-file-diff { color: var(--text-tertiary); font-size: 11px; }
+.review-file-new {
+  color: #107C10;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.review-file-actions {
+  display: flex;
+  gap: var(--spacer-1);
+  flex-shrink: 0;
+}
+
+.review-item-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacer-2);
+}
+
+/* 差异查看器 */
+.diff-dialog {
+  max-width: 900px;
+  width: 90vw;
+}
+
+.diff-body {
+  display: flex;
+  gap: 0;
+  max-height: 60vh;
+  overflow: hidden;
+}
+
+.diff-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.diff-panel-header {
+  padding: var(--spacer-2) var(--spacer-3);
+  background: var(--subtle-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  flex-shrink: 0;
+}
+
+.diff-panel-header.pending {
+  background: rgba(217, 119, 6, 0.1);
+  color: #92400e;
+}
+
+.diff-content {
+  flex: 1;
+  overflow: auto;
+  padding: var(--spacer-3);
+  margin: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--app-bg);
+  border: 1px solid var(--divider-stroke);
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+}
+
+.diff-content.pending {
+  border-color: #f59e0b;
+}
+
+.diff-divider {
+  width: 4px;
+  flex-shrink: 0;
+  background: var(--divider-stroke);
+}
+
+/* 网页空间列表 */
+.webspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-2);
+}
+
+.webspace-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacer-3);
+  background: var(--subtle-secondary);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  transition: border-color var(--fast-duration);
+}
+
+.webspace-item:hover { border-color: var(--divider-stroke); }
+.webspace-item.admin-disabled {
+  opacity: 0.7;
+  background: rgba(196, 43, 28, 0.04);
+}
+
+.webspace-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.webspace-name {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.webspace-slug {
+  font-size: var(--font-size-xs);
+  color: var(--accent-base);
+  text-decoration: none;
+  font-family: monospace;
+  font-weight: 400;
+}
+
+.webspace-slug:hover { text-decoration: underline; }
+
+.webspace-meta {
+  display: flex;
+  gap: var(--spacer-3);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.review-pending-tag {
+  display: inline-flex;
+  padding: 1px 8px;
+  background: rgba(217, 119, 6, 0.1);
+  color: #92400e;
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.admin-disabled-tag {
+  display: inline-flex;
+  padding: 1px 8px;
+  background: rgba(196, 43, 28, 0.1);
+  color: #C42B1C;
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.webspace-pending-count {
+  color: #d97706;
+  font-weight: 500;
+}
+
+.webspace-actions {
+  display: flex;
+  gap: var(--spacer-2);
+  flex-shrink: 0;
+}
+
+.danger-btn-outline {
+  border: 1px solid rgba(196, 43, 28, 0.3);
+  color: #C42B1C;
+  background: transparent;
+}
+
+.danger-btn-outline:hover {
+  background: rgba(196, 43, 28, 0.08);
+  border-color: rgba(196, 43, 28, 0.5);
+}
+
+.danger-btn {
+  background: var(--status-error, #C42B1C);
+  color: white;
+}
+
+.danger-btn:hover:not(:disabled) {
+  opacity: 0.9;
 }
 
 </style>

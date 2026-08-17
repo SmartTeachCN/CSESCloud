@@ -309,9 +309,17 @@ function getDefaultIndexHtml(ctx, username) {
 
 // 获取当前用户空间信息（自动创建如果不存在）
 function getSpace(ctx, username) {
-  const { Response } = ctx;
+  const { DB, Response } = ctx;
   const space = ensureSpace(ctx, username);
-  Response.success(space);
+  // 查询审查状态
+  const pendingCount = DB.scalar(
+    "SELECT COUNT(*) FROM web_hosting_files WHERE space_id = ? AND review_status = 'pending_review' AND is_directory = 0",
+    [space.id]
+  ) || 0;
+  Response.success({
+    ...space,
+    pending_review_count: pendingCount,
+  });
 }
 
 // 更新空间信息
@@ -344,6 +352,10 @@ function updateSpace(ctx, username) {
     update.slug = slug;
   }
   if (isset('is_enabled')) {
+    // 如果被管理员禁用，用户不能自行启用
+    if (space.disabled_by_admin && !Helpers.empty(data.is_enabled)) {
+      Response.error('您的网页空间已被管理员停用，无法自行启用。请编辑新版本等待管理员审查。');
+    }
     update.is_enabled = Helpers.empty(data.is_enabled) ? 0 : 1;
   }
 
@@ -375,7 +387,7 @@ function listFiles(ctx, username) {
   const spaceId = space.id;
 
   const files = DB.all(
-    "SELECT id, space_id, file_path, file_size, content_type, is_directory, created_at, updated_at \
+    "SELECT id, space_id, file_path, file_size, content_type, review_status, is_directory, created_at, updated_at \
      FROM web_hosting_files WHERE space_id = ? ORDER BY file_path ASC",
     [spaceId]
   );
@@ -423,6 +435,8 @@ function getFile(ctx, username) {
     content_type: file.content_type,
     content: file.is_directory ? '' : blobText(file.content),
     is_directory: file.is_directory,
+    review_status: file.review_status || 'published',
+    published_size: file.published_size || 0,
     updated_at: file.updated_at,
   });
 }
@@ -474,6 +488,7 @@ function saveFile(ctx, username) {
         file_size: contentSize,
         content_type: contentType,
         content: content,
+        review_status: 'pending_review',
         updated_at: now,
       },
       'space_id = ? AND file_path = ?',
@@ -495,11 +510,15 @@ function saveFile(ctx, username) {
       content_type: contentType,
       content: content,
       is_directory: 0,
+      review_status: 'pending_review',
       created_at: now,
       updated_at: now,
     });
     Auth.logAudit(Auth.schoolId(), 0, 'web_hosting_create_file', `创建文件: ${username}${filePath}`);
   }
+
+  // 标记空间为待审查
+  DB.update('web_hosting_spaces', { review_status: 'pending_review', updated_at: now }, 'id = ?', [spaceId]);
 
   // 验证：读取刚保存的内容确认持久化成功
   const saved = DB.one(
@@ -674,6 +693,7 @@ function uploadFile(ctx, username) {
       file_size: contentSize,
       content_type: contentType,
       content: content,
+      review_status: 'pending_review',
       updated_at: now,
     }, 'space_id = ? AND file_path = ?', [spaceId, targetPath]);
   } else {
@@ -688,10 +708,14 @@ function uploadFile(ctx, username) {
       content_type: contentType,
       content: content,
       is_directory: 0,
+      review_status: 'pending_review',
       created_at: now,
       updated_at: now,
     });
   }
+
+  // 标记空间为待审查
+  DB.update('web_hosting_spaces', { review_status: 'pending_review', updated_at: now }, 'id = ?', [spaceId]);
 
   Auth.logAudit(Auth.schoolId(), 0, 'web_hosting_upload', `上传文件: ${username}${targetPath}`);
   Response.success({
@@ -736,6 +760,27 @@ function downloadFile(ctx, username) {
   res.set('Cache-Control', 'no-cache');
   res.end(Buffer.isBuffer(content) ? content : String(content));
   throw new ctx.HttpSent();
+}
+
+// 获取审查状态（用户查看自己的空间审查状态）
+function getReviewStatus(ctx, username) {
+  const { DB, Response } = ctx;
+  const space = ensureSpace(ctx, username);
+  const spaceId = space.id;
+
+  const pendingFiles = DB.all(
+    "SELECT id, file_path, file_size, published_size, review_status, updated_at FROM web_hosting_files WHERE space_id = ? AND review_status = 'pending_review' AND is_directory = 0",
+    [spaceId]
+  );
+
+  Response.success({
+    space_id: spaceId,
+    review_status: space.review_status || 'published',
+    disabled_by_admin: space.disabled_by_admin || 0,
+    disabled_reason: space.disabled_reason || '',
+    pending_files: pendingFiles,
+    pending_count: pendingFiles.length,
+  });
 }
 
 module.exports = async (ctx) => {
@@ -795,6 +840,11 @@ module.exports = async (ctx) => {
     case 'download':
       // 下载文件
       downloadFile(ctx, username);
+      break;
+
+    case 'get-review-status':
+      // 获取审查状态
+      getReviewStatus(ctx, username);
       break;
 
     default:

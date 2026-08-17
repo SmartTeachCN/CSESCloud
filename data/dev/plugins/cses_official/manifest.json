@@ -1,0 +1,15 @@
+{
+  "plugin_key": "cses_official",
+  "name": "CSES 编辑器",
+  "version": "1.0.0",
+  "description": "官方 CSES 配置文件编辑器，移植自旧版 CSESCloud 平台。支持 JSON 格式化、验证、压缩，快捷键保存。",
+  "extensions": [
+    "cses"
+  ],
+  "icon": "ri-file-code-line",
+  "status": "published",
+  "developer_username": "system",
+  "is_official": true,
+  "created_at": "2026-08-13 11:03:59",
+  "updated_at": "2026-08-13 11:03:59"
+}

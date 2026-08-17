@@ -179,20 +179,21 @@ module.exports = async (ctx) => {
     const instances = DB.all(
       "SELECT i.id, i.name, i.instance_uid, i.config, i.status, i.created_at \
        FROM instances i \
-       WHERE i.school_id = ? AND i.owner_type = 'alliance' AND i.owner_key = ? \
+       WHERE i.school_id = ? \
        ORDER BY i.name ASC",
-      [schoolId, username]
+      [schoolId]
     );
     const instanceChildren = [];
     for (const inst of instances) {
       const instanceUid = inst.instance_uid;
       const baseDir = '/instances/' + instanceUid + '/';
+      // 查询实例目录及其子目录下的所有文件
       const instFiles = DB.all(
-        "SELECT id, name, file_type, file_size, file_category, created_at, updated_at \
+        "SELECT id, directory, name, file_type, file_size, file_category, created_at, updated_at \
          FROM cloud_files \
-         WHERE directory = ? AND school_id = ? \
-         ORDER BY name ASC",
-        [baseDir, schoolId]
+         WHERE directory LIKE ? AND school_id = ? \
+         ORDER BY directory ASC, name ASC",
+        [baseDir + '%', schoolId]
       );
 
       const fileChildren = [];
@@ -209,8 +210,53 @@ module.exports = async (ctx) => {
         instance_uid: instanceUid,
         config: blobText(inst.config),
       });
-      // 实例下的文件
+
+      // 收集子目录
+      const subDirs = new Set();
+      const rootFiles = [];
+
       for (const f of instFiles) {
+        let relDir = String(f.directory).slice(baseDir.length).replace(/\/+$/, '');
+        if (relDir === '') {
+          // 根目录文件
+          rootFiles.push(f);
+        } else {
+          // 子目录中的文件
+          const topDir = relDir.split('/')[0];
+          subDirs.add(topDir);
+        }
+      }
+
+      // 添加子目录节点
+      for (const dirName of subDirs) {
+        const subDirFull = baseDir + dirName + '/';
+        const subDirFiles = instFiles.filter(f => String(f.directory).startsWith(subDirFull));
+        const subChildren = subDirFiles.map(f => ({
+          name: f.name,
+          path: DS_INSTANCES + '/' + inst.name + '/' + dirName + '/' + f.name,
+          is_directory: false,
+          size: f.file_size,
+          file_type: f.file_type,
+          updated_at: f.updated_at,
+          source: 'instance_file',
+          file_id: f.id,
+          instance_id: inst.id,
+          instance_uid: instanceUid,
+        }));
+
+        fileChildren.push({
+          name: dirName,
+          path: DS_INSTANCES + '/' + inst.name + '/' + dirName,
+          is_directory: true,
+          source: 'instance_subdir',
+          instance_id: inst.id,
+          instance_uid: instanceUid,
+          children: subChildren,
+        });
+      }
+
+      // 添加根目录下的文件
+      for (const f of rootFiles) {
         fileChildren.push({
           name: f.name,
           path: DS_INSTANCES + '/' + inst.name + '/' + f.name,
@@ -382,16 +428,16 @@ module.exports = async (ctx) => {
 
     // 5. 操作记录目录
     const histories = DB.all(
-      "SELECT ch.id, ch.file_id, ch.file_name, ch.step, ch.created_at \
-       FROM cloud_file_history ch \
-       WHERE ch.created_by = ? \
-       ORDER BY ch.created_at DESC LIMIT 50",
+      "SELECT id, file_id, file_name, action_type, action_label, created_at \
+       FROM cloud_operation_logs \
+       WHERE created_by = ? \
+       ORDER BY created_at DESC LIMIT 50",
       [username]
     );
     const historyChildren = [];
     for (const h of histories) {
       historyChildren.push({
-        name: h.file_name + ' - 步骤' + h.step + ' (' + h.created_at + ')',
+        name: (h.file_name || '') + ' - ' + (h.action_label || h.action_type) + ' (' + h.created_at + ')',
         path: DS_HISTORY + '/' + h.id,
         is_directory: false,
         size: 0,
@@ -425,8 +471,8 @@ module.exports = async (ctx) => {
     if (source === 'instance_config') {
       const instanceId = parseInt(query.instance_id ?? 0, 10) || 0;
       const inst = DB.one(
-        "SELECT config FROM instances WHERE id = ? AND school_id = ? AND owner_type = 'alliance' AND owner_key = ?",
-        [instanceId, schoolId, username]
+        "SELECT config FROM instances WHERE id = ? AND school_id = ?",
+        [instanceId, schoolId]
       );
       if (!inst) Response.error('实例不存在');
       Response.success({
@@ -442,8 +488,8 @@ module.exports = async (ctx) => {
       const file = DB.one(
         "SELECT cf.* FROM cloud_files cf \
          JOIN instances i ON i.id = cf.instance_id \
-         WHERE cf.id = ? AND i.school_id = ? AND i.owner_type = 'alliance' AND i.owner_key = ?",
-        [fileId, schoolId, username]
+         WHERE cf.id = ? AND i.school_id = ?",
+        [fileId, schoolId]
       );
       if (!file) Response.error('文件不存在');
       Response.success({
@@ -531,7 +577,7 @@ module.exports = async (ctx) => {
     if (source === 'history_record') {
       const historyId = parseInt(query.history_id ?? 0, 10) || 0;
       const h = DB.one(
-        "SELECT * FROM cloud_file_history WHERE id = ? AND created_by = ?",
+        "SELECT * FROM cloud_operation_logs WHERE id = ? AND created_by = ?",
         [historyId, username]
       );
       if (!h) Response.error('操作记录不存在');
@@ -574,7 +620,7 @@ module.exports = async (ctx) => {
     if (source === 'webspace_file') {
       const fileId = parseInt(body.file_id ?? 0, 10) || 0;
       const file = DB.one(
-        "SELECT whf.* FROM web_hosting_files whf \
+        "SELECT whf.*, whs.id AS space_id FROM web_hosting_files whf \
          JOIN web_hosting_spaces whs ON whs.id = whf.space_id \
          WHERE whf.id = ? AND whs.alliance_username = ? AND whs.is_web_space = 1",
         [fileId, username]
@@ -584,8 +630,11 @@ module.exports = async (ctx) => {
       DB.update('web_hosting_files', {
         content: content,
         file_size: phpStrlen(content),
+        review_status: 'pending_review',
         updated_at: now,
       }, 'id = ?', [fileId]);
+      // 标记空间为待审查
+      DB.update('web_hosting_spaces', { review_status: 'pending_review', updated_at: now }, 'id = ?', [file.space_id]);
       Response.success({ ok: true, size: phpStrlen(content) }, '已保存');
     }
 
@@ -595,8 +644,8 @@ module.exports = async (ctx) => {
       const file = DB.one(
         "SELECT cf.* FROM cloud_files cf \
          JOIN instances i ON i.id = cf.instance_id \
-         WHERE cf.id = ? AND i.school_id = ? AND i.owner_type = 'alliance' AND i.owner_key = ?",
-        [fileId, schoolId, username]
+         WHERE cf.id = ? AND i.school_id = ?",
+        [fileId, schoolId]
       );
       if (!file) Response.error('文件不存在');
       const now = nowStr();
@@ -625,8 +674,8 @@ module.exports = async (ctx) => {
     if (source === 'instance') {
       const instanceId = parseInt(body.instance_id ?? 0, 10) || 0;
       const inst = DB.one(
-        "SELECT * FROM instances WHERE id = ? AND school_id = ? AND owner_type = 'alliance' AND owner_key = ?",
-        [instanceId, schoolId, username]
+        "SELECT * FROM instances WHERE id = ? AND school_id = ?",
+        [instanceId, schoolId]
       );
       if (!inst) Response.error('实例不存在');
       // 删除实例及关联文件
@@ -738,7 +787,13 @@ module.exports = async (ctx) => {
       if (exists) Response.error('该路径别名已被占用');
       updates.slug = newSlug;
     }
-    if (isset('is_enabled')) updates.is_enabled = Helpers.empty(body.is_enabled) ? 0 : 1;
+    if (isset('is_enabled')) {
+      // 如果被管理员禁用，用户不能自行启用
+      if (ws.disabled_by_admin && !Helpers.empty(body.is_enabled)) {
+        Response.error('您的网页空间已被管理员停用，无法自行启用。请编辑新版本等待管理员审查。');
+      }
+      updates.is_enabled = Helpers.empty(body.is_enabled) ? 0 : 1;
+    }
 
     DB.update('web_hosting_spaces', updates, 'id = ?', [spaceId]);
     Response.success({ ok: true }, '设置已保存');
@@ -761,6 +816,7 @@ module.exports = async (ctx) => {
       DB.update('web_hosting_files', {
         content: content,
         file_size: phpStrlen(content),
+        review_status: 'pending_review',
         updated_at: now,
       }, 'id = ?', [existing.id]);
     } else {
@@ -775,10 +831,13 @@ module.exports = async (ctx) => {
         content_type: guessContentType(filePath),
         content: content,
         is_directory: 0,
+        review_status: 'pending_review',
         created_at: now,
         updated_at: now,
       });
     }
+    // 标记空间为待审查
+    DB.update('web_hosting_spaces', { review_status: 'pending_review', updated_at: now }, 'id = ?', [spaceId]);
     Response.success({ ok: true }, '文件已创建');
   }
 
@@ -839,6 +898,7 @@ module.exports = async (ctx) => {
         file_size: contentSize,
         content_type: contentType,
         content: content,
+        review_status: 'pending_review',
         updated_at: now,
       }, 'id = ?', [existing.id]);
     } else {
@@ -853,10 +913,13 @@ module.exports = async (ctx) => {
         content_type: contentType,
         content: content,
         is_directory: 0,
+        review_status: 'pending_review',
         created_at: now,
         updated_at: now,
       });
     }
+    // 标记空间为待审查
+    DB.update('web_hosting_spaces', { review_status: 'pending_review', updated_at: now }, 'id = ?', [spaceId]);
     Response.success({ path: targetPath, size: contentSize }, '文件已上传');
   }
 
@@ -875,16 +938,16 @@ module.exports = async (ctx) => {
     const instanceFilesUsed = parseInt(DB.scalar(
       "SELECT COALESCE(SUM(cf.file_size), 0) FROM cloud_files cf \
        JOIN instances i ON i.id = cf.instance_id \
-       WHERE i.school_id = ? AND i.owner_type = 'alliance' AND i.owner_key = ?",
-      [schoolId, username]
+       WHERE i.school_id = ?",
+      [schoolId]
     ) ?? 0, 10) || 0;
 
     // 实例存储数据总大小
     const instanceStorageUsed = parseInt(DB.scalar(
       "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM instance_storage_data isd \
        JOIN instances i ON i.id = isd.instance_id \
-       WHERE i.school_id = ? AND i.owner_type = 'alliance' AND i.owner_key = ?",
-      [schoolId, username]
+       WHERE i.school_id = ?",
+      [schoolId]
     ) ?? 0, 10) || 0;
 
     // 版本历史总大小
@@ -904,8 +967,8 @@ module.exports = async (ctx) => {
 
     // 文件数量统计
     const instanceCount = parseInt(DB.scalar(
-      "SELECT COUNT(*) FROM instances WHERE school_id = ? AND owner_type = 'alliance' AND owner_key = ?",
-      [schoolId, username]
+      "SELECT COUNT(*) FROM instances WHERE school_id = ?",
+      [schoolId]
     ) ?? 0, 10) || 0;
     const webSpaceCount = parseInt(DB.scalar(
       "SELECT COUNT(*) FROM web_hosting_spaces WHERE alliance_username = ? AND is_web_space = 1",

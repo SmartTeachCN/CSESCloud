@@ -351,7 +351,7 @@ function emitSave() {
   align-items: stretch;
   flex: 1;
   min-width: 0;
-  justify-content: center;
+  justify-content: left;
   padding: var(--spacer-1) var(--spacer-2);
   gap: 0;
   overflow-x: auto;

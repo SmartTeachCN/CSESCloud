@@ -1,0 +1,65 @@
+.cses-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+.cses-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  background: #252526;
+  border-bottom: 1px solid #3c3c3c;
+  flex-shrink: 0;
+}
+.cses-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  background: #3c3c3c;
+  color: #cccccc;
+  border: 1px solid #555;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.cses-btn:hover { background: #4c4c4c; }
+.cses-btn.primary { background: #0067C0; color: white; border-color: #0067C0; }
+.cses-btn.primary:hover { background: #005aaf; }
+.cses-status {
+  padding: 4px 12px;
+  font-size: 11px;
+  color: #888;
+  background: #2d2d2d;
+  border-bottom: 1px solid #3c3c3c;
+  flex-shrink: 0;
+}
+.cses-status.error { color: #f48771; }
+.cses-status.success { color: #89d185; }
+.cses-textarea {
+  flex: 1;
+  width: 100%;
+  border: none;
+  outline: none;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 12px;
+  resize: none;
+  tab-size: 2;
+}
+.cses-stats {
+  padding: 4px 12px;
+  font-size: 11px;
+  color: #888;
+  background: #2d2d2d;
+  border-top: 1px solid #3c3c3c;
+  flex-shrink: 0;
+}

@@ -48,7 +48,7 @@ async function loadHistory() {
   loading.value = true;
   try {
     // 拉取该实例相关的审计日志
-    const rows = await api.get<any[]>(`/audit-log.php?action=instance&id=${props.instanceId}`);
+    const rows = await api.get<any[]>(`/audit-log?action=instance&id=${props.instanceId}`);
     history.value = rows || [];
   } catch {
     history.value = [];

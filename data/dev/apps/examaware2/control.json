@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "protocolVersion": 1,
+  "supportedCommands": [
+    "exam-config.prepare",
+    "playback.activate",
+    "broadcast.show",
+    "broadcast.dismiss",
+    "settings.apply"
+  ],
+  "description": "用于 ExamAware2 远程管理考试配置"
+}

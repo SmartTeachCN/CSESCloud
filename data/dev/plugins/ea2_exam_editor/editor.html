@@ -1,0 +1,54 @@
+<div class="ea2-editor">
+  <!-- 左栏：场次列表 + 考试信息 -->
+  <div class="ea2-panel" id="ea2Left">
+    <div id="ea2LeftTop">
+      <div class="ea2-panel-header">
+        <span>考试场次</span>
+        <div class="ea2-panel-header-actions">
+          <button class="ea2-btn small primary" onclick="saveConfig()" title="Ctrl+S">保存</button>
+          <button class="ea2-btn small" id="ea2WizardBtn" onclick="startWizard()" style="display:none">添加向导</button>
+          <button class="ea2-btn small" id="ea2AddBtn" onclick="addExamInfo()">+ 新建</button>
+          <button class="ea2-btn small" id="ea2CascadeBtn" onclick="wizCascadeAll()" style="display:none">顺延</button>
+        </div>
+      </div>
+      <div class="ea2-scroll" id="ea2ExamList"></div>
+      <div class="ea2-empty-hint" id="ea2EmptyHint">暂无场次，点击「添加向导」或「+ 新建」</div>
+    </div>
+    <div class="ea2-splitter" id="ea2SplitterH1"></div>
+    <div id="ea2LeftBottom">
+      <div class="ea2-panel-header">考试信息</div>
+      <div class="ea2-scroll">
+        <div class="ea2-field"><label>考试名称 <span class="required">*</span></label><input type="text" id="ea2ExamName" placeholder="例如：2026年秋季期末考试" oninput="onFieldChange()" /></div>
+        <div class="ea2-field"><label>提示信息</label><textarea id="ea2Message" rows="3" placeholder="考试提示信息" oninput="onFieldChange()"></textarea></div>
+      </div>
+    </div>
+  </div>
+  <div class="ea2-splitter" id="ea2SplitterV"></div>
+  <!-- 右栏：编辑区域 + 问题栏 -->
+  <div class="ea2-panel" id="ea2Right">
+    <div id="ea2RightTop">
+      <div class="ea2-panel-header" id="ea2DetailTitle">选择左侧场次以查看详情</div>
+      <div class="ea2-scroll" id="ea2ExamDetail"></div>
+    </div>
+    <div class="ea2-splitter" id="ea2SplitterH2"></div>
+    <div id="ea2RightBottom" class="collapsed">
+      <div class="ea2-panel-header" onclick="toggleIssues()">
+        <span>问题 (<span id="ea2IssueCount">0</span>)</span>
+        <span class="ea2-toggle-icon" id="ea2ToggleIcon">▸</span>
+      </div>
+      <div class="ea2-issue-list" id="ea2IssueList"></div>
+      <div class="ea2-empty-hint" id="ea2IssueEmpty" style="padding:8px">无问题</div>
+    </div>
+  </div>
+  <!-- 移动端底部问题栏 -->
+  <div class="ea2-mobile-bottom">
+    <div class="ea2-mobile-bottom-bar" onclick="toggleMobileBottom()">
+      <span id="ea2MobileBottomLabel">问题 (0)</span>
+      <span class="ea2-toggle-icon" id="ea2MobileToggleIcon">▸</span>
+    </div>
+    <div class="ea2-mobile-bottom-body" id="ea2MobileBottomBody" style="display:none">
+      <div class="ea2-issue-list" id="ea2MobileIssueList"></div>
+      <div class="ea2-empty-hint" id="ea2MobileIssueEmpty" style="padding:4px">无问题</div>
+    </div>
+  </div>
+</div>

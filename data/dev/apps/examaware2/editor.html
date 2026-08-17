@@ -1,0 +1,336 @@
+<style>/* ===== EA2 控制面板 ===== */
+.ea2-app {
+  display: flex; flex-direction: column; height: 100%;
+  background: var(--app-bg, #1e1e1e); color: var(--text-primary, #d4d4d4);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px; overflow: hidden;
+}
+.ea2-page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.ea2-page-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px; background: var(--card-bg, #252526);
+  border-bottom: 1px solid var(--border-color, #3c3c3c); flex-shrink: 0;
+}
+.ea2-page-header h2 { margin: 0; font-size: 15px; font-weight: 600; color: var(--text-primary, #e0e0e0); }
+.ea2-page-actions { display: flex; gap: 8px; }
+.ea2-page-body { flex: 1; overflow-y: auto; padding: 16px 20px; }
+.ea2-empty { text-align: center; padding: 40px; color: var(--text-secondary, #888); font-size: 13px; }
+
+/* 按钮 */
+.ea2-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 6px 14px; background: var(--btn-bg, #3c3c3c); color: var(--text-primary, #ccc);
+  border: 1px solid var(--border-color, #555); border-radius: 4px;
+  font-size: 12px; cursor: pointer; font-family: inherit; transition: background 0.15s;
+}
+.ea2-btn:hover { background: var(--btn-hover-bg, #4c4c4c); }
+.ea2-btn.primary { background: #0067C0; color: white; border-color: #0067C0; }
+.ea2-btn.primary:hover { background: #005aaf; }
+.ea2-btn.small { padding: 3px 10px; font-size: 11px; }
+.ea2-btn.danger { color: #f48771; border-color: #5a2a2a; }
+.ea2-btn.danger:hover { background: #5a2a2a; }
+.ea2-btn.success { background: #107c10; color: white; border-color: #107c10; }
+
+/* 统计卡片 */
+.ea2-device-stats { display: flex; gap: 12px; margin-bottom: 16px; }
+.ea2-stat-card {
+  flex: 1; padding: 14px; background: var(--card-bg, #252526);
+  border: 1px solid var(--border-color, #3c3c3c); border-radius: 6px; text-align: center;
+}
+.ea2-stat-card.active { border-color: #0067C0; }
+.ea2-stat-value { display: block; font-size: 24px; font-weight: 700; color: var(--text-primary, #e0e0e0); }
+.ea2-stat-label { display: block; font-size: 11px; color: var(--text-secondary, #888); margin-top: 4px; }
+
+/* 区域 */
+.ea2-section { background: var(--card-bg, #252526); border: 1px solid var(--border-color, #3c3c3c); border-radius: 6px; margin-bottom: 12px; overflow: hidden; }
+.ea2-section-title {
+  padding: 10px 16px; font-size: 12px; font-weight: 600; color: var(--text-primary, #e0e0e0);
+  background: var(--section-header-bg, #2d2d2d); border-bottom: 1px solid var(--border-color, #3c3c3c);
+}
+
+/* 设备列表 */
+.ea2-device-list { padding: 0; }
+.ea2-device-item {
+  display: flex; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border-color, #333);
+  gap: 12px;
+}
+.ea2-device-item:last-child { border-bottom: none; }
+.ea2-device-status { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ea2-device-status.online { background: #4caf50; }
+.ea2-device-status.offline { background: #888; }
+.ea2-device-info { flex: 1; min-width: 0; }
+.ea2-device-name { font-size: 13px; font-weight: 500; }
+.ea2-device-meta { font-size: 11px; color: var(--text-secondary, #888); margin-top: 2px; }
+.ea2-device-notes { font-size: 11px; color: #0067C0; margin-top: 2px; font-style: italic; }
+.ea2-device-actions { display: flex; gap: 6px; }
+
+/* 注册码列表 */
+.ea2-enrollment-list { padding: 0; }
+.ea2-enrollment-item {
+  display: flex; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border-color, #333);
+  gap: 12px;
+}
+.ea2-enrollment-item:last-child { border-bottom: none; }
+.ea2-enrollment-code { font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; color: #0067C0; flex: 1; word-break: break-all; }
+.ea2-enrollment-meta { font-size: 11px; color: var(--text-secondary, #888); white-space: nowrap; }
+
+/* 考试网格 */
+.ea2-exam-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.ea2-exam-grid>.ea2-empty { grid-column: 1 / -1; }
+.ea2-exam-card {
+  background: var(--card-bg, #252526); border: 1px solid var(--border-color, #3c3c3c);
+  border-radius: 6px; padding: 16px; cursor: pointer; transition: border-color 0.15s;
+}
+.ea2-exam-card:hover { border-color: #0067C0; }
+.ea2-exam-card-name { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+.ea2-exam-card-meta { font-size: 11px; color: var(--text-secondary, #888); display: flex; gap: 12px; }
+.ea2-exam-card-actions { display: flex; gap: 6px; margin-top: 10px; }
+
+/* 配置 */
+.ea2-config-shell { display: flex; height: 100%; overflow: hidden; }
+.ea2-config-sidebar { width: 160px; background: var(--card-bg, #252526); border-right: 1px solid var(--border-color, #3c3c3c); flex-shrink: 0; overflow-y: auto; }
+.ea2-config-nav { padding: 4px 0; }
+.ea2-config-nav-item {
+  display: block; width: 100%; padding: 10px 16px; text-align: left; background: none; border: none;
+  color: var(--text-primary, #ccc); font-size: 13px; cursor: pointer; font-family: inherit;
+  transition: background 0.15s; border-left: 3px solid transparent;
+}
+.ea2-config-nav-item:hover { background: var(--btn-hover-bg, #333); }
+.ea2-config-nav-item.active { background: var(--btn-hover-bg, #333); border-left-color: #0067C0; color: #fff; }
+.ea2-config-content { flex: 1; overflow-y: auto; padding: 20px; }
+.ea2-config-tab { display: none; }
+.ea2-config-tab.active { display: block; }
+.ea2-config-tab h2 { margin: 0 0 16px; font-size: 16px; font-weight: 600; }
+.ea2-config-card { background: var(--card-bg, #252526); border: 1px solid var(--border-color, #3c3c3c); border-radius: 6px; overflow: hidden; }
+.ea2-config-item {
+  display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; gap: 16px;
+}
+.ea2-config-item-main { flex: 1; }
+.ea2-config-item-title { font-size: 13px; font-weight: 500; }
+.ea2-config-item-desc { font-size: 11px; color: var(--text-secondary, #888); margin-top: 2px; }
+.ea2-config-item-action { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.ea2-config-item-action input[type="text"],
+.ea2-config-item-action input[type="number"],
+.ea2-config-item-action input[type="date"],
+.ea2-config-item-action select {
+  padding: 6px 10px; background: var(--input-bg, #1e1e1e); color: var(--text-primary, #d4d4d4);
+  border: 1px solid var(--border-color, #3c3c3c); border-radius: 4px; font-size: 12px; font-family: inherit;
+  outline: none; transition: border-color 0.15s;
+}
+.ea2-config-item-action input:focus, .ea2-config-item-action select:focus { border-color: #0067C0; }
+.ea2-config-item-suffix { font-size: 12px; color: var(--text-secondary, #888); }
+.ea2-config-divider { height: 1px; background: var(--border-color, #3c3c3c); margin: 0; }
+
+/* 弹窗 */
+.ea2-modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center;
+  justify-content: center; z-index: 1000;
+}
+.ea2-modal { background: var(--card-bg, #252526); border: 1px solid var(--border-color, #3c3c3c); border-radius: 8px; width: 440px; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
+.ea2-modal-lg { width: 640px; }
+.ea2-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border-color, #3c3c3c); }
+.ea2-modal-header h3 { margin: 0; font-size: 14px; }
+.ea2-modal-close { background: none; border: none; color: var(--text-secondary, #888); font-size: 18px; cursor: pointer; }
+.ea2-modal-body { padding: 18px; overflow-y: auto; flex: 1; }
+.ea2-modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--border-color, #3c3c3c); }
+.ea2-field { margin-bottom: 12px; }
+.ea2-field label { display: block; font-size: 11px; color: var(--text-secondary, #999); margin-bottom: 4px; }
+.ea2-field input, .ea2-field select {
+  width: 100%; padding: 7px 10px; background: var(--input-bg, #1e1e1e); color: var(--text-primary, #d4d4d4);
+  border: 1px solid var(--border-color, #3c3c3c); border-radius: 4px; font-size: 12px; font-family: inherit;
+  outline: none; box-sizing: border-box;
+}
+.ea2-field input:focus, .ea2-field select:focus { border-color: #0067C0; }
+.ea2-enroll-result { margin-top: 12px; padding: 12px; background: var(--input-bg, #1e1e1e); border-radius: 6px; text-align: center; }
+.ea2-enroll-code-label { font-size: 11px; color: var(--text-secondary, #888); margin-bottom: 6px; }
+.ea2-enroll-code { font-family: 'Consolas', monospace; font-size: 14px; font-weight: 600; color: #0067C0; padding: 8px; background: var(--card-bg, #252526); border-radius: 4px; word-break: break-all; margin-bottom: 8px; }
+
+/* 考试详情 */
+.ea2-exam-detail-section { margin-bottom: 16px; }
+.ea2-exam-detail-section h4 { font-size: 12px; font-weight: 600; color: var(--text-secondary, #888); margin: 0 0 8px; text-transform: uppercase; }
+.ea2-exam-info-table { width: 100%; border-collapse: collapse; }
+.ea2-exam-info-table th, .ea2-exam-info-table td {
+  padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border-color, #333); font-size: 12px;
+}
+.ea2-exam-info-table th { color: var(--text-secondary, #888); font-weight: 500; width: 100px; }
+
+/* 设备选择勾选框 */
+.ea2-device-checkboxes { max-height: 200px; overflow-y: auto; margin-top: 8px; }
+.ea2-device-checkbox { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; }
+.ea2-device-checkbox input { accent-color: #0067C0; }
+
+/* 滚动条 */
+.ea2-page-body::-webkit-scrollbar, .ea2-config-content::-webkit-scrollbar { width: 6px; }
+.ea2-page-body::-webkit-scrollbar-track, .ea2-config-content::-webkit-scrollbar-track { background: transparent; }
+.ea2-page-body::-webkit-scrollbar-thumb, .ea2-config-content::-webkit-scrollbar-thumb { background: #424242; border-radius: 3px; }
+
+/* 深色模式适配 */
+@media (prefers-color-scheme: light) {
+  .ea2-app { background: #f5f5f5; color: #1a1a1a; }
+  .ea2-page-header { background: #fff; border-bottom-color: #e0e0e0; }
+  .ea2-page-header h2 { color: #1a1a1a; }
+  .ea2-stat-card { background: #fff; border-color: #e0e0e0; }
+  .ea2-stat-value { color: #1a1a1a; }
+  .ea2-section { background: #fff; border-color: #e0e0e0; }
+  .ea2-section-title { background: #fafafa; border-bottom-color: #e0e0e0; color: #1a1a1a; }
+  .ea2-btn { background: #f0f0f0; color: #333; border-color: #d0d0d0; }
+  .ea2-btn:hover { background: #e0e0e0; }
+  .ea2-config-sidebar { background: #fff; border-right-color: #e0e0e0; }
+  .ea2-config-nav-item { color: #333; }
+  .ea2-config-nav-item:hover { background: #f0f0f0; }
+  .ea2-config-nav-item.active { background: #f0f0f0; color: #1a1a1a; }
+  .ea2-config-card { background: #fff; border-color: #e0e0e0; }
+  .ea2-field input, .ea2-field select, .ea2-config-item-action input, .ea2-config-item-action select { background: #fff; color: #1a1a1a; border-color: #d0d0d0; }
+  .ea2-modal { background: #fff; border-color: #e0e0e0; }
+  .ea2-exam-card { background: #fff; border-color: #e0e0e0; }
+  .ea2-exam-info-table th, .ea2-exam-info-table td { border-bottom-color: #e0e0e0; }
+}</style><div class="ea2-app">
+  <!-- ===== 连接应用页面 ===== -->
+  <div class="ea2-page" id="ea2PageConnect">
+    <div class="ea2-page-header">
+      <h2>设备连接</h2>
+      <div class="ea2-page-actions">
+        <button class="ea2-btn primary" onclick="showEnrollmentDialog()">+ 生成注册码</button>
+        <button class="ea2-btn" onclick="refreshDevices()">刷新</button>
+      </div>
+    </div>
+    <div class="ea2-page-body">
+      <div class="ea2-device-stats" id="ea2DeviceStats">
+        <div class="ea2-stat-card"><span class="ea2-stat-value" id="ea2StatTotal">0</span><span class="ea2-stat-label">总设备</span></div>
+        <div class="ea2-stat-card active"><span class="ea2-stat-value" id="ea2StatOnline">0</span><span class="ea2-stat-label">在线</span></div>
+        <div class="ea2-stat-card"><span class="ea2-stat-value" id="ea2StatPending">0</span><span class="ea2-stat-label">待执行命令</span></div>
+      </div>
+      <div class="ea2-section">
+        <div class="ea2-section-title">设备列表</div>
+        <div class="ea2-device-list" id="ea2DeviceList">
+          <div class="ea2-empty">暂无设备连接，请生成注册码并让设备注册</div>
+        </div>
+      </div>
+      <div class="ea2-section">
+        <div class="ea2-section-title">注册码</div>
+        <div class="ea2-enrollment-list" id="ea2EnrollmentList">
+          <div class="ea2-empty">暂无有效注册码</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 考试管理页面 ===== -->
+  <div class="ea2-page" id="ea2PageExams" style="display:none">
+    <div class="ea2-page-header">
+      <h2>考试管理</h2>
+      <div class="ea2-page-actions">
+        <button class="ea2-btn primary" onclick="createNewExam()">+ 新建考试</button>
+        <button class="ea2-btn" onclick="refreshExamList()">刷新</button>
+      </div>
+    </div>
+    <div class="ea2-page-body">
+      <div class="ea2-multi-select-bar" id="ea2MultiSelectBar" style="display:none">
+        <span id="ea2MultiSelectCount">已选 0 项</span>
+        <button class="ea2-btn small success" onclick="batchDeployExams()">批量部署</button>
+        <button class="ea2-btn small danger" onclick="batchDeleteExams()">批量删除</button>
+        <button class="ea2-btn small" onclick="toggleMultiSelect()">取消选择</button>
+      </div>
+      <div class="ea2-exam-grid" id="ea2ExamGrid">
+        <div class="ea2-empty">暂无考试配置，点击"新建考试"创建</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 应用配置页面 ===== -->
+  <div class="ea2-page" id="ea2PageConfig" style="display:none">
+    <div class="ea2-config-shell">
+      <div class="ea2-config-sidebar">
+        <div class="ea2-config-device-sel" style="padding:8px 12px">
+          <select id="ea2ConfigDeviceSel" onchange="switchConfigDevice(this.value)" style="width:100%;padding:6px 8px;background:var(--input-bg,#1e1e1e);color:var(--text-primary,#d4d4d4);border:1px solid var(--border-color,#3c3c3c);border-radius:4px;font-size:11px;font-family:inherit">
+            <option value="__global__">全局配置（所有设备）</option>
+          </select>
+        </div>
+        <div class="ea2-config-nav">
+          <button class="ea2-config-nav-item active" data-cfg="basic" onclick="switchConfigTab('basic')">基本</button>
+          <button class="ea2-config-nav-item" data-cfg="appearance" onclick="switchConfigTab('appearance')">外观</button>
+          <button class="ea2-config-nav-item" data-cfg="player" onclick="switchConfigTab('player')">播放器</button>
+          <button class="ea2-config-nav-item" data-cfg="reminder" onclick="switchConfigTab('reminder')">提醒铃声</button>
+          <button class="ea2-config-nav-item" data-cfg="connect" onclick="switchConfigTab('connect')">连接</button>
+          <button class="ea2-config-nav-item" data-cfg="time" onclick="switchConfigTab('time')">时间同步</button>
+        </div>
+      </div>
+      <div class="ea2-config-content" id="ea2ConfigContent">
+        <!-- 动态渲染 -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 注册码弹窗 ===== -->
+  <div class="ea2-modal-overlay" id="ea2EnrollmentModal" style="display:none" onclick="if(event.target===this)closeEnrollmentDialog()">
+    <div class="ea2-modal">
+      <div class="ea2-modal-header">
+        <h3>生成注册码</h3>
+        <button class="ea2-modal-close" onclick="closeEnrollmentDialog()">&times;</button>
+      </div>
+      <div class="ea2-modal-body">
+        <div class="ea2-field">
+          <label>设备名称（可选）</label>
+          <input type="text" id="ea2EnrollName" placeholder="例如：考场01" />
+        </div>
+        <div class="ea2-field">
+          <label>最大使用次数</label>
+          <input type="number" id="ea2EnrollMaxUses" value="1" min="1" max="100" />
+        </div>
+        <div class="ea2-field">
+          <label>有效期</label>
+          <select id="ea2EnrollExpiry">
+            <option value="3600">1 小时</option>
+            <option value="86400" selected>24 小时</option>
+            <option value="604800">7 天</option>
+            <option value="2592000">30 天</option>
+          </select>
+        </div>
+        <div class="ea2-enroll-result" id="ea2EnrollResult" style="display:none">
+          <div class="ea2-enroll-code-label">注册码（仅显示一次，请妥善保存）：</div>
+          <div class="ea2-enroll-code" id="ea2EnrollCode"></div>
+          <button class="ea2-btn small" onclick="copyEnrollCode()">复制</button>
+        </div>
+      </div>
+      <div class="ea2-modal-footer">
+        <button class="ea2-btn" onclick="closeEnrollmentDialog()">取消</button>
+        <button class="ea2-btn primary" id="ea2EnrollGenerateBtn" onclick="generateEnrollmentCode()">生成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 考试详情弹窗 ===== -->
+  <div class="ea2-modal-overlay" id="ea2ExamDetailModal" style="display:none" onclick="if(event.target===this)closeExamDetail()">
+    <div class="ea2-modal ea2-modal-lg">
+      <div class="ea2-modal-header">
+        <h3 id="ea2ExamDetailTitle">考试详情</h3>
+        <button class="ea2-modal-close" onclick="closeExamDetail()">&times;</button>
+      </div>
+      <div class="ea2-modal-body" id="ea2ExamDetailBody">
+        <!-- 动态渲染 -->
+      </div>
+      <div class="ea2-modal-footer">
+        <button class="ea2-btn" onclick="closeExamDetail()">关闭</button>
+        <button class="ea2-btn primary" id="ea2ExamDeployBtn" onclick="deployExamConfig()">部署到设备</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 部署确认弹窗 ===== -->
+  <div class="ea2-modal-overlay" id="ea2DeployModal" style="display:none" onclick="if(event.target===this)closeDeployDialog()">
+    <div class="ea2-modal">
+      <div class="ea2-modal-header">
+        <h3>部署考试配置</h3>
+        <button class="ea2-modal-close" onclick="closeDeployDialog()">&times;</button>
+      </div>
+      <div class="ea2-modal-body">
+        <p>将考试配置下发到所有活跃设备？</p>
+        <div class="ea2-device-checkboxes" id="ea2DeployDevices"></div>
+      </div>
+      <div class="ea2-modal-footer">
+        <button class="ea2-btn" onclick="closeDeployDialog()">取消</button>
+        <button class="ea2-btn primary" onclick="confirmDeploy()">确认部署</button>
+      </div>
+    </div>
+  </div>
+</div>
