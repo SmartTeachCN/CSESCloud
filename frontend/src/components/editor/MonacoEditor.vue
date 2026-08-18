@@ -5,6 +5,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import loader from '@monaco-editor/loader';
+import { useEditorSettings } from '../../composables/useEditorSettings';
+
+const editorSettings = useEditorSettings();
 
 const props = defineProps<{
   modelValue: string;
@@ -32,6 +35,12 @@ defineExpose({
   getValue: () => editor?.getValue(),
   setValue: (v: string) => editor?.setValue(v),
   focus: () => editor?.focus(),
+  /** 打开 Monaco 原生“转到行”输入框 */
+  gotoLine: () => {
+    if (!editor) return;
+    editor.focus();
+    editor.trigger('keyboard', 'editor.action.gotoLine', '');
+  },
 });
 
 // 语言映射
@@ -85,48 +94,46 @@ async function initEditor() {
 
   const lang = languageMap[props.language || ''] || props.language || 'plaintext';
 
-  // 检测深色模式
-  const isDark = typeof document !== 'undefined' &&
-    (document.documentElement.classList.contains('dark') ||
-     document.documentElement.getAttribute('data-theme') === 'dark' ||
-     window.matchMedia?.('(prefers-color-scheme: dark)').matches);
-  const theme = props.theme || (isDark ? 'vs-dark' : 'vs');
+  // 是否深色（受全局设置影响）
+  const isDark = editorSettings.isDark();
+  const themeName = isDark ? 'cses-dark' : 'vs';
 
   // 定义深色主题
-  if (isDark) {
-    monaco.editor.defineTheme('cses-dark', {
-      base: 'vs-dark',
-      inherit: true,
-      rules: [],
-      colors: {
-        'editor.background': '#1e1e1e',
-        'editor.foreground': '#d4d4d4',
-        'editor.lineHighlightBackground': '#2a2d2e',
-        'editor.selectionBackground': '#264f78',
-        'editorCursor.foreground': '#aeafad',
-        'editorLineNumber.foreground': '#858585',
-        'editorLineNumber.activeForeground': '#c6c6c6',
-      }
-    });
-  }
+  monaco.editor.defineTheme('cses-dark', {
+    base: 'vs-dark',
+    inherit: true,
+    rules: [],
+    colors: {
+      'editor.background': '#1e1e1e',
+      'editor.foreground': '#d4d4d4',
+      'editor.lineHighlightBackground': '#2a2d2e',
+      'editor.selectionBackground': '#264f78',
+      'editorCursor.foreground': '#aeafad',
+      'editorLineNumber.foreground': '#858585',
+      'editorLineNumber.activeForeground': '#c6c6c6',
+    }
+  });
+
+  const opts = editorSettings.state;
 
   editor = monaco.editor.create(editorContainer.value, {
     value: props.modelValue || '',
     language: lang,
-    theme: isDark ? 'cses-dark' : 'vs',
+    theme: props.theme || themeName,
     readOnly: props.readOnly || false,
     automaticLayout: true,
     minimap: { enabled: true },
-    fontSize: 13,
-    lineNumbers: 'on',
+    fontSize: opts.fontSize,
+    lineNumbers: opts.lineNumbers ? 'on' : 'off',
     scrollBeyondLastLine: false,
-    wordWrap: 'on',
+    wordWrap: opts.wordWrap ? 'on' : 'off',
     tabSize: 2,
-    renderWhitespace: 'selection',
+    renderWhitespace: opts.renderWhitespace ? 'all' : 'none',
     bracketPairColorization: { enabled: true },
     autoIndent: 'full',
     formatOnPaste: true,
-    suggest: { showWords: true },
+    suggest: { showWords: opts.suggest, enabled: opts.suggest },
+    snippetSuggestions: opts.snippets ? 'top' : 'none',
     padding: { top: 8 }
   });
 
@@ -191,6 +198,42 @@ watch(() => props.theme, (theme) => {
     monaco.editor.setTheme(theme || 'vs');
   }
 });
+
+// 全局设置变化实时应用到编辑器
+watch(
+  () => [editorSettings.state.fontSize, editorSettings.state.wordWrap, editorSettings.state.suggest, editorSettings.state.snippets, editorSettings.state.renderWhitespace, editorSettings.state.lineNumbers],
+  () => {
+    if (!editor || !monaco) return;
+    const o = editorSettings.state;
+    editor.updateOptions({
+      fontSize: o.fontSize,
+      lineNumbers: o.lineNumbers ? 'on' : 'off',
+      wordWrap: o.wordWrap ? 'on' : 'off',
+      renderWhitespace: o.renderWhitespace ? 'all' : 'none',
+      suggest: { showWords: o.suggest, enabled: o.suggest },
+      snippetSuggestions: o.snippets ? 'top' : 'none',
+    });
+  }
+);
+
+// 主题设置变化实时切换 Monaco 主题
+watch(
+  () => [editorSettings.state.theme],
+  () => {
+    if (!editor || !monaco) return;
+    const isDarkNow = editorSettings.isDark();
+    monaco.editor.defineTheme('cses-dark', {
+      base: 'vs-dark', inherit: true, rules: [],
+      colors: {
+        'editor.background': '#1e1e1e', 'editor.foreground': '#d4d4d4',
+        'editor.lineHighlightBackground': '#2a2d2e', 'editor.selectionBackground': '#264f78',
+        'editorCursor.foreground': '#aeafad', 'editorLineNumber.foreground': '#858585',
+        'editorLineNumber.activeForeground': '#c6c6c6',
+      }
+    });
+    monaco.editor.setTheme(props.theme || (isDarkNow ? 'cses-dark' : 'vs'));
+  }
+);
 
 onMounted(async () => {
   await nextTick();

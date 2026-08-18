@@ -287,49 +287,44 @@ module.exports = function seed() {
     ],
   });
 
-  const appId1 = DB.insert('apps', {
-    developer_username: 'admin',
-    app_key: 'smart_classroom_v1',
+  const { AppFS } = require('./dev-fs');
+
+  AppFS.createUserApp('admin', 'smart_classroom_v1', {
     name: '智慧课堂云服务',
     version: '1.0.0',
     description: '面向课堂的智能教学云服务',
     category: '教学服务',
-    status: 'published',
-    app_info_manifest: sampleAppInfoManifest,
+    is_official: true,
+    app_info_manifest: typeof sampleAppInfoManifest === 'string' ? JSON.parse(sampleAppInfoManifest) : sampleAppInfoManifest,
     editor_html: sampleEditorHtml,
     editor_js: sampleEditorJs,
-    storage_manifest: sampleStorageManifest,
-    interface_schema: sampleInterfaceSchema,
+    storage_manifest: typeof sampleStorageManifest === 'string' ? JSON.parse(sampleStorageManifest) : sampleStorageManifest,
+    interface_schema: typeof sampleInterfaceSchema === 'string' ? JSON.parse(sampleInterfaceSchema) : sampleInterfaceSchema,
+    control_manifest: { enabled: false, protocolVersion: 1, supportedCommands: [], description: '' },
     created_at: now,
-    updated_at: now,
   });
+  AppFS.writeUser('admin', 'smart_classroom_v1', { status: 'published', is_shared: true, updated_at: now });
 
-  const appId2 = DB.insert('apps', {
-    developer_username: 'admin',
-    app_key: 'homework_eval_v1',
+  AppFS.createUserApp('admin', 'homework_eval_v1', {
     name: '作业评测服务',
     version: '0.9.0',
     description: '课后作业自动评测与批改',
     category: '评测服务',
-    status: 'draft',
-    app_info_manifest: JSON.stringify({ name: '作业评测服务', version: '0.9.0', description: '课后作业自动评测与批改', category: '评测服务', author: 'admin', icon: 'ri-edit-line', tags: ['评测', '作业'] }),
+    app_info_manifest: { name: '作业评测服务', version: '0.9.0', description: '课后作业自动评测与批改', category: '评测服务', author: 'admin', icon: 'ri-edit-line', tags: ['评测', '作业'] },
     editor_html: '<div class="hw-editor"><h3>作业评测</h3><div id="hw-list"></div></div>',
     editor_js: '// 作业评测编辑器 JS（开发中）',
-    storage_manifest: JSON.stringify({ collections: [
+    storage_manifest: { collections: [
       { key: 'homeworks', name: '作业列表', description: '学生提交的作业', fields: [
         { key: 'student_name', name: '学生姓名', type: 'string', required: true },
         { key: 'score', name: '得分', type: 'number' },
         { key: 'submitted_at', name: '提交时间', type: 'string' },
         { key: 'content', name: '作答内容', type: 'text' },
       ] },
-    ] }),
-    interface_schema: JSON.stringify({ endpoints: [] }),
+    ] },
+    interface_schema: { endpoints: [] },
+    control_manifest: { enabled: false, protocolVersion: 1, supportedCommands: [], description: '' },
     created_at: now,
-    updated_at: now,
   });
-
-  // ===== 将 admin 的"智慧课堂云服务"标记为已共享，便于演示共享市场 =====
-  DB.update('apps', { is_shared: 1 }, 'id = ?', [appId1]);
 
   // ===== 共享市场示例：由另一位开发者共享的"AI 智能推荐"应用 =====
   const sharedAiAppInfo = JSON.stringify({
@@ -365,23 +360,20 @@ module.exports = function seed() {
     ],
   });
 
-  DB.insert('apps', {
-    developer_username: 'dev_ai',
-    app_key: 'ai_learning_path_v2',
+  AppFS.createUserApp('dev_ai', 'ai_learning_path_v2', {
     name: 'AI 学习路径推荐',
     version: '2.1.0',
     description: '基于学生学习数据的 AI 推荐服务，生成个性化学习路径',
     category: 'AI服务',
-    status: 'published',
-    is_shared: 1,
-    app_info_manifest: sharedAiAppInfo,
+    app_info_manifest: typeof sharedAiAppInfo === 'string' ? JSON.parse(sharedAiAppInfo) : sharedAiAppInfo,
     editor_html: '<div class="ai-recommend"><h3>AI 学习路径推荐</h3><div id="paths"></div><button onclick="window.AIRecommend.generate()">+ 生成新路径</button></div>',
     editor_js: '// AI 推荐编辑器 JS\nwindow.AIRecommend = {\n  async load() { const r = await window.CSES.listStorage("learning_paths"); console.log("paths:", r); },\n  async generate() { const sid = prompt("学生ID："); if(!sid) return; await window.CSES.saveStorage("learning_paths", { student_id: sid, subject: "数学", recommendations: [], confidence: 0.85, generated_at: new Date().toISOString() }); this.load(); }\n};\ndocument.addEventListener("DOMContentLoaded", () => window.AIRecommend.load());',
-    storage_manifest: sharedAiStorage,
-    interface_schema: JSON.stringify({ endpoints: [{ method: 'GET', path: '/api/instance-storage.php?action=list', description: '查询学习路径' }] }),
+    storage_manifest: typeof sharedAiStorage === 'string' ? JSON.parse(sharedAiStorage) : sharedAiStorage,
+    interface_schema: { endpoints: [{ method: 'GET', path: '/api/instance-storage.php?action=list', description: '查询学习路径' }] },
+    control_manifest: { enabled: false, protocolVersion: 1, supportedCommands: [], description: '' },
     created_at: now,
-    updated_at: now,
   });
+  AppFS.writeUser('dev_ai', 'ai_learning_path_v2', { status: 'published', is_shared: true, updated_at: now });
 
   // ===== 集控侧套餐示例（引用智慧课堂云服务） =====
   const samplePackageManifest = JSON.stringify({

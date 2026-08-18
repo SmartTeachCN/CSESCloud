@@ -1,11 +1,182 @@
 <div class="cses-editor">
+  <!-- 顶部工具栏 -->
   <div class="cses-toolbar">
-    <button class="cses-btn" onclick="formatJson()">格式化</button>
-    <button class="cses-btn" onclick="validateJson()">验证</button>
-    <button class="cses-btn" onclick="minifyJson()">压缩</button>
-    <button class="cses-btn primary" onclick="saveContent()">保存</button>
+    <div class="cses-brand">
+      <i class="ri-calendar-schedule-line"></i>
+      <span>CSES 编辑器</span>
+      <span class="cses-brand-sub">官方版</span>
+    </div>
+    <div class="cses-toolbar-spacer"></div>
+    <label class="cses-mode-label" title="输出文件格式">输出</label>
+    <select id="csesOutputMode" class="cses-select" onchange="onOutputModeChange()" title="输出文件格式">
+      <option value="cy">YAML</option>
+      <option value="cj">JSON</option>
+      <option value="ci">ClassIsland</option>
+      <option value="es">ExamSchedule</option>
+    </select>
   </div>
-  <div class="cses-status" id="csesStatus"></div>
-  <textarea id="csesTextarea" class="cses-textarea" spellcheck="false"></textarea>
-  <div class="cses-stats" id="csesStats"></div>
+
+  <!-- 主体区域 -->
+  <div class="cses-body">
+    <!-- 左栏：视图切换 + 列表 -->
+    <div class="cses-explorer">
+      <div class="cses-explorer-tabs">
+        <button class="cses-view-tab active" data-view="schedule" onclick="switchView('schedule')"><i class="ri-calendar-line"></i>课程表</button>
+        <button class="cses-view-tab" data-view="subject" onclick="switchView('subject')"><i class="ri-bookmark-line"></i>科目</button>
+        <button class="cses-view-tab" data-view="change" onclick="switchView('change')"><i class="ri-table-line"></i>表格视图</button>
+        <button class="cses-view-tab" data-view="source" onclick="switchView('source')"><i class="ri-file-code-line"></i>文件预览</button>
+      </div>
+      <div class="cses-explorer-header">
+        <span id="csesExplorerTitle">课程表</span>
+        <div class="cses-explorer-actions" id="csesExplorerActions">
+          <button class="cses-btn small" onclick="addSchedule()" title="新建课程表">+ 新建</button>
+        </div>
+      </div>
+      <div class="cses-explorer-list" id="csesExplorerList"></div>
+    </div>
+
+    <!-- 右栏：编辑区 -->
+    <div class="cses-editor-area">
+      <!-- 课程表编辑器 -->
+      <div class="cses-editor-view" id="cses-schedule-view">
+        <div class="cses-schedule-grid">
+          <div class="cses-field">
+            <label>周模式</label>
+            <select id="csesWeekMode" class="cses-select" onchange="onScheduleMetaChange('weeks', this.value)">
+              <option value="all">通用</option>
+              <option value="odd">单周</option>
+              <option value="even">双周</option>
+            </select>
+          </div>
+          <div class="cses-field">
+            <label>启用星期</label>
+            <select id="csesDayMode" class="cses-select" onchange="onScheduleMetaChange('enable_day', parseInt(this.value))">
+              <option value="1">星期一</option>
+              <option value="2">星期二</option>
+              <option value="3">星期三</option>
+              <option value="4">星期四</option>
+              <option value="5">星期五</option>
+              <option value="6">星期六</option>
+              <option value="7">星期日</option>
+            </select>
+          </div>
+          <div class="cses-field" id="csesDateFieldWrap">
+            <label>日期</label>
+            <input type="date" id="csesScheduleDate" class="cses-input" onchange="onScheduleMetaChange('date', this.value)" />
+          </div>
+          <div class="cses-field cses-name-field">
+            <label>名称</label>
+            <input type="text" id="csesScheduleName" class="cses-input" placeholder="课程表名称" onchange="onScheduleMetaChange('name', this.value)" />
+          </div>
+        </div>
+
+        <div class="cses-section-title">
+          <span>课程列表</span>
+          <div class="cses-section-actions">
+            <button class="cses-btn small" onclick="addClass()" title="添加课程">+ 添加课程</button>
+            <button class="cses-btn small" onclick="delClass()" title="删除选中课程">删除选中</button>
+          </div>
+        </div>
+        <div class="cses-class-list" id="csesClassList"></div>
+
+        <div class="cses-class-editor">
+          <div class="cses-field">
+            <label>科目</label>
+            <select id="csesCurrentSubject" class="cses-select" onchange="onClassField('subject', this.value)"></select>
+          </div>
+          <div class="cses-field">
+            <label>开始时间</label>
+            <input type="time" id="csesTimeStart" class="cses-input" onchange="onClassField('start_time', this.value)" />
+          </div>
+          <div class="cses-field">
+            <label>结束时间</label>
+            <input type="time" id="csesTimeEnd" class="cses-input" onchange="onClassField('end_time', this.value)" />
+          </div>
+          <div class="cses-field cses-ops-field">
+            <label>&nbsp;</label>
+            <div class="cses-ops-btns">
+              <button class="cses-btn small" onclick="moveClass(-1)" title="上移">上移</button>
+              <button class="cses-btn small" onclick="moveClass(1)" title="下移">下移</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="cses-schedule-ops">
+          <button class="cses-btn small" onclick="cloneSchedule()">复制课程表</button>
+          <button class="cses-btn small danger" onclick="delSchedule()">删除课程表</button>
+        </div>
+      </div>
+
+      <!-- 科目编辑器 -->
+      <div class="cses-editor-view" id="cses-subject-view" style="display:none">
+        <div class="cses-subject-card">
+          <div class="cses-section-title"><span>科目信息</span></div>
+          <div class="cses-subject-grid">
+            <div class="cses-field">
+              <label>科目名称 <span class="required">*</span></label>
+              <input type="text" id="csesSubjectName" class="cses-input" placeholder="例如：语文" />
+            </div>
+            <div class="cses-field">
+              <label>简称</label>
+              <input type="text" id="csesSubjectSimple" class="cses-input" maxlength="4" placeholder="例如：语" />
+            </div>
+            <div class="cses-field">
+              <label>任课老师</label>
+              <input type="text" id="csesSubjectTeacher" class="cses-input" placeholder="老师姓名" />
+            </div>
+            <div class="cses-field">
+              <label>教室</label>
+              <input type="text" id="csesSubjectRoom" class="cses-input" placeholder="上课教室" />
+            </div>
+          </div>
+          <div class="cses-subject-ops">
+            <button class="cses-btn primary" onclick="saveSubject()">保存科目</button>
+            <button class="cses-btn" onclick="addSubject()">新增科目</button>
+            <button class="cses-btn danger" onclick="delSubject()">删除科目</button>
+            <button class="cses-btn" onclick="fillDefaultSubjects()">填充默认科目</button>
+          </div>
+          <div class="cses-hint">左栏选中科目后可编辑；右键科目可删除。所有课程表引用此处的科目名称。</div>
+        </div>
+      </div>
+
+      <!-- 表格视图 -->
+      <div class="cses-editor-view" id="cses-change-view" style="display:none">
+        <div class="cses-change-toolbar">
+          <span>周类型</span>
+          <button class="cses-btn small change-mode-btn active" data-mode="odd" onclick="renderChangeTable('odd')">单周</button>
+          <button class="cses-btn small change-mode-btn" data-mode="even" onclick="renderChangeTable('even')">双周</button>
+          <button class="cses-btn small change-mode-btn" data-mode="all" onclick="renderChangeTable('all')">通用</button>
+          <span class="cses-change-hint">点击单元格可快速更换科目</span>
+        </div>
+        <div class="cses-change-wrap">
+          <table class="cses-change-table">
+            <thead>
+              <tr>
+                <th class="cses-change-corner"></th>
+                <th>星期一</th><th>星期二</th><th>星期三</th><th>星期四</th><th>星期五</th><th>星期六</th><th>星期日</th>
+              </tr>
+            </thead>
+            <tbody id="csesChangeBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 文件预览 -->
+      <div class="cses-editor-view" id="cses-source-view" style="display:none">
+        <div class="cses-source-toolbar">
+          <span>文件内容预览（只读，保存将写入此格式）</span>
+          <button class="cses-btn small" onclick="exportFile()">导出文件</button>
+          <button class="cses-btn small" onclick="copySource()">复制内容</button>
+        </div>
+        <textarea id="csesSourceOutput" class="cses-source-textarea" readonly spellcheck="false"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- 状态栏 -->
+  <div class="cses-statusbar">
+    <span class="cses-status-msg" id="csesStatus">就绪</span>
+    <span class="cses-status-spacer"></span>
+    <span class="cses-stats" id="csesStats"></span>
+  </div>
 </div>

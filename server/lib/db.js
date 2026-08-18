@@ -57,6 +57,7 @@ function ensureSchema() {
 
   // instances 表新增 app_id 列（关联 apps）
   addMissingColumn('instances', 'app_id', 'INTEGER');
+  addMissingColumn('instances', 'app_key', 'TEXT');
 
   // 实例所有者、唯一ID、组、配置（计划新增字段）
   addMissingColumn('instances', 'owner_user_id', 'INTEGER');
@@ -101,6 +102,12 @@ function ensureSchema() {
 
   // ea2_devices 设备备注
   addMissingColumn('ea2_devices', 'notes', "TEXT DEFAULT ''");
+  // ea2_devices 连接协议（poll=长REST轮询 / ws=WebSocket）
+  addMissingColumn('ea2_devices', 'protocol', "TEXT DEFAULT 'poll'");
+  // 上一次 REST 轮询时间（用于频率限制）
+  addMissingColumn('ea2_devices', 'last_poll_at', 'TEXT');
+  // 实例级 REST 轮询频率限制（秒，默认 300=5分钟）
+  addMissingColumn('instances', 'ea2_poll_interval_seconds', 'INTEGER NOT NULL DEFAULT 300');
 
   // 网页空间审查系统
   addMissingColumn('web_hosting_spaces', 'review_status', "TEXT NOT NULL DEFAULT 'published'");

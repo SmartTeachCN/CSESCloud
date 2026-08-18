@@ -1,4 +1,4 @@
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { authApi } from '../api';
 
 export interface CurrentUser {
@@ -24,6 +24,7 @@ export interface CurrentUser {
 
 const user = ref<CurrentUser | null>(null);
 const ready = ref(false);
+const isLoggedIn = computed(() => !!user.value);
 
 export function useAuth() {
   async function fetchMe(): Promise<CurrentUser | null> {
@@ -43,5 +44,5 @@ export function useAuth() {
     user.value = null;
   }
 
-  return { user, ready, fetchMe, clear };
+  return { user, ready, isLoggedIn, fetchMe, clear };
 }

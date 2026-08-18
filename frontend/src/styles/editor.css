@@ -237,6 +237,26 @@
   flex-direction: column;
 }
 
+.tab-close-btn {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: 2px;
+  margin-left: 2px;
+  padding: 0;
+}
+
+.tab-close-btn:hover {
+  background: var(--subtle-pressed);
+  color: var(--status-error);
+}
+
 /* 面板收起按钮 */
 .panel-collapse-btn {
   position: absolute;

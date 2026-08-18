@@ -138,6 +138,17 @@ try {
   console.warn('[dev-fs] 初始化跳过:', e.message);
 }
 
+// ── 回填现有实例的 app_key（从旧 apps 表映射） ──
+try {
+  const cnt = DB.update(
+    "UPDATE instances SET app_key = (SELECT a.app_key FROM apps a WHERE a.id = instances.app_id) WHERE app_key IS NULL AND app_id IS NOT NULL AND app_id > 0",
+    []
+  );
+  if (cnt.changes > 0) console.log(`[db] 已回填 ${cnt.changes} 个实例的 app_key`);
+} catch (e) {
+  console.warn('[db] app_key 回填跳过:', e.message);
+}
+
 // ── API 路由（/api/{path} 与 /api/{path}.php 均映射到 server/api/{path}.js） ──
 const apiRouter = express.Router();
 
@@ -175,6 +186,9 @@ apiRouter.all(/.*/, (req, res) => {
     });
 });
 app.use('/api', apiRouter);
+
+// ── 导出文件静态目录（/exports） ──
+app.use('/exports', express.static(path.join(ROOT, 'exports'), { fallthrough: true }));
 
 // ── 网页托管路由（/site/{slug}）——1:1 复刻 server.php ──
 app.get(/^\/site\/([a-z0-9-]+)(\/.*)?$/i, (req, res) => {
@@ -255,43 +269,42 @@ app.get(/^\/site\/([a-z0-9-]+)(\/.*)?$/i, (req, res) => {
 
   // 判断是否为审查中的待审核版本
   const isPending = file.review_status === 'pending_review';
-  // 审核中且非预览模式：使用已公开版本
+  // 审核中且非预览模式：仅显示已公开版本
   if (isPending && !previewMode) {
     const publishedContent = file.published_content;
-    if (publishedContent !== null && publishedContent !== undefined) {
-      const rawContent = Buffer.isBuffer(publishedContent) ? publishedContent : Buffer.from(publishedContent ?? '');
-      const contentLen = rawContent.length;
-      res.set('Content-Type', contentType + (isText ? '; charset=utf-8' : ''));
-      res.set('Cache-Control', 'public, max-age=300');
-      res.set('X-Review-Status', 'pending_review');
-      if (isText) {
-        // 为文本内容注入审查横幅
-        let html = rawContent.toString('utf8');
-        const updatedAt = file.updated_at || '';
-        const banner = `
+    const hasPublished = publishedContent !== null && publishedContent !== undefined;
+    const rawContent = hasPublished
+      ? (Buffer.isBuffer(publishedContent) ? publishedContent : Buffer.from(publishedContent))
+      : Buffer.from('');
+    const contentLen = rawContent.length;
+    res.set('Content-Type', contentType + (isText ? '; charset=utf-8' : ''));
+    res.set('Cache-Control', 'no-cache');
+    res.set('X-Review-Status', 'pending_review');
+    if (isText) {
+      let html = rawContent.toString('utf8');
+      const updatedAt = file.updated_at || '';
+      const bannerText = hasPublished
+        ? `&#x26A0; 已于 ${updatedAt} 编辑，新版本待管理员审查，当前显示已公开版本`
+        : `&#x26A0; 此页面尚未通过审查，暂无公开版本`;
+      const banner = `
 <!-- CSES Cloud Review Banner -->
 <div id="cses-review-banner" style="position:fixed;top:0;left:0;right:0;z-index:99999;background:linear-gradient(135deg,#fef3c7,#fde68a);border-bottom:2px solid #f59e0b;padding:10px 16px;text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;color:#92400e;box-shadow:0 2px 8px rgba(0,0,0,0.08)">
-  <span style="font-weight:600">&#x26A0; 已于 ${updatedAt} 编辑，新版本待管理员审查</span>
-  <span style="margin:0 8px;color:#d97706">|</span>
-  <span>当前版本修改时间：${updatedAt}</span>
-  <span style="margin:0 8px;color:#d97706">|</span>
-  <a href="?preview=1" style="color:#b45309;font-weight:600;text-decoration:underline">查看最新版本（仅编辑者）</a>
+  <span style="font-weight:600">${bannerText}</span>
+  ${hasPublished ? `<span style="margin:0 8px;color:#d97706">|</span><span>当前版本修改时间：${updatedAt}</span><span style="margin:0 8px;color:#d97706">|</span><a href="?preview=1" style="color:#b45309;font-weight:600;text-decoration:underline">查看最新版本（仅编辑者）</a>` : ''}
 </div>
 <script>document.body.style.marginTop=(document.getElementById('cses-review-banner')?.offsetHeight||44)+'px';</script>`;
-        // 插入到 </head> 之前或 <body> 之后
-        if (html.includes('</head>')) {
-          html = html.replace('</head>', '<style>body{margin-top:44px}</style></head>');
-        } else if (html.includes('<body')) {
-          html = html.replace(/<body[^>]*>/, '$&' + banner);
-        } else {
-          html = banner + html;
-        }
-        res.end(html);
+      if (html.includes('</head>')) {
+        html = html.replace('</head>', '<style>body{margin-top:44px}</style></head>');
+      } else if (html.includes('<body')) {
+        html = html.replace(/<body[^>]*>/, '$&' + banner);
       } else {
-        res.end(rawContent);
+        html = banner + html;
       }
-      return;
+      res.end(html);
+    } else {
+      res.end(rawContent);
     }
+    return;
   }
 
   // 使用最新内容（已发布或预览模式）
@@ -344,6 +357,17 @@ app.use((req, res, next) => {
   res.send('CSES Cloud API Server\n开发模式：前端由 Vite 开发服务器提供，请通过 Vite 端口访问\n');
 });
 
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
   console.log(`CSES Cloud API Server (NodeJS) listening on http://${HOST}:${PORT}`);
 });
+
+// ── 通用 WebSocket 设备控制网关 ──
+try {
+  const { attach } = require('./lib/ws-control');
+  const wsControl = attach(server);
+  wsControl.setDB(DB); // 注入数据库
+  global.wsControl = wsControl; // 供 rest-control 等 API 层访问
+  console.log('[ws-control] 已注入 DB 并挂载 WS 网关');
+} catch (e) {
+  console.warn('[ws-control] WebSocket 网关启动失败:', e.message);
+}

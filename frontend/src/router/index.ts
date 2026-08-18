@@ -222,6 +222,18 @@ const routes = [
         name: 'AdminWebHosting',
         component: () => import('../views/admin/AdminPanel.vue'),
         meta: { title: '网页空间', icon: 'ri-global-line' }
+      },
+      {
+        path: 'admin/dataspace',
+        name: 'AdminDataSpace',
+        component: () => import('../views/admin/AdminPanel.vue'),
+        meta: { title: '数据空间', icon: 'ri-hard-drive-2-line' }
+      },
+      {
+        path: 'admin/help',
+        name: 'AdminHelp',
+        component: () => import('../views/admin/AdminPanel.vue'),
+        meta: { title: '帮助中心', icon: 'ri-book-open-line' }
       }
     ]
   }

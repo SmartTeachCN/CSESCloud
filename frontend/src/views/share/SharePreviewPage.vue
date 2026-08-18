@@ -96,7 +96,7 @@ import { useAuth } from '../../composables/useAuth';
 
 const route = useRoute();
 const router = useRouter();
-const { user, isLoggedIn } = useAuth();
+const { user, isLoggedIn, fetchMe } = useAuth();
 
 const loading = ref(true);
 const error = ref('');
@@ -197,8 +197,10 @@ function goToResource() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   if (token.value) {
+    // 先拉取用户信息（分享页路由 requiresAuth: false，导航守卫不会自动调用 fetchMe）
+    await fetchMe();
     loadShare();
   } else {
     error.value = '缺少分享 token';

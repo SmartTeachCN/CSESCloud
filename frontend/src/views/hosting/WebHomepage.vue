@@ -1,5 +1,5 @@
 <template>
-  <div class="web-homepage">
+  <div class="web-homepage" :class="{ immersive }">
     <!-- 左侧导航栏 -->
     <aside class="homepage-sidebar">
       <div class="sidebar-brand">
@@ -101,6 +101,11 @@
             :editor-info="activeTab ? { title: activeTab.name, type: activeTab.type, icon: fileIcon(activeTab.path), lastUpdated: activeTab.data?.updated_at || '', lastEditor: '', editButtonLabel: '重命名' } : { title: '文件管理', type: 'Web Hosting', icon: 'ri-folder-open-line', editButtonLabel: '新建文件' }"
             :saving="saving"
             :is-instance="false"
+            :show-view-ribbon="true"
+            :manifest="ribbonManifest"
+            :system-right-tools="systemRightTools"
+            :system-right-selected-tool="isSourceView ? 'toggle-view' : ''"
+            :selected-tool="immersive ? 'immersive' : ''"
             :can-undo="!!activeTab"
             :can-redo="!!activeTab"
             :can-save="!!activeTab"
@@ -119,6 +124,56 @@
             @autosize-change="onAutoSaveChange"
             @edit-click="activeFilePanel = 'props'"
           />
+
+          <!-- 标签页（在 Ribbon 下方） -->
+          <div class="editor-tabs-row" v-if="hostingEditorTabs.length > 0">
+            <div class="editor-tabs">
+              <div
+                v-for="(tab, gi) in hostingEditorTabs"
+                :key="tab.id"
+                class="editor-tab"
+                :class="{ active: tab.id === (activeTab?.path || ''), dirty: tab.dirty }"
+                @click="switchTab(tab.id)"
+                @contextmenu.prevent="onOpenTabMenu(tab.id, $event)"
+                draggable="true"
+                @dragstart="onTabDragStart(gi, $event)"
+                @dragover.prevent="onTabDragOver(gi)"
+                @drop="onTabDrop"
+                @dragend="onTabDragEnd"
+              >
+                <Icon :icon="tab.icon" :size="14" class="tab-icon" />
+                <span class="tab-title" :title="tab.name">{{ tab.name }}</span>
+                <span v-if="tab.dirty" class="dirty-dot"></span>
+                <button class="tab-close" @click.stop="closeTab(tab.id)" title="关闭">
+                  <Icon icon="ri-close-line" :size="12" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 标签右键菜单 -->
+          <Teleport to="body">
+            <div v-if="tabCtx.menu.visible" class="tab-menu-overlay" @click="tabCtx.close" @contextmenu.prevent="tabCtx.close">
+              <div class="tab-menu" :style="{ left: tabCtx.menu.x + 'px', top: tabCtx.menu.y + 'px' }">
+                <button class="tm-item" @click="tabCtx.run('close')">
+                  <Icon icon="ri-close-line" :size="14" /> 关闭
+                </button>
+                <div class="tm-divider"></div>
+                <button class="tm-item" @click="tabCtx.run('closeAll')">
+                  <Icon icon="ri-close-circle-line" :size="14" /> 关闭所有标签
+                </button>
+                <button class="tm-item" @click="tabCtx.run('closeOthers')">
+                  <Icon icon="ri-file-close-line" :size="14" /> 关闭其他标签
+                </button>
+                <button class="tm-item" @click="tabCtx.run('closeLeft')">
+                  <Icon icon="ri-arrow-left-s-line" :size="14" /> 关闭左侧标签
+                </button>
+                <button class="tm-item" @click="tabCtx.run('closeRight')">
+                  <Icon icon="ri-arrow-right-s-line" :size="14" /> 关闭右侧标签
+                </button>
+              </div>
+            </div>
+          </Teleport>
 
           <div class="immersion-body">
             <!-- 文件树 -->
@@ -180,10 +235,14 @@
                     :tabs="hostingEditorTabs"
                     :active-tab-id="activeTabPath"
                     :read-only="false"
+                    :show-source="isSourceView"
+                    :hide-tabs="true"
                     @tab-click="switchTab"
                     @tab-close="closeTab"
                     @update:content="onContentUpdate"
                     @plugin-save="onPluginSave"
+                    @plugin-change="onEditorPluginChange"
+                    @plugin-ribbon="onPluginRibbon"
                     @monaco-save="saveCurrentTab"
                     @monaco-find="openFilePanel('find')"
                     @monaco-replace="openFilePanel('find')"
@@ -427,6 +486,7 @@ import { ref, computed, onMounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { hostingApi } from '../../api';
 import { useAuth } from '../../composables/useAuth';
+import { useTabContextMenu } from '../../composables/useTabContextMenu';
 import RibbonToolbar from '../../components/editor/RibbonToolbar.vue';
 import EditorPane from '../../components/editor/EditorPane.vue';
 import type { TabInfo } from '../../components/editor/EditorPane.vue';
@@ -819,6 +879,51 @@ function closeTab(path: string) {
   }
 }
 
+// ===== 标签页右键菜单 + 拖动排序 =====
+const tabCtx = useTabContextMenu({
+  getTabs: () => openTabs.value,
+  getActiveId: () => activeTabPath.value,
+  setActive: (id) => { activeTabPath.value = id; },
+  removeTabs: (ids) => removeTabsBulk(ids),
+  saveActive: saveTabActive,
+});
+function onOpenTabMenu(id: string, e: MouseEvent) { tabCtx.open(id, e); }
+
+function removeTabsBulk(ids: string[]) {
+  const idSet = new Set(ids);
+  const hadActive = activeTabPath.value && idSet.has(activeTabPath.value);
+  const prevIdx = activeTabPath.value ? openTabs.value.findIndex(t => t.path === activeTabPath.value) : -1;
+  openTabs.value = openTabs.value.filter(t => !idSet.has(t.path));
+  if (hadActive) {
+    if (openTabs.value.length === 0) {
+      activeTabPath.value = '';
+    } else {
+      const idx = Math.min(prevIdx, openTabs.value.length - 1);
+      activeTabPath.value = (openTabs.value[Math.max(0, idx)] || openTabs.value[0]).path;
+    }
+  }
+}
+
+async function saveTabActive(): Promise<boolean> {
+  if (!activeTab.value) return false;
+  await saveCurrentTab();
+  return true;
+}
+
+// 拖动排序
+let dragTabIdx = -1;
+function onTabDragStart(i: number, e: DragEvent) { dragTabIdx = i; if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; }
+function onTabDragOver(i: number) {
+  if (dragTabIdx < 0 || dragTabIdx === i) return;
+  const arr = [...openTabs.value];
+  const [item] = arr.splice(dragTabIdx, 1);
+  arr.splice(i, 0, item);
+  openTabs.value = arr;
+  dragTabIdx = i;
+}
+function onTabDrop() { dragTabIdx = -1; }
+function onTabDragEnd() { dragTabIdx = -1; }
+
 async function saveCurrentTab() {
   const tab = activeTab.value;
   if (!tab || !tab.isText || saving.value) return;
@@ -838,15 +943,60 @@ async function saveCurrentTab() {
   }
 }
 
+// ===== 正式化编辑 Ribbon：插件“靠左”Ribbon + 系统“靠右”Ribbon =====
+const editorPlugin = ref<any>(null);
+const dynamicPluginRibbon = ref<any[] | undefined>(undefined);
+const isSourceView = ref(false);
+const immersive = ref(false);
+function onEditorPluginChange(plugin: any) {
+  editorPlugin.value = plugin;
+  dynamicPluginRibbon.value = plugin?.ribbon ? [...plugin.ribbon] : undefined;
+  isSourceView.value = false;
+}
+function onPluginRibbon(groups: any[]) {
+  dynamicPluginRibbon.value = groups;
+}
+const ribbonManifest = computed(() => dynamicPluginRibbon.value);
+const systemRightTools = computed(() => {
+  if (!editorPlugin.value) return [];
+  return [
+    { id: 'reload', label: '重载编辑器', icon: 'ri-refresh-line', command: 'reload' },
+    { id: 'toggle-view', label: isSourceView.value ? '可视化编辑器' : '查看源文件', icon: isSourceView.value ? 'ri-eye-line' : 'ri-code-box-line', type: 'select', command: 'toggle-view' },
+  ];
+});
+
 // ===== Ribbon 回调 =====
 function onRibbonTool(tool: any) {
   if (tool.command === 'find') openFilePanel('find');
+  else if (tool.command === 'replace') openFilePanel('find');
+  else if (tool.command === 'goto') editorPaneRef.value?.gotoLine();
   else if (tool.command === 'history') openFilePanel('history');
   else if (tool.command === 'version') openFilePanel('version');
   else if (tool.command === 'share') { if (activeTab.value) showShareDialog.value = true; }
   else if (tool.command === 'import') handleImport();
   else if (tool.command === 'export') handleExport();
   else if (tool.command === 'fullscreen') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+  else if (tool.command === 'immersive') immersive.value = !immersive.value;
+  else if (tool.command === 'refresh') handleRibbonRefresh();
+  else if (tool.command === 'reload') editorPaneRef.value?.reloadPlugin();
+  else if (tool.command === 'toggle-view') isSourceView.value = !isSourceView.value;
+  else if (editorPlugin.value && tool.command) {
+    // 插件自定义 Ribbon 命令 → 转发给插件 iframe
+    editorPaneRef.value?.sendCommand?.(tool.command);
+  }
+}
+async function handleRibbonRefresh() {
+  const tab = activeTab.value;
+  if (!tab) return;
+  if (tab.dirty && !confirm('刷新将丢弃未保存的内容，是否继续？')) return;
+  try {
+    const data = await hostingApi.getFile(tab.path);
+    tab.content = data.content || '';
+    tab.dirty = false;
+    editorPaneRef.value?.setValue(tab.content);
+  } catch (e: any) {
+    showToast('error', '刷新失败: ' + (e.message || '未知错误'));
+  }
 }
 function onAutoSaveChange(v: boolean) { autoSave.value = v; }
 
@@ -1105,8 +1255,6 @@ onMounted(async () => {
 .right-tab:hover { color: var(--text-primary); }
 .right-tab.active { color: var(--text-primary); border-bottom-color: var(--accent-base); font-weight: 500; }
 .right-tab.add-tab { padding: var(--spacer-2) var(--spacer-2); border-left: 1px solid var(--divider-stroke); }
-.tab-close-btn { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; border-radius: 2px; margin-left: 2px; }
-.tab-close-btn:hover { background: var(--subtle-pressed); color: var(--status-error); }
 
 /* 面板选择器 */
 .panel-picker { position: absolute; top: 100%; right: 0; min-width: 160px; background: var(--flyout-bg); border: 1px solid var(--flyout-border); border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(0,0,0,0.15); z-index: 100; padding: var(--spacer-1); }
@@ -1222,4 +1370,52 @@ onMounted(async () => {
   color: #d97706;
   font-weight: 500;
 }
+
+/* ===== 标签栏（Ribbon 下方） ===== */
+.editor-tabs-row {
+  display: flex; align-items: center;
+  background: var(--ctrl-fill-default);
+  border-bottom: 1px solid var(--divider-stroke);
+  padding: 0 var(--spacer-2);
+  flex-shrink: 0; overflow: hidden;
+}
+.editor-tabs { display: flex; align-items: center; gap: var(--spacer-1); flex: 1; overflow-x: auto; scrollbar-width: thin; padding: var(--spacer-1) 0; }
+.editor-tab {
+  display: inline-flex; align-items: center; gap: var(--spacer-1);
+  padding: var(--spacer-1) var(--spacer-3);
+  background: var(--subtle-secondary); border: 1px solid transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  font-size: var(--font-size-sm); color: var(--text-secondary); cursor: pointer;
+  white-space: nowrap; margin-bottom: -1px; user-select: none;
+}
+.editor-tab:hover { background: var(--subtle-pressed); color: var(--text-primary); }
+.editor-tab.active { background: var(--ctrl-fill-default); border-color: var(--divider-stroke); border-bottom-color: transparent; color: var(--text-primary); font-weight: 500; }
+.editor-tab .tab-icon { flex-shrink: 0; color: var(--text-tertiary); }
+.editor-tab.active .tab-icon { color: var(--accent-base); }
+.editor-tab .tab-title { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+.dirty-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--status-warning); flex-shrink: 0; }
+.tab-close { height: 18px; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; border-radius: var(--radius-full); color: var(--text-tertiary); cursor: pointer; font-size: 14px; line-height: 1; flex-shrink: 0; margin-left: 2px; }
+.tab-close:hover { background: var(--subtle-pressed); color: var(--text-primary); }
+.editor-tab[draggable='true'] { cursor: grab; }
+.editor-tab[draggable='true']:active { cursor: grabbing; }
+
+/* ===== 标签右键菜单 ===== */
+.tab-menu-overlay { position: fixed; inset: 0; z-index: 2000; }
+.tab-menu {
+  position: fixed; min-width: 168px;
+  background: var(--flyout-bg); border: 1px solid var(--flyout-border);
+  border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  padding: var(--spacer-1); z-index: 2001;
+}
+.tm-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: var(--spacer-2) var(--spacer-3); border: none; background: transparent; color: var(--text-primary); font-size: var(--font-size-sm); cursor: pointer; border-radius: var(--radius-sm); text-align: left; }
+.tm-item:hover { background: var(--subtle-secondary); }
+.tm-divider { height: 1px; background: var(--divider-stroke); margin: var(--spacer-1) 0; }
+
+/* ===== 沉浸模式 ===== */
+.web-homepage.immersive .homepage-sidebar { display: none; }
+.web-homepage.immersive .content-immersive { padding: 0; }
+.web-homepage.immersive .files-immersion .editor-tabs-row { display: none; }
+.web-homepage.immersive .files-immersion .immersion-body .file-tree-panel { display: none; }
+.web-homepage.immersive .files-immersion .immersion-body .editor-splitter { display: none; }
+.web-homepage.immersive .files-immersion .immersion-body .right-panel { display: none; }
 </style>

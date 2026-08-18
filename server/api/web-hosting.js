@@ -388,7 +388,8 @@ function listFiles(ctx, username) {
 
   const files = DB.all(
     "SELECT id, space_id, file_path, file_size, content_type, review_status, is_directory, created_at, updated_at \
-     FROM web_hosting_files WHERE space_id = ? ORDER BY file_path ASC",
+     FROM web_hosting_files WHERE space_id = ? AND file_path NOT LIKE '/.published%' \
+     ORDER BY file_path ASC",
     [spaceId]
   );
 
@@ -455,6 +456,11 @@ function saveFile(ctx, username) {
 
   if (filePath === '/') {
     Response.error('不能保存到根路径');
+  }
+
+  // 禁止编辑 /.published/ 目录下的已公开版本文件
+  if (filePath.startsWith('/.published')) {
+    Response.error('已公开版本文件不可编辑，仅可查看或删除');
   }
 
   const space = ensureSpace(ctx, username);
@@ -662,6 +668,11 @@ function uploadFile(ctx, username) {
 
   const name = phpBasename(file.name);
   const targetPath = normalizePath(String(dir).replace(/\/+$/, '') + '/' + name);
+
+  // 禁止上传到 /.published/ 目录
+  if (targetPath.startsWith('/.published')) {
+    Response.error('已公开版本文件不可编辑，仅可查看或删除');
+  }
 
   const space = ensureSpace(ctx, username);
   const spaceId = space.id;

@@ -1,0 +1,124 @@
+<div class="csn-editor">
+  <!-- 顶部标签 -->
+  <div class="csn-tabs">
+    <button class="csn-tab active" data-panel="schedule">课程表</button>
+    <button class="csn-tab" data-panel="courselib">课程库</button>
+    <button class="csn-tab" data-panel="timetable">时间表</button>
+  </div>
+
+  <!-- Ribbon 工具栏 -->
+  <div class="csn-ribbon">
+    <div class="csn-ribbon-group csn-ribbon-global">
+      <div class="csn-status" id="csn-status"></div>
+    </div>
+    <div class="csn-ribbon-group" id="csn-ribbon-schedule" style="display:flex;">
+      <button class="csn-btn" id="csn-add-course" title="添加课程"><i class="ri-add-line"></i><span>添加课程</span></button>
+      <button class="csn-btn" id="csn-preset-courses" title="加载预设课程"><i class="ri-magic-line"></i><span>预设</span></button>
+      <button class="csn-btn" id="csn-clear-schedule" title="清空课表"><i class="ri-delete-bin-line"></i><span>清空课表</span></button>
+      <button class="csn-btn" id="csn-export-schedule" title="导出课表"><i class="ri-download-line"></i><span>导出</span></button>
+      <span class="csn-sep"></span>
+      <span class="csn-label">当列时间表</span>
+      <select class="csn-select" id="csn-day-timetable">
+        <option value="">-- 选择时间表 --</option>
+      </select>
+    </div>
+    <div class="csn-ribbon-group" id="csn-ribbon-timetable" style="display:none;">
+      <button class="csn-btn" id="csn-add-period" title="添加节次"><i class="ri-add-line"></i><span>添加节次</span></button>
+      <button class="csn-btn" id="csn-add-timetable" title="新建时间表"><i class="ri-file-add-line"></i><span>新建时间表</span></button>
+      <button class="csn-btn danger" id="csn-delete-timetable" title="删除时间表"><i class="ri-delete-bin-line"></i><span>删除</span></button>
+    </div>
+    <div class="csn-ribbon-group" id="csn-ribbon-courselib" style="display:none;">
+      <button class="csn-btn" id="csn-lib-add-course" title="添加课程"><i class="ri-add-line"></i><span>添加课程</span></button>
+      <button class="csn-btn danger" id="csn-lib-batch-del" title="批量删除" disabled><i class="ri-delete-bin-line"></i><span>批量删除</span></button>
+      <span class="csn-sep"></span>
+      <span class="csn-label">搜索</span>
+      <input type="text" class="csn-search" id="csn-lib-search" placeholder="输入课程名称...">
+    </div>
+    <div class="csn-ribbon-right">
+      <div class="csn-editing-card" id="csn-editing-card" title="当前编辑区域">
+        <i class="ri-pencil-line"></i><span id="csn-editing-text"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 编辑区域选择栏 -->
+  <div class="csn-editing-bar" id="csn-editing-bar">
+    <span class="csn-ea-label">编辑区域：</span>
+    <div class="csn-chips" id="csn-chips"></div>
+  </div>
+
+  <!-- 课程表面板 -->
+  <div class="csn-panel active" id="csn-panel-schedule">
+    <div class="csn-layout">
+      <div class="csn-main">
+        <div class="csn-grid-wrap"><div class="csn-grid" id="csn-grid"></div></div>
+      </div>
+      <div class="csn-library" id="csn-library">
+        <div class="csn-library-header">
+          <span><i class="ri-book-open-line"></i> 课程库</span>
+          <button class="csn-lib-add" id="csn-library-add" title="添加课程"><i class="ri-add-line"></i></button>
+        </div>
+        <div class="csn-library-list" id="csn-library-list"></div>
+      </div>
+    </div>
+    <div class="csn-view-bar">
+      <span class="csn-vt-label">视图：</span>
+      <button class="csn-vt active" data-mode="full">完整视图</button>
+      <button class="csn-vt" data-mode="compact">轮换视图</button>
+      <span class="csn-vt-sep"></span>
+      <span class="csn-vt-label">当前轮换周</span>
+      <div class="csn-rot" id="csn-rot-selector"></div>
+    </div>
+  </div>
+
+  <!-- 课程库面板 -->
+  <div class="csn-panel" id="csn-panel-courselib">
+    <div class="csn-courselib-layout">
+      <div class="csn-courselib-toolbar">
+        <span class="csn-courselib-count" id="csn-courselib-count"></span>
+        <span style="flex:1"></span>
+        <button class="csn-btn" id="csn-sel-all"><i class="ri-checkbox-line"></i> 全选</button>
+        <button class="csn-btn danger" id="csn-sel-del" disabled><i class="ri-delete-bin-line"></i> 删除选中</button>
+      </div>
+      <div class="csn-courselib-grid" id="csn-courselib-grid"></div>
+    </div>
+  </div>
+
+  <!-- 时间表面板 -->
+  <div class="csn-panel" id="csn-panel-timetable">
+    <div class="csn-tt-layout">
+      <div class="csn-tt-sidebar">
+        <div class="csn-tt-sidebar-header"><span><i class="ri-time-line"></i> 时间表列表</span></div>
+        <div class="csn-tt-list" id="csn-tt-list"></div>
+      </div>
+      <div class="csn-tt-main">
+        <div class="csn-tt-empty" id="csn-tt-empty"><i class="ri-calendar-check-line"></i><p>选择或新建一个时间表开始编辑</p></div>
+        <div class="csn-tt-editor" id="csn-tt-editor" style="display:none;">
+          <div class="csn-tt-editor-header">
+            <input type="text" id="csn-tt-name" class="csn-tt-name" placeholder="时间表名称">
+            <button class="csn-btn primary" id="csn-tt-save"><i class="ri-save-line"></i> 保存</button>
+          </div>
+          <div class="csn-tt-periods">
+            <div class="csn-period-header">
+              <span class="csn-ph-name">节次名称</span><span class="csn-ph-time">开始时间</span><span class="csn-ph-time">结束时间</span><span class="csn-ph-actions">操作</span>
+            </div>
+            <div class="csn-period-list" id="csn-period-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 弹窗 -->
+  <div class="csn-modal hidden" id="csn-modal">
+    <div class="csn-modal-overlay" id="csn-modal-overlay"></div>
+    <div class="csn-modal-content">
+      <div class="csn-modal-header"><span id="csn-modal-title"></span><button id="csn-modal-close" class="csn-modal-close"><i class="ri-close-line"></i></button></div>
+      <div class="csn-modal-body" id="csn-modal-body"></div>
+      <div class="csn-modal-footer"><button class="csn-btn" id="csn-modal-cancel">取消</button><button class="csn-btn primary" id="csn-modal-save">保存</button></div>
+    </div>
+  </div>
+
+  <!-- 右键菜单 -->
+  <div class="csn-ctx hidden" id="csn-ctx"></div>
+</div>

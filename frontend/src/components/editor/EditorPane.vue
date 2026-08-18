@@ -32,22 +32,16 @@
 
       <!-- 插件编辑器 -->
       <PluginEditorFrame
-        v-else-if="activePlugin"
+        v-else-if="activePlugin && !showSource"
+        :key="pluginReloadKey"
         ref="pluginEditorRef"
         :plugin="activePlugin"
         :file-info="pluginFileInfo"
         @ready="onPluginReady"
         @save="onPluginSave"
         @notify="onPluginNotify"
+        @set-ribbon="onPluginSetRibbon"
       />
-
-      <!-- 非文本文件预览 -->
-      <div v-else-if="!activeTab.isText" class="ep-binary">
-        <Icon icon="ri-file-image-line" :size="48" />
-        <p>无法预览此文件类型</p>
-        <span>{{ activeTab.name }}</span>
-        <slot name="binary-actions" :tab="activeTab"></slot>
-      </div>
 
       <!-- Diff 差异查看器 -->
       <div v-else-if="activeTab.isDiff" class="ep-diff-viewer">
@@ -72,6 +66,14 @@
             <span class="diff-row-text">{{ line.text }}</span>
           </div>
         </div>
+      </div>
+
+      <!-- 非文本文件预览 -->
+      <div v-else-if="!activeTab.isText" class="ep-binary">
+        <Icon icon="ri-file-image-line" :size="48" />
+        <p>无法预览此文件类型</p>
+        <span>{{ activeTab.name }}</span>
+        <slot name="binary-actions" :tab="activeTab"></slot>
       </div>
 
       <!-- Monaco 代码编辑器 -->
@@ -118,6 +120,8 @@ const props = defineProps<{
   activeTabId: string;
   readOnly?: boolean;
   hideTabs?: boolean;
+  /** 强制显示源文件（跳过插件可视化编辑器，用 Monaco 展示原始内容） */
+  showSource?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -128,23 +132,26 @@ const emit = defineEmits<{
   (e: 'monaco-save'): void;
   (e: 'monaco-find'): void;
   (e: 'monaco-replace'): void;
+  (e: 'plugin-change', plugin: any | null): void;
+  (e: 'plugin-ribbon', groups: any[]): void;
 }>();
 
 const activePlugin = ref<any>(null);
 const pluginEditorRef = ref<InstanceType<typeof PluginEditorFrame> | null>(null);
 const monacoEditorRef = ref<InstanceType<typeof MonacoEditor> | null>(null);
+const pluginReloadKey = ref(0);
 
 // 暴露方法给父组件
 defineExpose({
   undo: () => {
-    if (activePlugin.value) {
+    if (activePlugin.value && !props.showSource) {
       pluginEditorRef.value?.postMessage?.({ type: 'command', command: 'undo' });
     } else {
       monacoEditorRef.value?.undo();
     }
   },
   redo: () => {
-    if (activePlugin.value) {
+    if (activePlugin.value && !props.showSource) {
       pluginEditorRef.value?.postMessage?.({ type: 'command', command: 'redo' });
     } else {
       monacoEditorRef.value?.redo();
@@ -155,13 +162,22 @@ defineExpose({
     return monacoEditorRef.value?.getValue() || '';
   },
   setValue: (v: string) => {
-    if (!activePlugin.value) monacoEditorRef.value?.setValue(v);
+    if (!activePlugin.value || props.showSource) monacoEditorRef.value?.setValue(v);
   },
   focus: () => monacoEditorRef.value?.focus(),
   sendCommand: (cmd: string, data?: any) => {
-    if (activePlugin.value) {
-      pluginEditorRef.value?.postMessage?.({ type: 'command', command: cmd, data });
+    if (activePlugin.value && !props.showSource) {
+      // 向插件 iframe 发送平台命令（如 save / undo / redo / find / replace）
+      pluginEditorRef.value?.pluginFrame?.contentWindow?.postMessage({ __ceseCommand: cmd, ...(data || {}) }, '*');
     }
+  },
+  /** 重载当前插件编辑器（强制重新挂载 iframe） */
+  reloadPlugin: () => {
+    pluginReloadKey.value++;
+  },
+  /** 打开 Monaco 原生“转到行” */
+  gotoLine: () => {
+    monacoEditorRef.value?.gotoLine();
   },
 });
 
@@ -185,13 +201,19 @@ const pluginFileInfo = computed(() => ({
 // 当 activeTab 变化时解析插件
 watch(() => props.activeTabId, async (newId) => {
   activePlugin.value = null;
+  pluginReloadKey.value++;
   const tab = props.tabs.find(t => t.id === newId);
-  if (!tab || !tab.ext) return;
+  if (!tab || !tab.ext) {
+    emit('plugin-change', null);
+    return;
+  }
   try {
     const plugin = await pluginApi.resolver(tab.ext);
     activePlugin.value = plugin;
   } catch {
     activePlugin.value = null;
+  } finally {
+    emit('plugin-change', activePlugin.value);
   }
 }, { immediate: true });
 
@@ -211,6 +233,10 @@ function onPluginSave(content: string) {
 
 function onPluginNotify(msg: string) {
   console.log('[EditorPane] plugin notify:', msg);
+}
+
+function onPluginSetRibbon(groups: any[]) {
+  emit('plugin-ribbon', groups);
 }
 </script>
 

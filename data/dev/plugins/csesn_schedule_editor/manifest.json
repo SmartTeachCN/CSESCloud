@@ -1,0 +1,15 @@
+{
+  "plugin_key": "csesn_schedule_editor",
+  "name": "课表编辑器",
+  "version": "1.0.0",
+  "description": "课表编排和结构化编辑器，移植自 OrbiTeach 课表方案。支持课程库、拖放式课表网格、多时间表管理、单/双/多周轮换、学期周次计算与课表导出。注册 .csesn 后缀。",
+  "extensions": [
+    "csesn"
+  ],
+  "icon": "ri-calendar-schedule-line",
+  "status": "published",
+  "developer_username": "system",
+  "is_official": true,
+  "created_at": "2026-08-18 20:00:00",
+  "updated_at": "2026-08-18 20:00:00"
+}

@@ -2,177 +2,336 @@
   <div class="service-list">
     <div class="page-header">
       <div class="page-header-left">
-        <h1 class="page-title">服务管理</h1>
-        <p class="page-description">管理后端微服务的运行状态与健康检查</p>
+        <h1 class="page-title">服务概览</h1>
+        <p class="page-description">服务器后端运行概况与各功能服务的实时状态</p>
       </div>
       <div class="page-header-right">
-        <div class="search-bar">
-          <input type="text" v-model="searchQuery" placeholder="搜索服务..." />
+        <div class="meta-status">
+          <span class="live-dot"></span>
+          <span>自动刷新 · 每 15 秒</span>
         </div>
-        <button class="btn btn-primary" @click="refreshAll">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+        <button class="btn btn-primary" @click="load" :disabled="loading">
+          <svg v-if="loading" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" class="spinning">
+            <path d="M8 1.5C8 1.22386 8.22386 1 8.5 1C12.6421 1 16 4.35786 16 8.5C16 12.6421 12.6421 16 8.5 16C4.35786 16 1 12.6421 1 8.5C1 8.22386 1.22386 8 1.5 8C1.77614 8 2 8.22386 2 8.5C2 12.0817 4.91828 15 8.5 15C12.0817 15 15 12.0817 15 8.5C15 4.91828 12.0817 2 8.5 2C8.22386 2 8 1.77614 8 1.5Z" />
+          </svg>
+          <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 2C4.68623 2 2 4.68623 2 8C2 11.3138 4.68623 14 8 14C11.3138 14 14 11.3138 14 8C14 4.68623 11.3138 2 8 2ZM8 3C10.7614 3 13 5.23858 13 8C13 10.7614 10.7614 13 8 13C5.23858 13 3 10.7614 3 8C3 5.23858 5.23858 3 8 3ZM7.5 4.5C7.22386 4.5 7 4.72386 7 5V8.5C7 8.77614 7.22386 9 7.5 9H10.5C10.7761 9 11 8.77614 11 8.5C11 8.22386 10.7761 8 10.5 8H8V5C8 4.72386 7.77614 4.5 7.5 4.5Z" />
           </svg>
-          全部刷新
+          刷新
         </button>
       </div>
     </div>
 
-    <div class="service-stats">
-      <div class="stat-card" v-for="stat in stats" :key="stat.label">
-        <div class="stat-value" :style="{ color: stat.color }">{{ stat.value }}</div>
-        <div class="stat-label">{{ stat.label }}</div>
-      </div>
+    <div v-if="error" class="error-banner">
+      <Icon icon="ri-alert-line" :size="16" />
+      <span>{{ error }}</span>
     </div>
 
-    <div class="service-grid">
-      <div
-        v-for="service in filteredServices"
-        :key="service.id"
-        class="service-card"
-      >
-        <div class="card-header">
-          <div class="service-icon" :style="{ background: service.color }">
-            <Icon :icon="service.icon" :size="22" />
+    <!-- 服务器资源 -->
+    <section class="section">
+      <div class="section-title">
+        <Icon icon="ri-computer-line" :size="18" />
+        <span>服务器资源</span>
+      </div>
+      <div class="resource-grid">
+        <div class="resource-card">
+          <div class="resource-head">
+            <span class="resource-label">CPU 负载</span>
+            <span class="resource-value" :class="{ warn: cpuPercent > 80 }">{{ cpuPercent }}%</span>
           </div>
-          <div class="service-info">
-            <div class="service-name">{{ service.name }}</div>
-            <div class="service-type">{{ service.type }}</div>
+          <div class="progress-track">
+            <div class="progress-fill" :class="barClass(cpuPercent)" :style="{ width: cpuPercent + '%' }"></div>
           </div>
-          <div class="status-badge" :class="service.status">
-            <span class="status-dot"></span>
-            {{ getStatusLabel(service.status) }}
-          </div>
+          <div class="resource-note">{{ server.cpuCount }} 核 · 1 分钟负载 {{ fmtLoad(server.loadAvg && server.loadAvg[0]) }}</div>
         </div>
 
-        <div class="card-body">
-          <div class="metrics-row">
-            <div class="metric-chip">
-              <span class="chip-label">延迟</span>
-              <span class="chip-value" :class="{ warn: service.latency > 200 }">{{ service.latency }}ms</span>
-            </div>
-            <div class="metric-chip">
-              <span class="chip-label">QPS</span>
-              <span class="chip-value">{{ service.qps }}</span>
-            </div>
-            <div class="metric-chip">
-              <span class="chip-label">CPU</span>
-              <span class="chip-value" :class="{ warn: service.cpu > 80 }">{{ service.cpu }}%</span>
-            </div>
-            <div class="metric-chip">
-              <span class="chip-label">内存</span>
-              <span class="chip-value">{{ service.memory }}MB</span>
+        <div class="resource-card">
+          <div class="resource-head">
+            <span class="resource-label">内存使用</span>
+            <span class="resource-value" :class="{ warn: memPercent > 85 }">{{ memPercent }}%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" :class="barClass(memPercent)" :style="{ width: memPercent + '%' }"></div>
+          </div>
+          <div class="resource-note">已用 {{ formatBytes(usedMem) }} / 共 {{ formatBytes(server.totalMem) }}</div>
+        </div>
+
+        <div class="resource-card">
+          <div class="resource-head">
+            <span class="resource-label">磁盘使用</span>
+            <span class="resource-value" :class="{ warn: diskPercent > 85 }">{{ diskPercent }}%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" :class="barClass(diskPercent)" :style="{ width: diskPercent + '%' }"></div>
+          </div>
+          <div class="resource-note" v-if="server.disk">已用 {{ formatBytes(diskUsed) }} / 共 {{ formatBytes(server.disk.total) }}</div>
+        </div>
+
+        <div class="resource-card">
+          <div class="resource-head">
+            <span class="resource-label">进程占用</span>
+            <span class="resource-value">{{ formatBytes(server.memUsage && server.memUsage.rss) }}</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill bar-warn" :style="{ width: clamp(processPercent) + '%' }"></div>
+          </div>
+          <div class="resource-note">堆 {{ formatBytes(server.memUsage && server.memUsage.heapUsed) }} · 进程 PID {{ server.pid }}</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 运行信息 -->
+    <section class="section">
+      <div class="section-title">
+        <Icon icon="ri-dashboard-line" :size="18" />
+        <span>运行信息</span>
+      </div>
+      <div class="info-blocks">
+        <div class="info-block">
+          <Icon icon="ri-timer-flash-line" :size="20" />
+          <div>
+            <div class="info-label">已运行</div>
+            <div class="info-value">{{ formatUptime(server.processUptime) }}</div>
+          </div>
+        </div>
+        <div class="info-block">
+          <Icon icon="ri-hashtag-line" :size="20" />
+          <div>
+            <div class="info-label">Node.js 版本</div>
+            <div class="info-value">{{ server.nodeVersion }}</div>
+          </div>
+        </div>
+        <div class="info-block">
+          <Icon icon="ri-database-2-line" :size="20" />
+          <div>
+            <div class="info-label">数据库</div>
+            <div class="info-value">
+              <span class="status-text" :class="database.ok ? 'ok' : 'bad'">{{ database.ok ? '正常' : '异常' }}</span>
+              <span class="info-sub">{{ database.tables }} 张表 · {{ formatBytes(database.sizeBytes) }}</span>
             </div>
           </div>
         </div>
-
-        <div class="card-footer">
-          <div class="uptime-info">
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M8 1.5C3.85786 1.5 0.5 4.85786 0.5 9C0.5 13.1421 3.85786 16.5 8 16.5C12.1421 16.5 15.5 13.1421 15.5 9C15.5 4.85786 12.1421 1.5 8 1.5ZM8 3C11.3137 3 14 5.68629 14 9C14 12.3137 11.3137 15 8 15C4.68629 15 2 12.3137 2 9C2 5.68629 4.68629 3 8 3ZM7.25 4.75C7.25 4.33579 7.58579 4 8 4C8.41421 4 8.75 4.33579 8.75 4.75V8.68934L11.7314 10.4056C12.0982 10.6186 12.1624 11.1348 11.9493 11.5016C11.7363 11.8684 11.2201 11.9326 10.8533 11.7196L7.54765 9.81079C7.33284 9.68654 7.2 9.45007 7.2 9.19678V4.75Z" />
-            </svg>
-            运行 {{ service.uptime }}
+        <div class="info-block">
+          <Icon icon="ri-wifi-line" :size="20" />
+          <div>
+            <div class="info-label">WebSocket 网关</div>
+            <div class="info-value">
+              <span class="status-text" :class="ws.ok ? 'ok' : 'bad'">{{ ws.ok ? '已挂载' : '未挂载' }}</span>
+              <span class="info-sub" v-if="ws.ok">活跃连接 {{ ws.sockets }}</span>
+            </div>
           </div>
-          <div class="card-actions">
-            <button
-              class="btn btn-ghost-sm"
-              :disabled="service.healthChecking"
-              @click="runHealthCheck(service)"
-            >
-              <svg v-if="!service.healthChecking" width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M13.7803 4.28033C13.9756 4.47559 13.9756 4.79218 13.7803 4.98744L6.78033 11.9874C6.58507 12.1827 6.26848 12.1827 6.07322 11.9874L2.79773 8.71195C2.60247 8.51669 2.60247 8.2001 2.79773 8.00484C2.99299 7.80958 3.30958 7.80958 3.50484 8.00484L6.42678 10.9268L12.0732 4.28033C12.2684 4.08507 12.585 4.08507 12.7803 4.28033L13.7803 4.28033Z" />
-              </svg>
-              <svg v-else width="12" height="12" viewBox="0 0 16 16" fill="currentColor" class="spinning">
-                <path d="M8 1.5C8 1.22386 8.22386 1 8.5 1C12.6421 1 16 4.35786 16 8.5C16 12.6421 12.6421 16 8.5 16C4.35786 16 1 12.6421 1 8.5C1 8.22386 1.22386 8 1.5 8C1.77614 8 2 8.22386 2 8.5C2 12.0817 4.91828 15 8.5 15C12.0817 15 15 12.0817 15 8.5C15 4.91828 12.0817 2 8.5 2C8.22386 2 8 1.77614 8 1.5Z" />
-              </svg>
-              {{ service.healthChecking ? '检查中...' : '健康检查' }}
-            </button>
-            <button
-              class="btn"
-              :class="service.status === 'running' ? 'btn-danger-sm' : 'btn-success-sm'"
-              @click="toggleService(service)"
-            >
-              {{ service.status === 'running' ? '停止' : '启动' }}
-            </button>
+        </div>
+        <div class="info-block">
+          <Icon icon="ri-terminal-box-line" :size="20" />
+          <div>
+            <div class="info-label">运行环境</div>
+            <div class="info-value">{{ server.platform }} / {{ server.arch }}</div>
+          </div>
+        </div>
+        <div class="info-block">
+          <Icon icon="ri-server-line" :size="20" />
+          <div>
+            <div class="info-label">主机名</div>
+            <div class="info-value">{{ server.hostname }}</div>
           </div>
         </div>
       </div>
+    </section>
+
+    <!-- 各服务运行情况 -->
+    <section class="section" v-for="group in serviceGroups" :key="group.name">
+      <div class="section-title">
+        <Icon icon="ri-stack-line" :size="18" />
+        <span>{{ group.name }}</span>
+        <span class="section-count">{{ runningCount(group.items) }}/{{ group.items.length }} 运行中</span>
+      </div>
+      <div class="service-grid">
+        <div v-for="service in group.items" :key="service.id" class="service-card">
+          <div class="card-header">
+            <div class="service-icon" :style="{ background: hexToRgba(service.color) , color: service.color }">
+              <Icon :icon="service.icon" :size="22" />
+            </div>
+            <div class="service-info">
+              <div class="service-name">{{ service.name }}</div>
+              <div class="service-type">{{ service.type }}</div>
+            </div>
+            <div class="status-badge" :class="service.status">
+              <span class="status-dot"></span>
+              {{ getStatusLabel(service.status) }}
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="metrics-row">
+              <div class="metric-chip">
+                <span class="chip-label">状态</span>
+                <span class="chip-value" :class="{ warn: service.status === 'error' }">{{ getStatusLabel(service.status) }}</span>
+              </div>
+              <div class="metric-chip">
+                <span class="chip-label">响应</span>
+                <span class="chip-value">{{ service.latency }}ms</span>
+              </div>
+              <div class="metric-chip wide">
+                <span class="chip-label">详情</span>
+                <span class="chip-value chip-detail" :title="service.detail">{{ service.detail }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div v-if="!loading && !error && serviceGroups.length === 0" class="empty-state">
+      <div class="empty-icon"><Icon icon="ri-server-line" :size="48" /></div>
+      <div class="empty-text">暂无服务数据</div>
     </div>
 
-    <div v-if="filteredServices.length === 0" class="empty-state">
-      <div class="empty-icon"><Icon icon="ri-plug-line" :size="48" /></div>
-      <div class="empty-text">未找到匹配的服务</div>
+    <div v-if="loading && !server.data" class="loading-state">
+      <div class="spinning big"><Icon icon="ri-loader-4-line" :size="40" /></div>
+      <div class="loading-text">正在读取服务器运行数据...</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { api } from '../../api/client';
 
-type ServiceStatus = 'running' | 'stopped' | 'error';
+type Status = 'running' | 'stopped' | 'error';
 
 interface ServiceItem {
   id: string;
   name: string;
   type: string;
+  group: string;
   icon: string;
   color: string;
-  status: ServiceStatus;
+  status: Status;
   latency: number;
-  qps: number;
-  cpu: number;
-  memory: number;
-  uptime: string;
-  healthChecking: boolean;
+  detail: string;
 }
 
-const searchQuery = ref('');
+const error = ref('');
+const loading = ref(false);
+const server = ref<any>({});
+const database = ref<any>({});
+const ws = ref<any>({});
+const services = ref<ServiceItem[]>([]);
 
-const services = ref<ServiceItem[]>([
-  { id: 'svc-api-gw', name: 'API 网关', type: 'Kong Gateway', icon: 'ri-globe-line', color: '#0067C0', status: 'running', latency: 45, qps: 1240, cpu: 32, memory: 1024, uptime: '14d 6h', healthChecking: false },
-  { id: 'svc-auth', name: '认证服务', type: 'OAuth2 / JWT', icon: 'ri-shield-keyhole-line', color: '#6A1B9A', status: 'running', latency: 32, qps: 890, cpu: 18, memory: 512, uptime: '14d 6h', healthChecking: false },
-  { id: 'svc-db', name: '数据库服务', type: 'PostgreSQL 16', icon: 'ri-database-2-line', color: '#00897B', status: 'running', latency: 12, qps: 3450, cpu: 67, memory: 4096, uptime: '14d 6h', healthChecking: false },
-  { id: 'svc-file', name: '文件服务', type: 'MinIO Object Storage', icon: 'ri-folder-line', color: '#2E7D32', status: 'error', latency: 520, qps: 89, cpu: 92, memory: 2048, uptime: '2h 14m', healthChecking: false }
-]);
+let timer: ReturnType<typeof setInterval> | null = null;
 
-const filteredServices = computed(() => {
-  const query = searchQuery.value.toLowerCase();
-  if (!query) return services.value;
-  return services.value.filter(s =>
-    s.name.toLowerCase().includes(query) ||
-    s.type.toLowerCase().includes(query)
-  );
+const serviceGroups = computed(() => {
+  const names: string[] = [];
+  for (const s of services.value) {
+    if (s.group && !names.includes(s.group)) names.push(s.group);
+  }
+  return names.map((name) => ({ name, items: services.value.filter((s) => s.group === name) }));
 });
 
-const stats = computed(() => [
-  { label: '运行中', value: services.value.filter(s => s.status === 'running').length, color: 'var(--status-success)' },
-  { label: '已停止', value: services.value.filter(s => s.status === 'stopped').length, color: 'var(--text-tertiary)' },
-  { label: '异常', value: services.value.filter(s => s.status === 'error').length, color: 'var(--status-error)' },
-  { label: '总服务', value: services.value.length, color: 'var(--accent-base)' }
-]);
+const cpuPercent = computed(() => {
+  const load = server.value.loadAvg && server.value.loadAvg[0];
+  const cores = server.value.cpuCount || 1;
+  if (load === undefined) return 0;
+  return clamp(Math.round((load / cores) * 100));
+});
 
-function getStatusLabel(status: ServiceStatus): string {
-  const map: Record<ServiceStatus, string> = { running: '运行中', stopped: '已停止', error: '异常' };
-  return map[status];
+const memPercent = computed(() => {
+  if (!server.value.totalMem) return 0;
+  return clamp(Math.round(((server.value.totalMem - server.value.freeMem) / server.value.totalMem) * 100));
+});
+
+const usedMem = computed(() => (server.value.totalMem || 0) - (server.value.freeMem || 0));
+
+const diskPercent = computed(() => {
+  const d = server.value.disk;
+  if (!d || !d.total) return 0;
+  return clamp(Math.round(((d.total - d.free) / d.total) * 100));
+});
+
+const diskUsed = computed(() => {
+  const d = server.value.disk;
+  if (!d) return 0;
+  return (d.total || 0) - (d.free || 0);
+});
+
+const processPercent = computed(() => {
+  if (!server.value.totalMem) return 0;
+  const rss = (server.value.memUsage && server.value.memUsage.rss) || 0;
+  return clamp(Math.round((rss / server.value.totalMem) * 100));
+});
+
+function clamp(v: number): number {
+  return Math.max(0, Math.min(100, v));
 }
 
-function runHealthCheck(service: ServiceItem) {
-  service.healthChecking = true;
-  setTimeout(() => {
-    service.healthChecking = false;
-  }, 1500);
+function fmtLoad(v: number | undefined): string {
+  if (v === undefined || v === null) return '--';
+  return String(v);
 }
 
-function toggleService(service: ServiceItem) {
-  service.status = service.status === 'running' ? 'stopped' : 'running';
+function formatBytes(bytes?: number): string {
+  if (!bytes || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
 }
 
-function refreshAll() {
-  services.value.forEach(s => {
-    s.healthChecking = true;
-    setTimeout(() => { s.healthChecking = false; }, 1200);
-  });
+function formatUptime(seconds: number): string {
+  if (!seconds) return '--';
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d} 天 ${h} 小时`;
+  if (h > 0) return `${h} 小时 ${m} 分钟`;
+  return `${m} 分钟`;
 }
+
+function hexToRgba(hex?: string): string {
+  const h = (hex || '#888').replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16) || 0;
+  const g = parseInt(h.slice(2, 4), 16) || 0;
+  const b = parseInt(h.slice(4, 6), 16) || 0;
+  return `rgba(${r}, ${g}, ${b}, 0.12)`;
+}
+
+function barClass(pct: number): string {
+  if (pct > 85) return 'bar-danger';
+  if (pct > 70) return 'bar-warn';
+  return 'bar-ok';
+}
+
+function getStatusLabel(status: Status): string {
+  const map: Record<Status, string> = { running: '运行中', stopped: '已停止', error: '异常' };
+  return map[status] || status;
+}
+
+function runningCount(items: ServiceItem[]): number {
+  return items.filter((s) => s.status === 'running').length;
+}
+
+async function load() {
+  loading.value = true;
+  error.value = '';
+  try {
+    const data = await api.get<any>('/services?action=overview');
+    server.value = data.server || {};
+    database.value = data.database || {};
+    ws.value = data.ws || {};
+    services.value = data.services || [];
+  } catch (e: any) {
+    error.value = e?.message || '加载失败';
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(() => {
+  load();
+  timer = setInterval(load, 15000);
+});
+
+onUnmounted(() => {
+  if (timer) clearInterval(timer);
+});
 </script>
 
 <style scoped>
@@ -182,50 +341,159 @@ function refreshAll() {
   margin: 0 auto;
 }
 
-.btn-success-sm {
-  background: rgba(16, 124, 16, 0.1);
-  color: var(--status-success);
+.meta-status {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  margin-right: var(--spacer-3);
 }
 
-.btn-success-sm:hover {
-  background: rgba(16, 124, 16, 0.18);
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-success);
+  box-shadow: 0 0 0 0 rgba(16, 124, 16, 0.4);
+  animation: pulse 2s infinite;
 }
 
-.btn-danger-sm {
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(16, 124, 16, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(16, 124, 16, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 124, 16, 0); }
+}
+
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
   background: rgba(196, 43, 28, 0.1);
   color: var(--status-error);
+  border-radius: var(--radius-md);
+  padding: var(--spacer-3) var(--spacer-4);
+  margin-bottom: var(--spacer-4);
+  font-size: var(--font-size-sm);
 }
 
-.btn-danger-sm:hover {
-  background: rgba(196, 43, 28, 0.18);
-}
-
-.service-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: var(--spacer-3);
+.section {
   margin-bottom: var(--spacer-5);
 }
 
-.stat-card {
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--spacer-3);
+}
+
+.section-count {
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+
+.resource-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--spacer-3);
+}
+
+.resource-card {
   background: var(--card-bg);
   border: 1px solid var(--card-stroke);
   border-radius: var(--radius-lg);
   padding: var(--spacer-4);
-  text-align: center;
 }
 
-.stat-value {
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
-  line-height: 1.2;
+.resource-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: var(--spacer-3);
 }
 
-.stat-label {
+.resource-label {
   font-size: var(--font-size-sm);
   color: var(--text-tertiary);
-  margin-top: var(--spacer-1);
 }
+
+.resource-value {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.resource-value.warn { color: var(--status-warning); }
+
+.progress-track {
+  height: 8px;
+  background: var(--subtle-secondary);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.5s ease, background 0.3s ease;
+}
+
+.bar-ok { background: var(--status-success); }
+.bar-warn { background: var(--status-warning); }
+.bar-danger { background: var(--status-error); }
+
+.resource-note {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  margin-top: var(--spacer-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.info-blocks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--spacer-3);
+}
+
+.info-block {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-3);
+  background: var(--card-bg);
+  border: 1px solid var(--card-stroke);
+  border-radius: var(--radius-lg);
+  padding: var(--spacer-4);
+  color: var(--accent-base);
+}
+
+.info-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.info-value {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: 2px;
+}
+
+.info-sub {
+  font-weight: 400;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  margin-left: var(--spacer-2);
+}
+
+.status-text.ok { color: var(--status-success); }
+.status-text.bad { color: var(--status-error); }
 
 .service-grid {
   display: grid;
@@ -261,7 +529,6 @@ function refreshAll() {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 22px;
   flex-shrink: 0;
 }
 
@@ -282,13 +549,35 @@ function refreshAll() {
   margin-top: 2px;
 }
 
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.status-badge.running { background: rgba(16, 124, 16, 0.12); color: var(--status-success); }
+.status-badge.stopped { background: var(--subtle-secondary); color: var(--text-tertiary); }
+.status-badge.error { background: rgba(196, 43, 28, 0.12); color: var(--status-error); }
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
 .card-body {
   padding: var(--spacer-4);
 }
 
 .metrics-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, auto);
   gap: var(--spacer-2);
 }
 
@@ -296,10 +585,15 @@ function refreshAll() {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: var(--spacer-2);
+  padding: var(--spacer-2) var(--spacer-3);
   background: var(--subtle-secondary);
   border-radius: var(--radius-sm);
-  text-align: center;
+}
+
+.metric-chip.wide {
+  min-width: 0;
+  flex: 1;
+  grid-column: span 1;
 }
 
 .chip-label {
@@ -313,29 +607,13 @@ function refreshAll() {
   color: var(--text-primary);
 }
 
-.chip-value.warn {
-  color: var(--status-warning);
-}
+.chip-value.warn { color: var(--status-error); }
 
-.card-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--spacer-3) var(--spacer-4);
-  border-top: 1px solid var(--divider-stroke);
-}
-
-.uptime-info {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-}
-
-.card-actions {
-  display: flex;
-  gap: var(--spacer-2);
+.chip-detail {
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .empty-state {
@@ -344,11 +622,27 @@ function refreshAll() {
 }
 
 .empty-icon {
-  font-size: 48px;
   margin-bottom: var(--spacer-3);
+  color: var(--text-tertiary);
 }
 
 .empty-text {
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+}
+
+.loading-state {
+  text-align: center;
+  padding: var(--spacer-12);
+  color: var(--text-tertiary);
+}
+
+.spinning { animation: spin 1s linear infinite; }
+.spinning.big { display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.loading-text {
+  margin-top: var(--spacer-3);
   font-size: var(--font-size-sm);
   color: var(--text-tertiary);
 }

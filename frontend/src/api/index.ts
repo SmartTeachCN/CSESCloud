@@ -200,11 +200,30 @@ export const adminApi = {
   listWebSpaces: () => api.get<any[]>('/admin/manage?action=list-web-spaces'),
   toggleWebSpaceAdmin: (spaceId: number, disabled: boolean, reason: string) =>
     api.post('/admin/manage?action=toggle-web-space-admin', { space_id: spaceId, disabled, reason }),
+  deleteWebSpace: (spaceId: number) =>
+    api.post('/admin/manage?action=delete-web-space', { space_id: spaceId }),
   listPendingReviews: () => api.get<any[]>('/admin/manage?action=list-pending-reviews'),
   approveReview: (spaceId: number) =>
     api.post('/admin/manage?action=approve-review', { space_id: spaceId }),
   getReviewDiff: (fileId: number) =>
     api.get<any>(`/admin/manage?action=get-review-diff&file_id=${fileId}`),
+  // 数据空间管理
+  listDataSpaces: (sortBy?: string, sortOrder?: string) =>
+    api.get<any[]>(`/admin/manage?action=list-data-spaces&sort_by=${sortBy || 'used'}&sort_order=${sortOrder || 'desc'}`),
+};
+
+export const helpApi = {
+  // 公开读取（需登录）
+  tree: () => api.get<any[]>('/help?action=tree'),
+  get: (id: number) => api.get<any>(`/help?action=get&id=${id}`),
+  // 管理后台（需最高管理员）
+  list: () => api.get<any[]>('/admin/manage?action=list-help'),
+  createCategory: (data: any) => api.post('/admin/manage?action=create-help-category', data),
+  updateCategory: (id: number, data: any) => api.post('/admin/manage?action=update-help-category', { id, ...data }),
+  deleteCategory: (id: number) => api.post('/admin/manage?action=delete-help-category', { id }),
+  createArticle: (data: any) => api.post('/admin/manage?action=create-help-article', data),
+  updateArticle: (id: number, data: any) => api.post('/admin/manage?action=update-help-article', { id, ...data }),
+  deleteArticle: (id: number) => api.post('/admin/manage?action=delete-help-article', { id }),
 };
 
 export const profileApi = {
@@ -281,4 +300,9 @@ export const dataSpaceApi = {
       headers: {} as any,
     });
   },
+};
+
+export const dataExportApi = {
+  history: () => api.get<any[]>('/data-export?action=history'),
+  exportDataspace: (body: any) => api.post<any>('/data-export?action=export-dataspace', body),
 };

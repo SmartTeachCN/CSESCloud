@@ -1,5 +1,5 @@
 <template>
-  <div class="ribbon-toolbar">
+  <div class="ribbon-toolbar" ref="ribbonToolbarRef">
     <!-- ===== 左：编辑内容信息（两行） ===== -->
     <div class="ribbon-left" :class="{ 'no-sub': !hasSubInfo }">
       <!-- 大行1：图标 + 标题/类型 + 编辑按钮 -->
@@ -57,10 +57,60 @@
         </div>
         <div v-if="gi < ribbonGroups.length - 1" class="ribbon-divider-v"></div>
       </template>
+
+      <!-- 靠右的中间“视图”工具区 -->
+      <template v-if="showViewRibbon">
+        <div class="ribbon-view-spacer"></div>
+        <div class="ribbon-group">
+          <div class="ribbon-group-tools">
+            <button
+              v-for="tool in viewGroup.tools"
+              :key="tool.id"
+              class="ribbon-tool"
+              :class="{
+                active: tool.type === 'select' && activeTool === tool.id,
+                'select-type': tool.type === 'select'
+              }"
+              :title="tool.label"
+              @click="onToolClick(tool)"
+            >
+              <Icon :icon="tool.icon" :size="18" />
+              <span class="tool-label">{{ tool.label }}</span>
+            </button>
+          </div>
+          <div class="ribbon-group-label">{{ viewGroup.label }}</div>
+        </div>
+      </template>
     </div>
 
     <!-- 分隔线 -->
     <div class="ribbon-divider-v"></div>
+
+    <!-- ===== 靠右系统 Ribbon（插件编辑器：重载/视图切换等） ===== -->
+    <template v-if="systemRightToolList.length">
+      <div class="ribbon-system-right">
+        <div class="ribbon-group">
+          <div class="ribbon-group-tools">
+            <button
+              v-for="tool in systemRightToolList"
+              :key="tool.id"
+              class="ribbon-tool compact"
+              :class="{
+                active: tool.type === 'select' && systemRightSelectedTool === tool.id,
+                'select-type': tool.type === 'select'
+              }"
+              :title="tool.label"
+              @click="onToolClick(tool)"
+            >
+              <Icon :icon="tool.icon" :size="16" />
+              <span class="tool-label">{{ tool.label }}</span>
+            </button>
+          </div>
+          <div class="ribbon-group-label">系统</div>
+        </div>
+      </div>
+      <div class="ribbon-divider-v"></div>
+    </template>
 
     <!-- ===== 右：文件操作（两行） ===== -->
     <div class="ribbon-right">
@@ -101,11 +151,34 @@
         </button>
       </div>
     </div>
+
+    <!-- 字号弹层 -->
+    <Teleport to="body">
+      <div v-if="showFontPopover" class="fontsize-overlay" @click="showFontPopover = false"></div>
+      <div v-if="showFontPopover" class="fontsize-popover" :style="fontPopoverStyle" @click.stop>
+        <button class="fs-row" @click="changeFont(-1)" title="减小字号">
+          <Icon icon="ri-subtract-line" :size="14" />
+          <span>A-</span>
+        </button>
+        <div class="fs-value">{{ fontSize }}</div>
+        <button class="fs-row" @click="changeFont(1)" title="增大字号">
+          <Icon icon="ri-add-line" :size="14" />
+          <span>A+</span>
+        </button>
+      </div>
+    </Teleport>
+
+    <!-- 设置 / 快捷键弹窗 -->
+    <EditorSettingsDialog :visible="showSettings" @close="showSettings = false" />
+    <ShortcutsDialog :visible="showShortcuts" @close="showShortcuts = false" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import EditorSettingsDialog from './panels/EditorSettingsDialog.vue';
+import ShortcutsDialog from './panels/ShortcutsDialog.vue';
+import { useEditorSettings } from '../../composables/useEditorSettings';
 
 interface RibbonTool {
   id: string;
@@ -149,6 +222,12 @@ const props = defineProps<{
   canAutoSave?: boolean;
   /** 右侧操作区按钮，含 enabled 控制禁用状态 */
   rightActions?: Array<Partial<RibbonTool> & { enabled?: boolean; id: string; label: string; icon: string }>;
+  /** 靠右的系统 Ribbon 工具（插件编辑器：重载、视图切换等） */
+  systemRightTools?: RibbonTool[];
+  /** 靠右系统 Ribbon 的选中工具 ID（用于 select 型按钮） */
+  systemRightSelectedTool?: string;
+  /** 是否展示靠右的中间“视图”工具区（真正文件编辑器开启，实例编辑器不开启） */
+  showViewRibbon?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -160,6 +239,14 @@ const emit = defineEmits<{
   (e: 'edit-click'): void;
 }>();
 
+const editorSettings = useEditorSettings();
+const showFontPopover = ref(false);
+const showSettings = ref(false);
+const showShortcuts = ref(false);
+const fontSize = computed(() => editorSettings.state.fontSize);
+const ribbonToolbarRef = ref<HTMLElement | null>(null);
+const fontPopoverStyle = ref<{ top: string; left: string }>({ top: '100px', left: '280px' });
+
 const autoSave = ref(true);
 const activeTool = ref(props.selectedTool || '');
 const saving = ref(!!props.saving);
@@ -170,30 +257,43 @@ watch(() => props.saving, v => saving.value = v);
 watch(autoSave, v => emit('autosize-change', v));
 watch(() => props.selectedTool, v => { activeTool.value = v || ''; });
 
-// 默认中间工具组
+// 靠右系统 Ribbon 工具
+const systemRightToolList = computed(() => props.systemRightTools || []);
+
+function changeFont(delta: number) {
+  const next = editorSettings.state.fontSize + delta;
+  editorSettings.set('fontSize', Math.min(40, Math.max(8, next)));
+}
+
+// 默认中间工具组（非插件编辑器的正式编辑 Ribbon，靠左）
 const defaultGroups: RibbonGroup[] = [
   {
     label: '编辑',
     tools: [
       { id: 'find', label: '查找', icon: 'ri-search-line', command: 'find' },
-      { id: 'replace', label: '替换', icon: 'ri-replace-line', command: 'replace' },
+      { id: 'replace', label: '替换', icon: 'ri-find-replace-line', command: 'replace' },
+      { id: 'goto', label: '跳转行', icon: 'ri-arrow-down-s-line', command: 'goto' },
+      { id: 'fontsize', label: '字号', icon: 'ri-font-size', command: 'fontsize' },
+      { id: 'refresh', label: '刷新', icon: 'ri-refresh-line', command: 'refresh' },
     ]
   },
   {
-    label: '视图',
+    label: '工具',
     tools: [
-      { id: 'fullscreen', label: '全屏', icon: 'ri-fullscreen-line', command: 'fullscreen' },
-      { id: 'refresh', label: '刷新', icon: 'ri-refresh-line', command: 'refresh' }
+      { id: 'settings', label: '设置', icon: 'ri-settings-3-line', command: 'settings' },
+      { id: 'shortcuts', label: '快捷键', icon: 'ri-keyboard-box-line', command: 'shortcuts' },
     ]
   },
-  {
-    label: '帮助',
-    tools: [
-      { id: 'docs', label: '文档', icon: 'ri-book-line', command: 'docs' },
-      { id: 'about', label: '关于', icon: 'ri-information-line', command: 'about' }
-    ]
-  }
 ];
+
+// 靠右的中间“视图”工具区（非插件与插件编辑器均展示）
+const viewGroup: RibbonGroup = {
+  label: '视图',
+  tools: [
+    { id: 'fullscreen', label: '全屏', icon: 'ri-fullscreen-line', command: 'fullscreen' },
+    { id: 'immersive', label: '沉浸模式', icon: 'ri-focus-2-line', command: 'immersive', type: 'select' },
+  ],
+};
 
 // 默认右侧操作区按钮
 const defaultRightActions: Array<Partial<RibbonTool> & { enabled?: boolean; id: string; label: string; icon: string }> = [
@@ -212,6 +312,17 @@ const rightActions = computed(() => {
 const ribbonGroups = computed(() => props.manifest && props.manifest.length > 0 ? props.manifest : defaultGroups);
 
 function onToolClick(tool: RibbonTool) {
+  // 由 Ribbon 内部直接处理的工具（全局偏好），不向上冒泡
+  if (tool.id === 'settings') { showSettings.value = true; return; }
+  if (tool.id === 'shortcuts') { showShortcuts.value = true; return; }
+  if (tool.id === 'fontsize') {
+    const rect = ribbonToolbarRef.value?.getBoundingClientRect?.();
+    if (rect) {
+      fontPopoverStyle.value = { top: `${rect.bottom + 6}px`, left: `${rect.left + 16}px` };
+    }
+    showFontPopover.value = !showFontPopover.value;
+    return;
+  }
   if (tool.type === 'select') {
     activeTool.value = tool.id;
   }
@@ -364,6 +475,12 @@ function emitSave() {
   justify-content: center;
   padding: 0 var(--spacer-2);
   gap: 2px;
+}
+
+/* 将中间“视图”工具区推到最右侧 */
+.ribbon-view-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
 }
 
 .ribbon-group-tools {
@@ -537,6 +654,59 @@ function emitSave() {
 
 .spin {
   animation: spin 1s linear infinite;
+}
+
+/* ===== 靠右系统 Ribbon ===== */
+.ribbon-system-right {
+  display: flex;
+  align-items: center;
+  padding: var(--spacer-1) var(--spacer-2);
+  flex-shrink: 0;
+}
+
+/* ===== 字号弹层 ===== */
+.fontsize-popover {
+  position: fixed;
+  top: 96px;
+  left: 280px;
+  z-index: 1500;
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  padding: var(--spacer-2);
+  background: var(--flyout-bg);
+  border: 1px solid var(--flyout-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+}
+.fontsize-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  background: transparent;
+}
+.fs-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 10px;
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border-rest);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.fs-row:hover {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+}
+.fs-value {
+  min-width: 32px;
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono, Consolas, monospace);
 }
 
 

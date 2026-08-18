@@ -1,5 +1,4 @@
-// EA2 控制面板
-// 通过 window.CSES.request('controlApi', ...) 与 PHP 后端通信
+// 实例编辑器
 
 var currentPage = 'connect';
 var selectedExamId = null;
@@ -71,20 +70,114 @@ function renderDeviceList(devices) {
     var statusClass = isOnline ? 'online' : 'offline';
     var statusText = isOnline ? '在线' : '离线';
     var notes = d.notes || '';
+    var protocol = d.protocol || 'poll';
+    var protocolLabel = protocol === 'ws' ? 'WebSocket' : '长轮询';
+    var rep = d.last_reported_state || {};
+    var cur = rep.currentExam && rep.currentExam.status === 'playing' ? rep.currentExam : null;
+    var playingHtml = cur
+      ? '<div class="ea2-device-playing">&#9654; 播放中: ' + escHtml(cur.exam_name || '未命名') + (cur.started_at ? '（' + fmtTime(cur.started_at) + '）' : '') + '</div>'
+      : (isOnline ? '<div class="ea2-device-idle">空闲</div>' : '');
+    var stopBtn = cur
+      ? '<button class="ea2-btn small danger" onclick="stopDisplay(\'' + d.device_id + '\',\'' + escAttr(cur.deployment_id || '') + '\')">停止显示</button>'
+      : '';
     return '<div class="ea2-device-item">' +
       '<span class="ea2-device-status ' + statusClass + '"></span>' +
       '<div class="ea2-device-info">' +
         '<div class="ea2-device-name">' + escHtml(d.display_name) + '</div>' +
-        '<div class="ea2-device-meta">' + (d.platform || '未知平台') + ' · ' + (d.app_version || '') + ' · ' + statusText + '</div>' +
+        '<div class="ea2-device-meta">' + (d.platform || '未知平台') + ' · ' + (d.app_version || '') + ' · ' + statusText + ' · 协议: ' + protocolLabel + '</div>' +
+        playingHtml +
         (notes ? '<div class="ea2-device-notes">' + escHtml(notes) + '</div>' : '') +
       '</div>' +
       '<div class="ea2-device-actions">' +
+        '<select class="ea2-protocol-select" onchange="setDeviceProtocol(\'' + d.device_id + '\', this.value)" title="切换连接协议">' +
+          '<option value="poll"' + (protocol === 'poll' ? ' selected' : '') + '>长轮询</option>' +
+          '<option value="ws"' + (protocol === 'ws' ? ' selected' : '') + '>WebSocket</option>' +
+        '</select>' +
+        stopBtn +
         '<button class="ea2-btn small" onclick="editDeviceNotes(\'' + d.device_id + '\',\'' + escAttr(notes) + '\')">备注</button>' +
+        '<button class="ea2-btn small" onclick="showDeviceCommands(\'' + d.device_id + '\')">命令</button>' +
         '<button class="ea2-btn small" onclick="sendCommandTo(\'' + d.device_id + '\')">发送命令</button>' +
         '<button class="ea2-btn small danger" onclick="unregisterDevice(\'' + d.device_id + '\')">注销</button>' +
       '</div>' +
     '</div>';
   }).join('');
+}
+
+/** 格式化 ISO 时间为 HH:MM */
+function fmtTime(iso) {
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  var h = ('0' + d.getHours()).slice(-2);
+  var m = ('0' + d.getMinutes()).slice(-2);
+  return h + ':' + m;
+}
+
+/** 查看某设备的命令列表 */
+function showDeviceCommands(deviceId) {
+  document.getElementById('ea2CmdTitle').textContent = '设备命令 - ' + deviceId;
+  document.getElementById('ea2CmdBody').innerHTML = '<div class="ea2-empty">加载中...</div>';
+  document.getElementById('ea2CmdModal').style.display = '';
+  window.CSES.request('controlApi', { action: 'command_list', payload: { device_id: deviceId } }).then(function(cmds) {
+    var list = cmds || [];
+    if (list.length === 0) {
+      document.getElementById('ea2CmdBody').innerHTML = '<div class="ea2-empty">暂无命令记录</div>';
+      return;
+    }
+    var rows = list.map(function(c) {
+      var p = c.payload || [];
+      var ptext = '';
+      try { ptext = JSON.stringify(p); } catch (e) { ptext = String(p); }
+      if (ptext && ptext.length > 80) ptext = ptext.slice(0, 80) + '…';
+      var st = c.result_status || c.status || '';
+      var stColor = st === 'succeeded' ? '#4caf50' : (st === 'failed' ? '#f48771' : '#888');
+      return '<tr><td>' + escHtml(c.command_type || '') + '</td>' +
+        '<td title="' + escAttr(ptext) + '">' + escHtml(ptext || '—') + '</td>' +
+        '<td><span style="color:' + stColor + '">' + escHtml(st) + '</span></td>' +
+        '<td>' + escHtml((c.created_at || '').slice(0, 19)) + '</td></tr>';
+    }).join('');
+    document.getElementById('ea2CmdBody').innerHTML =
+      '<table class="ea2-cmd-table"><thead><tr><th>类型</th><th>参数</th><th>状态</th><th>时间</th></tr></thead><tbody>' +
+      rows + '</tbody></table>';
+  }).catch(function(e) {
+    document.getElementById('ea2CmdBody').innerHTML = '<div class="ea2-empty">加载失败: ' + escHtml(e.message || '') + '</div>';
+  });
+}
+
+function closeCmdModal() {
+  document.getElementById('ea2CmdModal').style.display = 'none';
+}
+
+/** 停止某设备正在显示的考试 */
+function stopDisplay(deviceId, deploymentId) {
+  if (!confirm('确认停止该设备正在显示的考试？部署后需重新下发才会继续显示。')) return;
+  var payload = {};
+  if (deploymentId) payload.deployment_id = deploymentId;
+  window.CSES.request('controlApi', {
+    action: 'command_create',
+    payload: { command_type: 'playback.stop', device_id: deviceId, payload: payload }
+  }).then(function(res) {
+    alert((res && res.notice) || '已发送停止显示指令，客户端将退出当前考试');
+    setTimeout(refreshDevices, 1500);
+  }).catch(function(e) { alert('操作失败: ' + e.message); });
+}
+
+/** 切换设备连接协议（实时协调客户端插件） */
+function setDeviceProtocol(deviceId, protocol) {
+  if (!confirm('确认将该设备切换为 ' + (protocol === 'ws' ? 'WebSocket' : '长轮询(REST)') + ' 连接协议？')) {
+    refreshDevices();
+    return;
+  }
+  window.CSES.request('controlApi', { action: 'device_set_protocol', payload: { device_id: deviceId, protocol: protocol } }).then(function(res) {
+            var msg = (res && res.notice)
+              ? res.notice
+              : ('已切换协议: ' + (res && res.protocol ? (res.protocol === 'ws' ? 'WebSocket' : '长轮询') : protocol));
+            alert(msg);
+            // WS 设备立即生效；REST 设备将在其下次轮询时生效
+            setTimeout(refreshDevices, 1500);
+          }).catch(function(e) {
+            alert('切换协议失败: ' + e.message);
+            refreshDevices();
+          });
 }
 
 function editDeviceNotes(deviceId, currentNotes) {
@@ -203,6 +296,20 @@ async function deleteEnrollment(id) {
 
 // ===== 考试管理 =====
 async function refreshExamList() {
+  // 获取当前各设备播放中的考试，映射到考试（exam_config_id 即文件 id）
+  var playingByExam = {};
+  try {
+    var devs = await window.CSES.request('controlApi', { action: 'device_list', payload: {} }) || [];
+    devs.forEach(function(d) {
+      var rep = d.last_reported_state || {};
+      var cur = rep.currentExam;
+      if (cur && cur.status === 'playing' && cur.exam_config_id) {
+        var eid = String(cur.exam_config_id);
+        if (!playingByExam[eid]) playingByExam[eid] = [];
+        playingByExam[eid].push({ name: d.display_name || d.device_id, device_id: d.device_id });
+      }
+    });
+  } catch (e) { /* 忽略设备查询失败 */ }
   try {
     var res = await window.CSES.request('listEa2Files');
     var exams = res || [];
@@ -218,6 +325,10 @@ async function refreshExamList() {
       var groups = getExamGroups(exam.id);
       var groupTags = groups.map(function(g) { return '<span class="ea2-group-tag">' + escHtml(g) + '</span>'; }).join('');
       var isChecked = selectedExams.has(exam.id);
+      var playing = playingByExam[String(exam.id)];
+      var playingHtml = playing && playing.length > 0
+        ? '<div class="ea2-exam-playing"><span class="ea2-dot"></span>' + playing.length + ' 台设备在播放' + (!multiSelectMode ? '（' + playing.map(function(p) { return escHtml(p.name); }).join('、') + '）' : '') + '</div>'
+        : '';
       return '<div class="ea2-exam-card' + (isChecked ? ' selected' : '') + '" onclick="' + (multiSelectMode ? 'toggleExamSelect(\'' + exam.id + '\')' : 'viewExamDetail(\'' + exam.id + '\')') + '">' +
         (multiSelectMode ? '<div class="ea2-exam-card-check"><input type="checkbox" ' + (isChecked ? 'checked' : '') + ' onclick="event.stopPropagation();toggleExamSelect(\'' + exam.id + '\')" /></div>' : '') +
         '<div class="ea2-exam-card-name">' + escHtml(name) + '</div>' +
@@ -225,6 +336,7 @@ async function refreshExamList() {
           '<span>' + count + ' 场考试</span>' +
           '<span>' + (exam.name || '') + '</span>' +
         '</div>' +
+        playingHtml +
         (groupTags ? '<div class="ea2-exam-card-groups">' + groupTags + '</div>' : '') +
         (!multiSelectMode ? '<div class="ea2-exam-card-actions">' +
           '<button class="ea2-btn small" onclick="event.stopPropagation();viewExamDetail(\'' + exam.id + '\')">查看</button>' +
@@ -325,13 +437,39 @@ function openDeployDialog(fileId) {
     var container = document.getElementById('ea2DeployDevices');
     if (!devices || devices.length === 0) {
       container.innerHTML = '<p style="color:#888">暂无可用设备，请先在"连接应用"页面注册设备</p>';
+      hideDeployWarning();
     } else {
       container.innerHTML = devices.map(function(d) {
-        return '<div class="ea2-device-checkbox"><input type="checkbox" value="' + d.device_id + '" checked id="dev_' + d.device_id + '"><label for="dev_' + d.device_id + '">' + escHtml(d.display_name) + ' (' + (d.platform || '?') + ')</label></div>';
+        var notes = d.notes || '';
+        var rep = d.last_reported_state || {};
+        var cur = rep.currentExam && rep.currentExam.status === 'playing' ? rep.currentExam : null;
+        var playingTag = cur
+          ? ' <span class="ea2-playing-badge" data-dev="' + d.device_id + '">播放中: ' + escHtml(cur.exam_name || '考试') + '</span>'
+          : '';
+        var dataPlaying = cur ? '1' : '0';
+        return '<div class="ea2-device-checkbox">' +
+          '<input type="checkbox" value="' + d.device_id + '" checked id="dev_' + d.device_id + '" data-playing="' + dataPlaying + '" onchange="updateDeployWarning()">' +
+          '<label for="dev_' + d.device_id + '">' + escHtml(d.display_name) + ' (' + (d.platform || '?') + ')' + playingTag +
+          (notes ? ' <span style="color:#0067C0;font-style:italic;font-size:11px">' + escHtml(notes) + '</span>' : '') + '</label></div>';
       }).join('');
     }
+    updateDeployWarning();
     document.getElementById('ea2DeployModal').style.display = '';
   }).catch(function(e) { alert('获取设备列表失败: ' + e.message); });
+}
+
+/** 依据勾选的设备播放状态，控制部署警告显示 */
+function updateDeployWarning() {
+  var warn = document.getElementById('ea2DeployWarn');
+  if (!warn) return;
+  var boxes = document.querySelectorAll('#ea2DeployDevices input[type="checkbox"]:checked');
+  var any = Array.prototype.some.call(boxes, function(cb) { return cb.getAttribute('data-playing') === '1'; });
+  warn.style.display = any ? '' : 'none';
+}
+
+function hideDeployWarning() {
+  var warn = document.getElementById('ea2DeployWarn');
+  if (warn) warn.style.display = 'none';
 }
 
 function closeDeployDialog() {
@@ -377,10 +515,35 @@ function sendCommandTo(deviceId) {
   window.CSES.request('controlApi', {
     action: 'command_create',
     payload: { command_type: type, device_id: deviceId, payload: payload }
-  }).then(function() {
-    alert('命令已下发');
+  }).then(function(res) {
+    var msg = '命令已下发';
+    if (res && res.notice) msg += '\n' + res.notice;
+    else if (res && res.max_delay_seconds > 0) msg += '\n（目标设备为长轮询连接，命令最长延迟 ' + res.max_delay_seconds + ' 秒送达）';
+    alert(msg);
     refreshDevices();
   }).catch(function(e) { alert('命令下发失败: ' + e.message); });
+}
+
+// ===== 通讯协议配置（管理后台） =====
+function loadServerProtocolConfig() {
+  var input = document.getElementById('ea2PollInterval');
+  if (!input) return;
+  window.CSES.request('controlApi', { action: 'instance_protocol_get', payload: {} }).then(function(res) {
+    if (res && res.poll_interval_seconds) input.value = res.poll_interval_seconds;
+  }).catch(function(e) { /* 忽略 */ });
+}
+
+function savePollInterval() {
+  var input = document.getElementById('ea2PollInterval');
+  if (!input) return;
+  var secs = parseInt(input.value, 10) || 0;
+  window.CSES.request('controlApi', {
+    action: 'instance_protocol_set',
+    payload: { poll_interval_seconds: secs }
+  }).then(function(res) {
+    alert('已保存，REST 轮询间隔: ' + res.poll_interval_seconds + ' 秒');
+    input.value = res.poll_interval_seconds;
+  }).catch(function(e) { alert('保存失败: ' + e.message); });
 }
 
 // ===== 配置管理 =====
@@ -537,12 +700,18 @@ function renderConfigTab(tab) {
       break;
     case 'connect':
       html = '<h2>连接</h2><div class="ea2-config-card">' +
-        '<div class="ea2-config-item"><div class="ea2-config-item-main"><div class="ea2-config-item-title">服务器地址</div><div class="ea2-config-item-desc">客户端连接控制服务器的地址，由系统自动生成。</div></div><div class="ea2-config-item-action"><code style="font-size:10px;padding:4px 8px;background:var(--input-bg,#1e1e1e);border-radius:4px">' + escHtml(window.location.origin + '/api/rest-control.php?instance_uid=' + (window.CSES.instance ? window.CSES.instance.uid : '')) + '</code></div></div>' +
+        '<div class="ea2-config-item"><div class="ea2-config-item-main"><div class="ea2-config-item-title">服务器地址</div><div class="ea2-config-item-desc">客户端连接控制服务器的地址，由系统自动生成。</div></div><div class="ea2-config-item-action"><code style="font-size:10px;padding:4px 8px;background:var(--input-bg,#1e1e1e);border-radius:4px">' + escHtml(window.location.origin + '/api/rest-control?instance_uid=' + (window.CSES.instance ? window.CSES.instance.uid : '')) + '</code></div></div>' +
+        '<div class="ea2-config-divider"></div>' +
+        '<div class="ea2-config-item"><div class="ea2-config-item-main"><div class="ea2-config-item-title">WebSocket 网关</div><div class="ea2-config-item-desc">客户端 WebSocket 实时通信网关地址。</div></div><div class="ea2-config-item-action"><code style="font-size:10px;padding:4px 8px;background:var(--input-bg,#1e1e1e);border-radius:4px">' + escHtml(window.location.origin + '/api/ws-control') + '</code></div></div>' +
+        '<div class="ea2-config-divider"></div>' +
+        '<div class="ea2-config-item"><div class="ea2-config-item-main"><div class="ea2-config-item-title">REST 轮询频率限制</div><div class="ea2-config-item-desc">长轮询设备的命令轮询间隔（秒）。默认 300（5 分钟）。客户端不写死，按此限制自适应调整。</div></div><div class="ea2-config-item-action"><input type="number" id="ea2PollInterval" value="300" min="5" max="86400" placeholder="300" style="width:110px" /><button class="ea2-btn small" onclick="savePollInterval()">保存</button></div></div>' +
         '<div class="ea2-config-divider"></div>' +
         '<div class="ea2-config-item"><div class="ea2-config-item-main"><div class="ea2-config-item-title">监听端口</div><div class="ea2-config-item-desc">控制服务器监听端口，端口占用时会自动上移尝试。</div></div><div class="ea2-config-item-action"><input type="number" value="' + escAttr(getConfigField('server.port', 8000)) + '" min="1" max="65535" placeholder="8000" onchange="saveConfigField(\'server.port\', parseInt(this.value)||8000)" style="width:90px" /></div></div>' +
         '<div class="ea2-config-divider"></div>' +
         '<div class="ea2-config-item"><div class="ea2-config-item-main"><div class="ea2-config-item-title">访问令牌</div><div class="ea2-config-item-desc">留空则不校验；推荐在远程访问时设置。</div></div><div class="ea2-config-item-action"><input type="text" value="' + escAttr(getConfigField('server.token', '')) + '" placeholder="（留空不校验）" onchange="saveConfigField(\'server.token\', this.value)" /></div></div>' +
       '</div>';
+      // 加载当前服务端协议配置
+      loadServerProtocolConfig();
       break;
     case 'time':
       html = '<h2>时间同步</h2><div class="ea2-config-card">' +

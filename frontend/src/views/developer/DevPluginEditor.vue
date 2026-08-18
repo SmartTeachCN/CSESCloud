@@ -129,6 +129,21 @@
           ></textarea>
         </section>
 
+        <!-- 编辑 Ribbon（插件自定义靠左工具栏） -->
+        <section v-show="activeTab === 'ribbon'" class="tab-pane">
+          <div class="manifest-hint">
+            <Icon icon="ri-information-line" :size="14" />
+            <span>插件自定义的“靠左”Ribbon 分组（JSON 数组）。结构：<code>[{"label":"分组名","tools":[{"id":"x","label":"按钮","icon":"ri-icon","command":"cmd","type":"action|select"}]}]</code>。运行时也可通过 <code>window.CSEditor.setRibbon(groups)</code> 动态更新。</span>
+          </div>
+          <textarea
+            v-model="editorRibbon"
+            @input="markDirty('ribbon')"
+            class="code-area code-js"
+            spellcheck="false"
+            placeholder='[\n  { "label": "操作", "tools": [ { "id": "cmd1", "label": "我的按钮", "icon": "ri-settings-3-line", "command": "cmd1" } ] }\n]'
+          ></textarea>
+        </section>
+
         <!-- 实时预览 -->
         <section v-show="activeTab === 'preview'" class="tab-pane">
           <div class="preview-toolbar">
@@ -169,6 +184,7 @@ const tabs = [
   { id: 'editor_html', icon: 'ri-html5-line', label: '编辑器 HTML' },
   { id: 'editor_js', icon: 'ri-code-s-slash-line', label: '编辑器 JS' },
   { id: 'editor_css', icon: 'ri-palette-line', label: '编辑器 CSS' },
+  { id: 'ribbon', icon: 'ri-tools-line', label: '编辑 Ribbon' },
   { id: 'preview', icon: 'ri-eye-line', label: '实时预览' }
 ];
 
@@ -177,6 +193,7 @@ const extensionsStr = ref('');
 const editorHtml = ref('<div id="app"><h1>自定义编辑器</h1></div>');
 const editorJs = ref('// 使用 window.CSEditor.emitSave(content) 保存文件\n');
 const editorCss = ref('');
+const editorRibbon = ref('[]');
 
 const currentExtensions = computed(() => {
   return extensionsStr.value.split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0);
@@ -259,6 +276,7 @@ async function loadPlugin() {
     editorHtml.value = res.editor_html || '<div id="app"><h1>自定义编辑器</h1></div>';
     editorJs.value = res.editor_js || '// 使用 window.CSEditor.emitSave(content) 保存文件\n';
     editorCss.value = res.editor_css || '';
+    editorRibbon.value = JSON.stringify(res.ribbon || [], null, 2);
     dirtyTabs.value = {};
   } catch (e: any) {
     alert(e.message || '加载失败');
@@ -283,6 +301,7 @@ async function saveCurrent() {
     if (dirtyTabs.value.editor_html) updates.editor_html = editorHtml.value;
     if (dirtyTabs.value.editor_js) updates.editor_js = editorJs.value;
     if (dirtyTabs.value.editor_css) updates.editor_css = editorCss.value;
+    if (dirtyTabs.value.ribbon) updates.ribbon = JSON.parse(editorRibbon.value || '[]');
     await pluginApi.update(pluginId.value, updates);
     dirtyTabs.value = {};
     await loadPlugin();

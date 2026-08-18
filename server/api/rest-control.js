@@ -43,6 +43,16 @@
 const crypto = require('crypto');
 const { dateStr, nowStr, parseDate } = require('../lib/response');
 
+// 获取全局 ws-control 网关（由 index.js 注入 global.wsControl）
+function wsControl() {
+  return global.wsControl || null;
+}
+
+/** 解析 date 到毫秒时间戳 */
+function toMs(d) {
+  try { return parseDate(d).getTime(); } catch (_) { return Date.now(); }
+}
+
 // ===== 辅助函数 =====
 
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
@@ -141,17 +151,28 @@ module.exports = async (ctx) => {
   const { req, res, DB, Response, Helpers, query, body } = ctx;
 
   const method = req.method;
-  const instanceUid = String(query.instance_uid ?? '').trim();
+  let instanceUid = String(query.instance_uid ?? '').trim();
   const action = String(query.action ?? (body.action ?? '')).trim();
 
-  if (instanceUid === '') {
-    Response.error('缺少 instance_uid 参数');
-  }
-
   // 查找实例
-  const inst = DB.one('SELECT * FROM instances WHERE instance_uid = ?', [instanceUid]);
-  if (!inst) {
-    Response.error('实例不存在', 404, 404);
+  let inst = null;
+  if (instanceUid !== '') {
+    inst = DB.one('SELECT * FROM instances WHERE instance_uid = ?', [instanceUid]);
+    if (!inst) Response.error('实例不存在', 404, 404);
+  } else if (action === 'device_register') {
+    // 设备用连接码首次注册时尚不知 instance_uid：通过注册码全局解析实例
+    const enrollmentCode = body.enrollment_code ?? body.enrollmentCode ?? '';
+    if (!phpTruthy(enrollmentCode)) Response.error('缺少 instance_uid 参数');
+    const codeHash = sha256(enrollmentCode);
+    const code = DB.one('SELECT * FROM ea2_enrollment_codes WHERE code_hash = ?', [codeHash]);
+    if (!code) Response.error('注册码无效', 401, 401);
+    if (code.revoked_at) Response.error('注册码已被吊销', 401, 401);
+    if (Number(code.used_count) >= Number(code.max_uses)) Response.error('注册码已用完', 401, 401);
+    if (parseDate(code.expires_at).getTime() < Date.now()) Response.error('注册码已过期', 401, 401);
+    inst = DB.one('SELECT * FROM instances WHERE id = ?', [code.instance_id]);
+    if (inst) instanceUid = inst.instance_uid;
+  } else {
+    Response.error('缺少 instance_uid 参数');
   }
 
   const instanceId = parseInt(inst.id, 10) || 0;
@@ -167,6 +188,7 @@ module.exports = async (ctx) => {
       for (const d of devices) {
         d.labels = jsonDecodeOr(d.labels ?? '[]', []);
         d.last_reported_state = jsonDecodeOr(d.last_reported_state ?? '{}', []);
+        d.protocol = d.protocol || 'poll';
       }
       Response.success(devices);
     }
@@ -192,16 +214,32 @@ module.exports = async (ctx) => {
       const architecture = body.architecture ?? '';
       const appVersion = body.app_version ?? '';
       const protocolVersion = body.protocol_version ?? 1;
-      const enrollmentCode = body.enrollment_code ?? '';
+      const enrollmentCode = body.enrollment_code ?? body.enrollmentCode ?? '';
       const capabilities = body.capabilities ?? [];
+      // 连接协议（poll=长REST轮询 / ws=WebSocket）
+      const protocol = body.protocol === 'ws' ? 'ws' : (body.protocol || 'poll');
 
       if (!phpTruthy(deviceId) || !phpTruthy(displayName)) {
         Response.error('device_id 和 display_name 不能为空');
       }
 
-      // 验证注册码
+      // 该设备是否已在当前实例登记（重绑场景：凭证丢失/设备被清除后重新注册）
+      const now = nowStr();
+      const bindingState = (function () {
+        const active = DB.one(
+          "SELECT id FROM ea2_devices WHERE instance_id = ? AND device_id = ? AND lifecycle_status = 'active'",
+          [instanceId, deviceId]
+        );
+        const any = DB.one(
+          'SELECT id FROM ea2_devices WHERE instance_id = ? AND device_id = ?',
+          [instanceId, deviceId]
+        );
+        return { id: (active && active.id) || (any && any.id), existing: !!(active || any) };
+      })();
+
+      // 验证注册码：仅首次绑定需校验/消耗连接码；已存在设备重绑时跳过，避免单次码耗尽死循环
       let code = null;
-      if (phpTruthy(enrollmentCode)) {
+      if (phpTruthy(enrollmentCode) && !bindingState.existing) {
         const codeHash = sha256(enrollmentCode);
         code = DB.one(
           'SELECT * FROM ea2_enrollment_codes WHERE instance_id = ? AND code_hash = ?',
@@ -213,8 +251,9 @@ module.exports = async (ctx) => {
         if (parseDate(code.expires_at).getTime() < Date.now()) Response.error('注册码已过期', 401, 401);
       }
 
-      const now = nowStr();
-      const existing = DB.one('SELECT id FROM ea2_devices WHERE device_id = ?', [deviceId]);
+      const existing = bindingState.id
+        ? { id: bindingState.id }
+        : null;
 
       if (existing) {
         // 更新已有设备
@@ -224,6 +263,7 @@ module.exports = async (ctx) => {
           architecture: architecture,
           app_version: appVersion,
           protocol_version: protocolVersion,
+          protocol: protocol,
           lifecycle_status: 'active',
           last_seen_at: now,
           last_reported_state: JSON.stringify(body.state ?? []),
@@ -238,6 +278,7 @@ module.exports = async (ctx) => {
           architecture: architecture,
           app_version: appVersion,
           protocol_version: protocolVersion,
+          protocol: protocol,
           lifecycle_status: 'active',
           labels: JSON.stringify(body.labels ?? []),
           last_seen_at: now,
@@ -258,8 +299,8 @@ module.exports = async (ctx) => {
         issued_at: now,
       });
 
-      // 更新注册码使用次数
-      if (phpTruthy(enrollmentCode)) {
+      // 更新注册码使用次数（仅首次绑定消耗连接码）
+      if (code) {
         DB.update('ea2_enrollment_codes', {
           used_count: Number(code.used_count) + 1,
         }, 'id = ?', [code.id]);
@@ -267,8 +308,11 @@ module.exports = async (ctx) => {
 
       Response.success({
         device_id: deviceId,
+        instance_uid: instanceUid,
         credential: credential,
-        websocket_url: '/api/rest-control.php?instance_uid=' + instanceUid + '&action=command_poll',
+        protocol: protocol,
+        websocket_url: '/api/ws-control?instance_uid=' + instanceUid + '&protocol=ws',
+        poll_interval_seconds: wsControl() ? wsControl().getPollInterval(instanceId) : 300,
         protocol_version: 1,
       });
     }
@@ -276,6 +320,9 @@ module.exports = async (ctx) => {
     case 'device_unregister': {
       const deviceId = body.device_id ?? '';
       if (!phpTruthy(deviceId)) Response.error('缺少 device_id');
+      // 关闭 WS 连接
+      const wc = wsControl();
+      if (wc) wc.closeDevice(deviceId);
       // 删除设备记录
       DB.delete('ea2_devices', 'instance_id = ? AND device_id = ?', [instanceId, deviceId]);
       // 删除凭证
@@ -371,6 +418,36 @@ module.exports = async (ctx) => {
       const now = nowStr();
       let commandId = Helpers.uuid();
 
+      // 判断目标设备是否处于长轮询，用于下发延迟提示
+      const wc0 = wsControl();
+      const pollInterval0 = wc0 ? wc0.getPollInterval(instanceId) : 300;
+      let hasPollTarget = false;
+      let targetProtocols = [];
+      if (phpTruthy(deviceId)) {
+        const d = DB.one(
+          'SELECT protocol FROM ea2_devices WHERE instance_id = ? AND device_id = ? AND lifecycle_status = ?',
+          [instanceId, deviceId, 'active']
+        );
+        if (d) {
+          const p = d.protocol || 'poll';
+          targetProtocols.push(p);
+          if (p === 'poll') hasPollTarget = true;
+        }
+      } else {
+        const devs = DB.all(
+          "SELECT protocol FROM ea2_devices WHERE instance_id = ? AND lifecycle_status = 'active'",
+          [instanceId]
+        );
+        for (const dd of devs) {
+          const p = dd.protocol || 'poll';
+          targetProtocols.push(p);
+          if (p === 'poll') hasPollTarget = true;
+        }
+      }
+      const deliverNotice = hasPollTarget
+        ? '目标设备使用长轮询连接，命令最长可能延迟 ' + pollInterval0 + ' 秒后才会被客户端收到。'
+        : '';
+
       if (phpTruthy(deviceId)) {
         // 单设备命令
         DB.insert('ea2_commands', {
@@ -384,6 +461,9 @@ module.exports = async (ctx) => {
           expires_at: dateStr(new Date(Date.now() + expiresIn * 1000)),
           created_at: now,
         });
+        // WS 实时推送
+        const wc = wsControl();
+        if (wc) wc.notifyDevice(instanceId, deviceId);
       } else {
         // 广播：为每个活跃设备创建命令
         const devices = DB.all(
@@ -402,6 +482,8 @@ module.exports = async (ctx) => {
             expires_at: dateStr(new Date(Date.now() + expiresIn * 1000)),
             created_at: now,
           });
+          const wc = wsControl();
+          if (wc) wc.notifyDevice(instanceId, d.device_id);
         }
         commandId = 'broadcast';
       }
@@ -411,13 +493,16 @@ module.exports = async (ctx) => {
         command_type: commandType,
         issued_at: now,
         expires_at: dateStr(new Date(Date.now() + expiresIn * 1000)),
+        notice: deliverNotice,
+        max_delay_seconds: hasPollTarget ? pollInterval0 : 0,
+        protocol: targetProtocols.length > 0 ? (hasPollTarget ? 'poll' : 'ws') : 'unknown',
       }, '命令已创建');
     }
 
     case 'command_poll': {
-      // 设备轮询待执行命令
-      const deviceId = body.device_id ?? query.device_id ?? '';
-      const credential = body.credential ?? query.credential ?? '';
+      // 设备轮询待执行命令（兼容 header 与 body 的 camel/snake 命名）
+      const deviceId = getDeviceIdFromRequest(req, body);
+      const credential = getCredentialFromRequest(req, body);
 
       if (!phpTruthy(deviceId)) Response.error('缺少 device_id', 401, 401);
 
@@ -439,6 +524,19 @@ module.exports = async (ctx) => {
         DB.update('ea2_device_credentials', { last_used_at: nowStr() }, 'id = ?', [cred.id]);
       }
 
+      // 服务端 REST 轮询频率限制（默认 5 分钟），返回给客户端自适应
+      const pollInterval = wsControl() ? wsControl().getPollInterval(instanceId) : 300;
+      const nowMs = Date.now();
+      let retryAfter = 0;
+      if (phpTruthy(device.last_poll_at)) {
+        const lastPoll = toMs(device.last_poll_at);
+        retryAfter = Math.max(1, Math.ceil((lastPoll + pollInterval * 1000 - nowMs) / 1000));
+      }
+      if (retryAfter > 1 && !(body.force === true || query.force === '1')) {
+        // 尚未到轮询间隔：按官方协议返回 429，并带 retry_after
+        Response.error('轮询过于频繁，请按 server 限制调整 (.retry-after)', 429, 429, { retry_after: retryAfter, poll_interval_seconds: pollInterval, protocol: device.protocol || 'poll' });
+      }
+
       // 获取待执行命令
       const now = nowStr();
       const commands = DB.all(
@@ -454,9 +552,10 @@ module.exports = async (ctx) => {
         DB.update('ea2_commands', { status: 'sent' }, 'id = ?', [cmd.id]);
       }
 
-      // 更新设备最后在线时间
+      // 更新设备最后在线时间 + 记录轮询时间
       DB.update('ea2_devices', {
         last_seen_at: now,
+        last_poll_at: now,
         updated_at: now,
       }, 'id = ?', [device.id]);
 
@@ -474,7 +573,11 @@ module.exports = async (ctx) => {
         };
       });
 
-      Response.success(result, 'ok');
+      Response.success(result, 'ok', {
+        poll_interval_seconds: pollInterval,
+        protocol: device.protocol || 'poll',
+        websocket_url: '/api/ws-control?instance_uid=' + instanceUid + '&protocol=ws',
+      });
     }
 
     case 'command_report': {
@@ -614,6 +717,8 @@ module.exports = async (ctx) => {
           expires_at: dateStr(new Date(Date.now() + 3600 * 1000)),
           created_at: now,
         });
+        const wc = wsControl();
+        if (wc) wc.notifyDevice(instanceId, did);
       }
 
       Response.success({
@@ -642,6 +747,52 @@ module.exports = async (ctx) => {
         };
       });
       Response.success(result);
+    }
+
+    // ===== 连接协议切换（管理端调用，实时协调客户端） =====
+    case 'device_set_protocol': {
+      const deviceId = body.device_id ?? query.device_id ?? '';
+      const protocol = body.protocol === 'ws' ? 'ws' : (body.protocol === 'poll' ? 'poll' : '');
+      if (!phpTruthy(deviceId)) Response.error('缺少 device_id');
+      if (protocol === '') Response.error('protocol 必须为 poll 或 ws');
+      const device = DB.one(
+        "SELECT * FROM ea2_devices WHERE instance_id = ? AND device_id = ? AND lifecycle_status = 'active'",
+        [instanceId, deviceId]
+      );
+      if (!device) Response.error('设备不存在或已注销', 404, 404);
+      const wc = wsControl();
+      if (wc) wc.switchDeviceProtocol(instanceId, deviceId, protocol, 'admin');
+      const pollInterval = wc ? wc.getPollInterval(instanceId) : 300;
+      const fromProtocol = device.protocol || 'poll';
+      // 长轮询→WS：客户端无法实时响应，需等一个轮询周期才会拉取到新协议
+      let notice = '';
+      if (fromProtocol === 'poll' && protocol === 'ws') {
+        notice = '客户端当前使用长轮询，从长轮询切换至 WebSocket 后，客户端可能无法及时响应更改，至少需要 ' + pollInterval + ' 秒后才会生效。';
+      } else if (protocol === 'ws') {
+        notice = '已切换至 WebSocket，客户端将立即生效。';
+      } else if (fromProtocol === 'ws') {
+        notice = '已从 WebSocket 切换至长轮询，客户端将在下次轮询时按新间隔收取命令（每 ' + pollInterval + ' 秒）。';
+      } else {
+        notice = '已切换至长轮询，客户端将在下次轮询时按新间隔收取命令（每 ' + pollInterval + ' 秒）。';
+      }
+      Response.success({ device_id: deviceId, protocol, poll_interval_seconds: pollInterval, notice }, '连接协议已切换');
+    }
+
+    // ===== 实例通讯协议配置（管理后台） =====
+    case 'instance_protocol_get': {
+      const interval = wsControl() ? wsControl().getPollInterval(instanceId) : 300;
+      Response.success({
+        instance_uid: instanceUid,
+        poll_interval_seconds: interval,
+      });
+    }
+
+    case 'instance_protocol_set': {
+      // 需要实例管理权限（与 control.js 对齐：需管理员或超级管理员）
+      const raw = parseInt(body.poll_interval_seconds ?? query.poll_interval_seconds ?? 0, 10) || 0;
+      const interval = Math.max(5, Math.min(86400, raw)); // 5秒 ~ 24小时
+      DB.update('instances', { ea2_poll_interval_seconds: interval }, 'id = ?', [instanceId]);
+      Response.success({ instance_uid: instanceUid, poll_interval_seconds: interval }, '轮询频率限制已更新');
     }
 
     // ===== 设备错误上报 (v1) =====

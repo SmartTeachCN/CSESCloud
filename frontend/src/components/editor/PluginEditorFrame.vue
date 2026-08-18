@@ -31,6 +31,7 @@ const emit = defineEmits<{
   (e: 'save', content: string): void;
   (e: 'notify', msg: string): void;
   (e: 'pluginRequest', requestId: number, action: string, payload: any): void;
+  (e: 'setRibbon', groups: any[]): void;
 }>();
 
 const pluginFrame = ref<HTMLIFrameElement | null>(null);
@@ -80,6 +81,10 @@ ${html}
     // 便捷方法：直接通过 postMessage 发送保存事件
     emitSave: (content) => {
       window.parent.postMessage({ __csesPluginSave: true, content, fileName: ${JSON.stringify(props.fileInfo?.name)} }, '*');
+    },
+    // 通知平台更新“靠左”Ribbon 分组（插件自定义左侧工具栏）
+    setRibbon: (groups) => {
+      window.parent.postMessage({ __csesPluginSetRibbon: true, groups }, '*');
     }
   };
   // 监听父窗口命令
@@ -127,6 +132,11 @@ window.addEventListener('message', (e) => {
   // 处理插件直接保存
   if (e.data.__csesPluginSave) {
     emit('save', e.data.content || '');
+  }
+
+  // 处理插件自定义左侧 Ribbon
+  if (e.data.__csesPluginSetRibbon) {
+    emit('setRibbon', Array.isArray(e.data.groups) ? e.data.groups : []);
   }
 });
 

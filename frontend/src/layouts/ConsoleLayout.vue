@@ -339,7 +339,9 @@ const sidebarItems = computed(() => {
       { path: '/console/admin/users', icon: 'ri-team-line', title: '用户管理' },
       { path: '/console/admin/notifications', icon: 'ri-notification-3-line', title: '通知管理' },
       { path: '/console/admin/ai-config', icon: 'ri-brain-line', title: 'AI 配置' },
-      { path: '/console/admin/web-hosting', icon: 'ri-global-line', title: '网页空间' }
+      { path: '/console/admin/web-hosting', icon: 'ri-global-line', title: '网页空间' },
+      { path: '/console/admin/dataspace', icon: 'ri-hard-drive-2-line', title: '数据空间' },
+      { path: '/console/admin/help', icon: 'ri-book-open-line', title: '帮助中心' }
     ];
   }
   return [

@@ -294,7 +294,7 @@ module.exports = async (ctx) => {
   // 列出所有网页空间
   if (method === 'GET' && action === 'list-web-spaces') {
     const spaces = DB.all(
-      "SELECT s.*, (SELECT COUNT(*) FROM web_hosting_files WHERE space_id = s.id AND is_directory = 0) AS file_count, (SELECT COUNT(*) FROM web_hosting_files WHERE space_id = s.id AND review_status = 'pending_review' AND is_directory = 0) AS pending_count FROM web_hosting_spaces s ORDER BY s.created_at DESC"
+      "SELECT s.*, (SELECT COUNT(*) FROM web_hosting_files WHERE space_id = s.id AND is_directory = 0) AS file_count, (SELECT COUNT(*) FROM web_hosting_files WHERE space_id = s.id AND review_status = 'pending_review' AND is_directory = 0) AS pending_count FROM web_hosting_spaces s WHERE s.is_web_space = 1 ORDER BY s.created_at DESC"
     );
     Response.success(spaces);
   }
@@ -323,10 +323,24 @@ module.exports = async (ctx) => {
     Response.success({ ok: true, disabled: disabled });
   }
 
+  // 管理员删除网页空间（级联删除所有文件）
+  if (method === 'POST' && action === 'delete-web-space') {
+    const spaceId = parseInt(body.space_id ?? 0, 10) || 0;
+    if (!spaceId) Response.error('缺少空间 ID');
+    const space = DB.one('SELECT * FROM web_hosting_spaces WHERE id = ?', [spaceId]);
+    if (!space) Response.error('网页空间不存在');
+    // 级联删除所有文件（web_hosting_files 有 ON DELETE CASCADE）
+    DB.delete('web_hosting_spaces', 'id = ?', [spaceId]);
+    Auth.logAudit(0, 0, 'web_space_delete',
+      `删除网页空间: ${space.alliance_username} (slug: ${space.slug})`,
+      'success');
+    Response.success({ ok: true });
+  }
+
   // 列出待审查的网页空间（仅显示有 pending 审核的）
   if (method === 'GET' && action === 'list-pending-reviews') {
     const spaces = DB.all(
-      "SELECT s.* FROM web_hosting_spaces s WHERE s.review_status = 'pending_review' ORDER BY s.updated_at DESC"
+      "SELECT s.* FROM web_hosting_spaces s WHERE s.review_status = 'pending_review' AND s.is_web_space = 1 ORDER BY s.updated_at DESC"
     );
     // 为每个空间获取待审查文件列表
     const result = [];
@@ -351,7 +365,7 @@ module.exports = async (ctx) => {
     Response.success(result);
   }
 
-  // 审批通过网页空间（将所有 pending_review 文件同步到 published_content）
+  // 审批通过网页空间（将所有 pending_review 文件同步到 published_content 和 /.published/ 目录）
   if (method === 'POST' && action === 'approve-review') {
     const spaceId = parseInt(body.space_id ?? 0, 10) || 0;
     if (!spaceId) Response.error('缺少空间 ID');
@@ -360,16 +374,88 @@ module.exports = async (ctx) => {
     const now = nowStr();
     // 将所有 pending_review 文件的内容同步到 published_content
     const pendingFiles = DB.all(
-      "SELECT id FROM web_hosting_files WHERE space_id = ? AND review_status = 'pending_review' AND is_directory = 0",
+      "SELECT id, file_path, content, file_size, content_type FROM web_hosting_files WHERE space_id = ? AND review_status = 'pending_review' AND is_directory = 0",
       [spaceId]
     );
     for (const file of pendingFiles) {
+      const content = file.content;
       DB.update('web_hosting_files', {
-        published_content: DB.scalar("SELECT content FROM web_hosting_files WHERE id = ?", [file.id]),
-        published_size: DB.scalar("SELECT file_size FROM web_hosting_files WHERE id = ?", [file.id]) || 0,
+        published_content: content,
+        published_size: file.file_size || 0,
         review_status: 'published',
         updated_at: now,
       }, 'id = ?', [file.id]);
+
+      // 同步到 /.published/ 目录（用户可见，只读）
+      const publishedPath = '/.published' + file.file_path;
+      // 确保 /.published/ 父目录存在
+      const parentDir = publishedPath.substring(0, publishedPath.lastIndexOf('/'));
+      if (parentDir && parentDir !== '/.published') {
+        const exists = DB.scalar("SELECT 1 FROM web_hosting_files WHERE space_id = ? AND file_path = ? AND is_directory = 1", [spaceId, parentDir]);
+        if (!exists) {
+          // 递归创建目录
+          const parts = parentDir.replace('/.published/', '').split('/');
+          let currentPath = '/.published';
+          for (const part of parts) {
+            currentPath += '/' + part;
+            const dirExists = DB.scalar("SELECT 1 FROM web_hosting_files WHERE space_id = ? AND file_path = ? AND is_directory = 1", [spaceId, currentPath]);
+            if (!dirExists) {
+              DB.insert('web_hosting_files', {
+                space_id: spaceId,
+                file_path: currentPath,
+                file_size: 0,
+                content_type: null,
+                content: null,
+                is_directory: 1,
+                review_status: 'published',
+                created_at: now,
+                updated_at: now,
+              });
+            }
+          }
+        }
+      }
+      // 确保 /.published 根目录存在
+      const rootExists = DB.scalar("SELECT 1 FROM web_hosting_files WHERE space_id = ? AND file_path = '/.published' AND is_directory = 1", [spaceId]);
+      if (!rootExists) {
+        DB.insert('web_hosting_files', {
+          space_id: spaceId,
+          file_path: '/.published',
+          file_size: 0,
+          content_type: null,
+          content: null,
+          is_directory: 1,
+          review_status: 'published',
+          created_at: now,
+          updated_at: now,
+        });
+      }
+
+      // 创建/更新 published 文件
+      const pubExisting = DB.one("SELECT id FROM web_hosting_files WHERE space_id = ? AND file_path = ?", [spaceId, publishedPath]);
+      if (pubExisting) {
+        DB.update('web_hosting_files', {
+          file_size: file.file_size || 0,
+          content_type: file.content_type,
+          content: content,
+          review_status: 'published',
+          updated_at: now,
+        }, 'id = ?', [pubExisting.id]);
+      } else {
+        DB.insert('web_hosting_files', {
+          space_id: spaceId,
+          file_path: publishedPath,
+          file_size: file.file_size || 0,
+          content_type: file.content_type,
+          content: content,
+          is_directory: 0,
+          review_status: 'published',
+          published_content: content,
+          published_size: file.file_size || 0,
+          created_at: now,
+          updated_at: now,
+        });
+      }
     }
     // 更新空间状态
     DB.update('web_hosting_spaces', { review_status: 'published', updated_at: now }, 'id = ?', [spaceId]);
@@ -399,6 +485,241 @@ module.exports = async (ctx) => {
       published_size: file.published_size,
       updated_at: file.updated_at,
     });
+  }
+
+  // ===== 数据空间管理 =====
+  // 列出所有用户的数据空间占用情况
+  if (method === 'GET' && action === 'list-data-spaces') {
+    const sortBy = query.sort_by || 'used'; // 'used' | 'username'
+    const sortOrder = query.sort_order || 'desc'; // 'asc' | 'desc'
+
+    // 获取所有数据空间（is_web_space = 0 或 NULL）
+    const spaces = DB.all(
+      "SELECT * FROM web_hosting_spaces WHERE is_web_space IS NULL OR is_web_space = 0 ORDER BY alliance_username ASC"
+    );
+
+    const result = [];
+    for (const space of spaces) {
+      const spaceId = space.id;
+      const username = space.alliance_username;
+
+      // 网页空间文件
+      const webHostingUsed = parseInt(DB.scalar(
+        "SELECT COALESCE(SUM(file_size), 0) FROM web_hosting_files WHERE space_id = ?",
+        [spaceId]
+      ) ?? 0, 10) || 0;
+
+      // 查找该用户关联的学校
+      const schoolIds = DB.all(
+        "SELECT DISTINCT school_id FROM alliance_account_bindings WHERE alliance_username = ?",
+        [username]
+      ).map(r => r.school_id);
+
+      // 实例文件
+      let instanceFilesUsed = 0;
+      let instanceStorageUsed = 0;
+      let instanceCount = 0;
+      if (schoolIds.length > 0) {
+        const placeholders = schoolIds.map(() => '?').join(',');
+        instanceFilesUsed = parseInt(DB.scalar(
+          `SELECT COALESCE(SUM(cf.file_size), 0) FROM cloud_files cf \
+           JOIN instances i ON i.id = cf.instance_id \
+           WHERE i.school_id IN (${placeholders})`,
+          schoolIds
+        ) ?? 0, 10) || 0;
+        instanceStorageUsed = parseInt(DB.scalar(
+          `SELECT COALESCE(SUM(LENGTH(data)), 0) FROM instance_storage_data isd \
+           JOIN instances i ON i.id = isd.instance_id \
+           WHERE i.school_id IN (${placeholders})`,
+          schoolIds
+        ) ?? 0, 10) || 0;
+        instanceCount = parseInt(DB.scalar(
+          `SELECT COUNT(*) FROM instances WHERE school_id IN (${placeholders})`,
+          schoolIds
+        ) ?? 0, 10) || 0;
+      }
+
+      // 版本历史
+      const versionUsed = parseInt(DB.scalar(
+        "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM cloud_file_versions WHERE created_by = ?",
+        [username]
+      ) ?? 0, 10) || 0;
+
+      // 操作记录
+      const historyUsed = parseInt(DB.scalar(
+        "SELECT COALESCE(SUM(LENGTH(content_snapshot)), 0) FROM cloud_file_history WHERE created_by = ?",
+        [username]
+      ) ?? 0, 10) || 0;
+
+      const totalUsed = webHostingUsed + instanceFilesUsed + instanceStorageUsed + versionUsed + historyUsed;
+      const quota = space.storage_quota || (10 * 1024 * 1024);
+
+      // 网页空间数量
+      const webSpaceCount = parseInt(DB.scalar(
+        "SELECT COUNT(*) FROM web_hosting_spaces WHERE alliance_username = ? AND is_web_space = 1",
+        [username]
+      ) ?? 0, 10) || 0;
+
+      // 云文件数量
+      const cloudFileCount = parseInt(DB.scalar(
+        "SELECT COUNT(*) FROM web_hosting_files WHERE space_id = ? AND file_path LIKE '/.cloud/%' AND is_directory = 0",
+        [spaceId]
+      ) ?? 0, 10) || 0;
+
+      result.push({
+        space_id: spaceId,
+        username: username,
+        title: space.title || '',
+        quota: quota,
+        total_used: totalUsed,
+        used_percent: quota > 0 ? Math.round((totalUsed / quota) * 1000) / 10 : 0,
+        is_full: totalUsed >= quota,
+        breakdown: {
+          web_hosting: webHostingUsed,
+          instance_files: instanceFilesUsed,
+          instance_storage: instanceStorageUsed,
+          versions: versionUsed,
+          history: historyUsed,
+        },
+        counts: {
+          instances: instanceCount,
+          web_spaces: webSpaceCount,
+          cloud_files: cloudFileCount,
+        },
+      });
+    }
+
+    // 排序
+    if (sortBy === 'username') {
+      result.sort((a, b) => {
+        const cmp = a.username.localeCompare(b.username);
+        return sortOrder === 'asc' ? cmp : -cmp;
+      });
+    } else {
+      result.sort((a, b) => {
+        const cmp = a.total_used - b.total_used;
+        return sortOrder === 'asc' ? cmp : -cmp;
+      });
+    }
+
+    Response.success(result);
+  }
+
+  // ===== 帮助中心文档管理 =====
+  // 列出目录树（一级目录 + 二级文章），供管理后台编辑
+  if (method === 'GET' && action === 'list-help') {
+    const categories = DB.all(
+      "SELECT * FROM help_content WHERE parent_id = 0 ORDER BY sort_order ASC, id ASC"
+    );
+    const result = categories.map((cat) => {
+      const articles = DB.all(
+        "SELECT * FROM help_content WHERE parent_id = ? ORDER BY sort_order ASC, id ASC",
+        [cat.id]
+      );
+      return { ...cat, articles };
+    });
+    Response.success(result);
+  }
+
+  // 创建一级目录
+  if (method === 'POST' && action === 'create-help-category') {
+    const title = String(body.title ?? '').trim();
+    if (Helpers.empty(title)) Response.error('目录名称不能为空');
+    const now = nowStr();
+    const id = DB.insert('help_content', {
+      parent_id: 0,
+      title: title,
+      summary: String(body.summary ?? '').trim(),
+      icon: String(body.icon ?? 'ri-article-line').trim() || 'ri-article-line',
+      sort_order: parseInt(body.sort_order ?? 0, 10) || 0,
+      is_published: 1,
+      created_at: now,
+      updated_at: now,
+    });
+    Auth.logAudit(0, 0, 'create_help_category', `创建帮助目录: ${title}`, 'success');
+    Response.success({ id: id });
+  }
+
+  // 更新一级目录
+  if (method === 'POST' && action === 'update-help-category') {
+    const id = parseInt(body.id ?? 0, 10) || 0;
+    if (!id) Response.error('缺少目录 ID');
+    const existing = DB.one('SELECT * FROM help_content WHERE id = ? AND parent_id = 0', [id]);
+    if (!existing) Response.error('目录不存在');
+    const updates = { updated_at: nowStr() };
+    for (const f of ['title', 'summary', 'icon']) {
+      if (f in body) updates[f] = String(body[f]).trim();
+    }
+    if ('sort_order' in body) updates.sort_order = parseInt(body.sort_order, 10) || 0;
+    if ('is_published' in body) updates.is_published = body.is_published ? 1 : 0;
+    if (Helpers.empty(updates.title)) Response.error('目录名称不能为空');
+    DB.update('help_content', updates, 'id = ?', [id]);
+    Auth.logAudit(0, 0, 'update_help_category', `更新帮助目录: id=${id}`, 'success');
+    Response.success({ ok: true });
+  }
+
+  // 删除一级目录（级联删除其下所有文章）
+  if (method === 'POST' && action === 'delete-help-category') {
+    const id = parseInt(body.id ?? 0, 10) || 0;
+    if (!id) Response.error('缺少目录 ID');
+    const existing = DB.one('SELECT * FROM help_content WHERE id = ? AND parent_id = 0', [id]);
+    if (!existing) Response.error('目录不存在');
+    const articleCount = DB.scalar('SELECT COUNT(*) FROM help_content WHERE parent_id = ?', [id]) || 0;
+    DB.delete('help_content', 'parent_id = ?', [id]);
+    DB.delete('help_content', 'id = ?', [id]);
+    Auth.logAudit(0, 0, 'delete_help_category',
+      `删除帮助目录: ${existing.title}（含 ${articleCount} 篇文章）`, 'success');
+    Response.success({ ok: true });
+  }
+
+  // 创建二级文章
+  if (method === 'POST' && action === 'create-help-article') {
+    const parentId = parseInt(body.parent_id ?? 0, 10) || 0;
+    if (!parentId) Response.error('缺少所属目录');
+    const cat = DB.one('SELECT id FROM help_content WHERE id = ? AND parent_id = 0', [parentId]);
+    if (!cat) Response.error('所属目录不存在');
+    const title = String(body.title ?? '').trim();
+    if (Helpers.empty(title)) Response.error('文章标题不能为空');
+    const now = nowStr();
+    const id = DB.insert('help_content', {
+      parent_id: parentId,
+      title: title,
+      content: String(body.content ?? ''),
+      sort_order: parseInt(body.sort_order ?? 0, 10) || 0,
+      is_published: 1,
+      created_at: now,
+      updated_at: now,
+    });
+    Auth.logAudit(0, 0, 'create_help_article', `创建帮助文章: ${title}`, 'success');
+    Response.success({ id: id });
+  }
+
+  // 更新二级文章
+  if (method === 'POST' && action === 'update-help-article') {
+    const id = parseInt(body.id ?? 0, 10) || 0;
+    if (!id) Response.error('缺少文章 ID');
+    const existing = DB.one('SELECT * FROM help_content WHERE id = ? AND parent_id != 0', [id]);
+    if (!existing) Response.error('文章不存在');
+    const updates = { updated_at: nowStr() };
+    if ('title' in body) updates.title = String(body.title).trim();
+    if ('content' in body) updates.content = String(body.content);
+    if ('sort_order' in body) updates.sort_order = parseInt(body.sort_order, 10) || 0;
+    if ('is_published' in body) updates.is_published = body.is_published ? 1 : 0;
+    if (Helpers.empty(updates.title)) Response.error('文章标题不能为空');
+    DB.update('help_content', updates, 'id = ?', [id]);
+    Auth.logAudit(0, 0, 'update_help_article', `更新帮助文章: id=${id}`, 'success');
+    Response.success({ ok: true });
+  }
+
+  // 删除二级文章
+  if (method === 'POST' && action === 'delete-help-article') {
+    const id = parseInt(body.id ?? 0, 10) || 0;
+    if (!id) Response.error('缺少文章 ID');
+    const existing = DB.one('SELECT * FROM help_content WHERE id = ? AND parent_id != 0', [id]);
+    if (!existing) Response.error('文章不存在');
+    DB.delete('help_content', 'id = ?', [id]);
+    Auth.logAudit(0, 0, 'delete_help_article', `删除帮助文章: ${existing.title}`, 'success');
+    Response.success({ ok: true });
   }
 
   Response.error('未知操作');

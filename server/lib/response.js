@@ -46,14 +46,17 @@ function parseDate(s) {
 // ── 绑定到 res 的 Response 对象（对齐 PHP Response 类） ──
 function makeResponse(res) {
   return {
-    /** JSON 成功响应 */
-    success(data = null, message = 'ok') {
-      this.json({ code: 0, message, data });
+    /** JSON 成功响应（可选 meta 元数据，如轮询间隔、协议等） */
+    success(data = null, message = 'ok', meta = null) {
+      const payload = { code: 0, message, data };
+      if (meta && typeof meta === 'object') payload.meta = meta;
+      this.json(payload);
     },
-    /** JSON 错误响应 */
-    error(message, code = 1, httpStatus = 400) {
+    /** JSON 错误响应（可选 data 载荷，如 retry_after 等） */
+    error(message, code = 1, httpStatus = 400, data = null) {
       if (!res.headersSent) res.status(httpStatus);
-      this.json({ code, message, data: null });
+      const payload = { code, message, data };
+      this.json(payload);
     },
     /** 输出 JSON 并终止（抛出 HttpSent 模拟 exit） */
     json(payload) {

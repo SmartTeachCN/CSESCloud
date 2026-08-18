@@ -1,5 +1,5 @@
 <template>
-  <div class="standard-editor">
+  <div class="standard-editor" :class="{ immersive }">
     <!-- 顶栏 -->
     <header class="editor-top-bar">
       <div class="editor-brand">
@@ -15,11 +15,17 @@
     <div class="editor-tabs-row" v-if="openTabs.length > 0">
       <div class="editor-tabs">
         <div
-          v-for="tab in openTabs"
+          v-for="(tab, gi) in openTabs"
           :key="tab.id"
           class="editor-tab"
           :class="{ active: activeTab === tab.id, dirty: tab.dirty }"
           @click="activeTab = tab.id"
+          @contextmenu.prevent="onOpenTabMenu(tab.id, $event)"
+          draggable="true"
+          @dragstart="onTabDragStart(gi, $event)"
+          @dragover.prevent="onTabDragOver(gi)"
+          @drop="onTabDrop"
+          @dragend="onTabDragEnd"
         >
           <span class="tab-icon"><Icon :icon="tab.icon" :size="14" /></span>
           <span class="tab-title">{{ tab.title }}</span>
@@ -29,10 +35,26 @@
       </div>
     </div>
 
+    <!-- 标签右键菜单 -->
+    <Teleport to="body">
+      <div v-if="tabCtx.menu.visible" class="tab-menu-overlay" @click="tabCtx.close" @contextmenu.prevent="tabCtx.close">
+        <div class="tab-menu" :style="{ left: tabCtx.menu.x + 'px', top: tabCtx.menu.y + 'px' }">
+          <button class="tm-item" @click="tabCtx.run('close')"><Icon icon="ri-close-line" :size="14" /> 关闭</button>
+          <div class="tm-divider"></div>
+          <button class="tm-item" @click="tabCtx.run('closeAll')"><Icon icon="ri-close-circle-line" :size="14" /> 关闭所有标签</button>
+          <button class="tm-item" @click="tabCtx.run('closeOthers')"><Icon icon="ri-file-close-line" :size="14" /> 关闭其他标签</button>
+          <button class="tm-item" @click="tabCtx.run('closeLeft')"><Icon icon="ri-arrow-left-s-line" :size="14" /> 关闭左侧标签</button>
+          <button class="tm-item" @click="tabCtx.run('closeRight')"><Icon icon="ri-arrow-right-s-line" :size="14" /> 关闭右侧标签</button>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- Ribbon 工具栏 -->
     <RibbonToolbar
       :editor-info="editorInfo"
       :saving="saving"
+      :show-view-ribbon="true"
+      :selected-tool="immersive ? 'immersive' : ''"
       :can-undo="!!currentFile"
       :can-redo="!!currentFile"
       :can-save="!!currentFile"
@@ -133,6 +155,7 @@ import { ref, computed } from 'vue';
 import BrandLogo from '../../components/BrandLogo.vue';
 import RibbonToolbar from '../../components/editor/RibbonToolbar.vue';
 import StatusBarExtensions from '../../components/editor/panels/StatusBarExtensions.vue';
+import { useTabContextMenu } from '../../composables/useTabContextMenu';
 
 interface EditorTab {
   id: string;
@@ -153,6 +176,7 @@ const rightPanelWidth = ref(30);
 const activePanel = ref('preview');
 const currentLine = ref(1);
 const currentColumn = ref(1);
+const immersive = ref(false);
 
 const openTabs = ref<EditorTab[]>([
   {
@@ -273,6 +297,7 @@ function saveCurrent() {
 function onRibbonTool(tool: any) {
   if (tool.command === 'find') { /* open find */ }
   else if (tool.command === 'replace') { /* open replace */ }
+  else if (tool.command === 'goto') { /* 跳转行（演示态） */ }
   else if (tool.command === 'history') { /* open history */ }
   else if (tool.command === 'version') { /* open version */ }
   else if (tool.command === 'import') { /* handle import */ }
@@ -281,7 +306,53 @@ function onRibbonTool(tool: any) {
     if (document.fullscreenElement) document.exitFullscreen();
     else document.documentElement.requestFullscreen();
   }
+  else if (tool.command === 'refresh') {
+    if (currentFile.value?.dirty && !confirm('刷新将丢弃未保存的内容，是否继续？')) return;
+    if (currentFile.value) currentFile.value.dirty = false;
+  }
+  else if (tool.command === 'immersive') immersive.value = !immersive.value;
+  else if (tool.command === 'reload') { /* 演示态无插件 */ }
+  else if (tool.command === 'toggle-view') { /* 演示态无插件 */ }
 }
+
+// ===== 标签页右键菜单 + 拖动排序 =====
+const tabCtx = useTabContextMenu({
+  getTabs: () => openTabs.value,
+  getActiveId: () => activeTab.value,
+  setActive: (id) => { activeTab.value = id; },
+  removeTabs: (ids) => removeTabsBulk(ids),
+  saveActive: saveTabActive,
+});
+function onOpenTabMenu(id: string, e: MouseEvent) { tabCtx.open(id, e); }
+function removeTabsBulk(ids: string[]) {
+  const idSet = new Set(ids);
+  const hadActive = idSet.has(activeTab.value);
+  const prevIdx = openTabs.value.findIndex(t => t.id === activeTab.value);
+  openTabs.value = openTabs.value.filter(t => !idSet.has(t.id));
+  if (hadActive) {
+    if (openTabs.value.length === 0) activeTab.value = '';
+    else {
+      const idx = Math.min(prevIdx, openTabs.value.length - 1);
+      activeTab.value = (openTabs.value[Math.max(0, idx)] || openTabs.value[0]).id;
+    }
+  }
+}
+async function saveTabActive(): Promise<boolean> {
+  saveCurrent();
+  return true;
+}
+let dragTabIdx = -1;
+function onTabDragStart(i: number, e: DragEvent) { dragTabIdx = i; if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; }
+function onTabDragOver(i: number) {
+  if (dragTabIdx < 0 || dragTabIdx === i) return;
+  const arr = [...openTabs.value];
+  const [item] = arr.splice(dragTabIdx, 1);
+  arr.splice(i, 0, item);
+  openTabs.value = arr;
+  dragTabIdx = i;
+}
+function onTabDrop() { dragTabIdx = -1; }
+function onTabDragEnd() { dragTabIdx = -1; }
 
 function onAutoSaveChange(v: boolean) {
   autoSave.value = v;
@@ -407,4 +478,25 @@ function startDrag(e: MouseEvent) {
 .properties-panel {
   padding: var(--spacer-3);
 }
+
+/* ===== 标签右键菜单 ===== */
+.tab-menu-overlay { position: fixed; inset: 0; z-index: 2000; }
+.tab-menu {
+  position: fixed; min-width: 168px;
+  background: var(--flyout-bg); border: 1px solid var(--flyout-border);
+  border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  padding: var(--spacer-1); z-index: 2001;
+}
+.tm-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: var(--spacer-2) var(--spacer-3); border: none; background: transparent; color: var(--text-primary); font-size: var(--font-size-sm); cursor: pointer; border-radius: var(--radius-sm); text-align: left; }
+.tm-item:hover { background: var(--subtle-secondary); }
+.tm-divider { height: 1px; background: var(--divider-stroke); margin: var(--spacer-1) 0; }
+.editor-tab[draggable='true'] { cursor: grab; }
+.editor-tab[draggable='true']:active { cursor: grabbing; }
+
+/* ===== 沉浸模式 ===== */
+.standard-editor.immersive .editor-top-bar { display: none; }
+.standard-editor.immersive .editor-tabs-row { display: none; }
+.standard-editor.immersive .editor-splitter { display: none; }
+.standard-editor.immersive .split-area { display: none; }
+.standard-editor.immersive .editor-status-bar { display: none; }
 </style>

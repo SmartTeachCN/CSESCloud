@@ -26,6 +26,7 @@
       :editor-info="editorInfo"
       :manifest="effectiveRibbonManifest"
       :selected-tool="activeRibbonTool"
+      :system-right-tools="systemRightTools"
       :saving="saving"
       :is-instance="true"
       :can-undo="true"
@@ -42,9 +43,70 @@
     />
 
     <div class="editor-body">
+      <!-- Diff 标签栏（仅在有 diff 标签时显示） -->
+      <div v-if="diffTabs.length > 0" class="editor-tabs-row">
+        <div class="editor-tabs">
+          <div
+            v-for="tab in diffTabs"
+            :key="tab.id"
+            class="editor-tab diff-tab"
+            :class="{ active: tab.id === activeDiffTabId }"
+            @click="activeDiffTabId = tab.id"
+          >
+            <Icon icon="ri-contrast-2-line" :size="14" class="tab-icon" />
+            <span class="tab-title" :title="tab.name">{{ tab.name }}</span>
+            <button class="tab-close" @click.stop="closeDiffTab(tab.id)" title="关闭">
+              <Icon icon="ri-close-line" :size="12" />
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div class="editor-area" @contextmenu.prevent="onEditorContextMenu">
+        <!-- 版本预览 -->
+        <div v-if="previewContent" class="preview-view">
+          <div class="preview-header">
+            <Icon icon="ri-eye-line" :size="14" />
+            <span>{{ previewContent.name }}</span>
+            <button class="preview-close" @click="closePreview" title="关闭预览">
+              <Icon icon="ri-close-line" :size="14" />
+            </button>
+          </div>
+          <textarea
+            class="preview-textarea"
+            :value="previewContent.content"
+            readonly
+            spellcheck="false"
+          ></textarea>
+        </div>
+
+        <!-- Diff 查看器 -->
+        <div v-else-if="isDiffTabActive && activeDiffTab" class="ep-diff-viewer">
+          <div class="diff-header-bar">
+            <Icon icon="ri-contrast-2-line" :size="14" />
+            <span>{{ activeDiffTab.label1 }} → {{ activeDiffTab.label2 }}</span>
+            <span class="diff-summary-badge">
+              <span class="diff-add">+{{ activeDiffTab.additions }}</span>
+              <span class="diff-del">-{{ activeDiffTab.deletions }}</span>
+            </span>
+          </div>
+          <div class="diff-lines-container">
+            <div
+              v-for="(line, li) in activeDiffTab.diffLines"
+              :key="li"
+              class="diff-row"
+              :class="line.type"
+            >
+              <span class="diff-row-num old">{{ line.oldNum || '' }}</span>
+              <span class="diff-row-num new">{{ line.newNum || '' }}</span>
+              <span class="diff-row-sign">{{ line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ' }}</span>
+              <span class="diff-row-text">{{ line.text }}</span>
+            </div>
+          </div>
+        </div>
+
         <!-- 考试档案编辑器模式 -->
-        <div v-if="examEditorMode" class="exam-editor-view">
+        <div v-else-if="examEditorMode" class="exam-editor-view">
           <div class="exam-editor-topbar">
             <button class="exam-editor-back" @click="closeExamEditor">
               <Icon icon="ri-arrow-left-s-line" :size="16" />
@@ -139,13 +201,13 @@
         </div>
       </div>
 
-      <div v-if="!rightPanelCollapsed" class="editor-splitter" @mousedown="startDrag"></div>
+      <div v-if="!rightPanelCollapsed && !isDiffTabActive && !previewContent" class="editor-splitter" @mousedown="startDrag"></div>
 
-      <div class="split-area" :class="{ collapsed: rightPanelCollapsed }" :style="rightPanelCollapsed ? {} : { width: rightPanelWidth + '%' }">
+      <div class="split-area" :class="{ collapsed: rightPanelCollapsed || isDiffTabActive || !!previewContent }" :style="(rightPanelCollapsed || isDiffTabActive || previewContent) ? {} : { width: rightPanelWidth + '%' }">
         <button class="panel-collapse-btn" @click="rightPanelCollapsed = !rightPanelCollapsed" :title="rightPanelCollapsed ? '展开面板' : '收起面板'">
           <Icon :icon="rightPanelCollapsed ? 'ri-menu-fold-line' : 'ri-menu-unfold-line'" :size="14" />
         </button>
-        <template v-if="!rightPanelCollapsed">
+        <template v-if="!rightPanelCollapsed && !isDiffTabActive && !previewContent">
           <div class="split-tabs">
             <div class="split-tabs-scroll">
               <button
@@ -197,11 +259,14 @@
             />
             <VersionHistoryPanel
               v-else-if="activePanel === 'version'"
+              :key="(selectedFile?.id || instanceId) + '-ver'"
               :file-id="selectedFile?.id ? String(selectedFile.id) : String(instanceId)"
               :file-name="selectedFile?.name || instance?.name || '实例'"
               :is-owner="true"
               workspace-key="instance_editor"
               @open-workspace-config="openPanel('workspace')"
+              @view-diff="openDiffTab"
+              @preview-version="openPreviewTab"
             />
             <WorkspaceConfig
               v-else-if="activePanel === 'workspace'"
@@ -417,6 +482,58 @@ const selectedFile = ref<any>(null);
 const selectedFilePlugin = ref<any>(null);
 const dirtyFileContent = ref('');
 
+// ===== Diff 标签支持 =====
+interface DiffTab {
+  id: string;
+  name: string;
+  label1: string;
+  label2: string;
+  diffLines: any[];
+  additions: number;
+  deletions: number;
+}
+const diffTabs = ref<DiffTab[]>([]);
+const activeDiffTabId = ref('');
+
+const isDiffTabActive = computed(() => diffTabs.value.length > 0 && !!activeDiffTabId.value);
+
+function openDiffTab(payload: { label1: string; label2: string; diffLines: any[]; additions: number; deletions: number }) {
+  const id = `diff-${Date.now()}`;
+  const name = `差异: ${payload.label1} → ${payload.label2}`;
+  diffTabs.value.push({
+    id,
+    name,
+    label1: payload.label1,
+    label2: payload.label2,
+    diffLines: payload.diffLines,
+    additions: payload.additions,
+    deletions: payload.deletions,
+  });
+  activeDiffTabId.value = id;
+  rightPanelCollapsed.value = true;
+}
+
+function closeDiffTab(tabId: string) {
+  diffTabs.value = diffTabs.value.filter(dt => dt.id !== tabId);
+  if (activeDiffTabId.value === tabId) {
+    activeDiffTabId.value = diffTabs.value.length > 0 ? diffTabs.value[diffTabs.value.length - 1].id : '';
+  }
+}
+
+const activeDiffTab = computed(() => diffTabs.value.find(dt => dt.id === activeDiffTabId.value) || null);
+
+// 版本预览
+const previewContent = ref<{ content: string; name: string } | null>(null);
+
+function openPreviewTab(payload: { content: string; label: string; fileName: string }) {
+  previewContent.value = { content: payload.content, name: `版本预览: ${payload.fileName}` };
+  rightPanelCollapsed.value = true;
+}
+
+function closePreview() {
+  previewContent.value = null;
+}
+
 const showNewFileDialog = ref(false);
 const showNewDirDialog = ref(false);
 const newFileName = ref('config.ea2');
@@ -481,6 +598,19 @@ const ribbonManifest = ref<any[] | undefined>(undefined);
 const activeRibbonTool = ref('');
 const activeRibbonPage = ref(''); // 当前 EA2 平台应用页面: connect/exams/config
 
+// 通用“视图组”（宿主级，非插件配置）：追加在中间工具区最右侧
+const viewRibbonGroup: any = {
+  label: '视图',
+  tools: [
+    { id: 'view-fresh', label: '刷新', icon: 'ri-refresh-line', command: 'refresh' },
+    { id: 'view-fullscreen', label: '全屏', icon: 'ri-fullscreen-line', command: 'fullscreen' },
+    { id: 'view-immersive', label: '沉浸模式', icon: 'ri-focus-2-line', command: 'immersive', type: 'select' },
+  ],
+};
+
+// 宿主级会自己处理的命令（不转发给插件）
+const hostRibbonCommands = ['find', 'history', 'version', 'fullscreen', 'refresh', 'immersive', 'reload', 'share', 'import', 'export', 'save', 'undo', 'redo'];
+
 // EA2 平台应用各页面 Ribbon 操作组
 const ea2PageRibbonGroups: Record<string, any[]> = {
   connect: [{
@@ -506,20 +636,24 @@ const ea2PageRibbonGroups: Record<string, any[]> = {
   }],
 };
 
-// 考试编辑器 Ribbon 组（仅保留页面切换，不显示多余操作）
-const examRibbonGroups: any[] = [];
-
-// 合并 Ribbon：实例 Ribbon 在前，页面操作组在后
+// 考试编辑器（插件）视图组：透传插件自身 Ribbon + 宿主视图组；非插件页面：实例 Ribbon + 页面操作组 + 视图组
 const effectiveRibbonManifest = computed(() => {
+  const view = [viewRibbonGroup];
   if (examEditorMode.value) {
-    // 考试编辑模式：仅显示页面切换组，不显示考试操作/管理
-    return (ribbonManifest.value || []).filter((g: any) =>
-      g.tools && g.tools.some((t: any) => t.type === 'select')
-    );
+    const pluginR = (examEditorPlugin.value?.ribbon) || [];
+    return [...pluginR, ...view];
   }
   const instanceRibbon = ribbonManifest.value || [];
   const pageGroups = ea2PageRibbonGroups[activeRibbonPage.value] || [];
-  return [...instanceRibbon, ...pageGroups];
+  return [...instanceRibbon, ...pageGroups, ...view];
+});
+
+// 靠右系统 Ribbon（仅插件编辑器模式下显示：重新加载插件）
+const systemRightTools = computed(() => {
+  if (!examEditorMode.value) return [];
+  return [
+    { id: 'exam-reload', label: '重新加载', icon: 'ri-refresh-line', command: 'reload' },
+  ];
 });
 
 // ===== 右侧面板 =====
@@ -592,14 +726,19 @@ const editorInfo = computed(() => ({
   icon: iconName.value, lastUpdated: instance.value?.updated_at || '', lastEditor: instance.value?.owner_name || '', editButtonLabel: '编辑属性',
 }));
 
-// 实例右侧操作区按钮（始终启用）
-const instanceRightActions = computed(() => [
-  { id: 'share', label: '分享', icon: 'ri-share-forward-line', command: 'share', enabled: true },
-  { id: 'history', label: '操作记录', icon: 'ri-history-line', command: 'history', enabled: true },
-  { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', command: 'version', enabled: true },
-  { id: 'import', label: '导入', icon: 'ri-download-line', command: 'import', enabled: true },
-  { id: 'export', label: '导出', icon: 'ri-upload-2-line', command: 'export', enabled: true },
-]);
+// 实例右侧操作区按钮
+const instanceRightActions = computed(() => {
+  if (isDiffTabActive.value) {
+    return [{ id: 'export', label: '导出', icon: 'ri-upload-2-line', command: 'export', enabled: true }];
+  }
+  return [
+    { id: 'share', label: '分享', icon: 'ri-share-forward-line', command: 'share', enabled: true },
+    { id: 'history', label: '操作记录', icon: 'ri-history-line', command: 'history', enabled: true },
+    { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', command: 'version', enabled: true },
+    { id: 'import', label: '导入', icon: 'ri-download-line', command: 'import', enabled: true },
+    { id: 'export', label: '导出', icon: 'ri-upload-2-line', command: 'export', enabled: true },
+  ];
+});
 
 // ===== 加载实例 =====
 async function loadInstance() {
@@ -776,11 +915,12 @@ window.addEventListener('message', async (e) => {
 
 function onRibbonTool(tool: any) {
   if (tool.type === 'select') activeRibbonTool.value = tool.id;
-  // 考试编辑器 Ribbon 工具 → 转发到 exam iframe
-  if (examEditorMode.value && tool.command && examButtonCommands.includes(tool.command)) {
+  // 插件编辑器模式下：非宿主级命令转发到插件 iframe（透传插件工具组）
+  if (examEditorMode.value && tool.command && examEditorPlugin.value && hostRibbonCommands.indexOf(tool.command) < 0) {
     triggerExamPluginCommand(tool.command);
     return;
   }
+  if (tool.command === 'reload') { reloadExamPlugin(); return; }
   if (iframeReady.value && editorFrame.value) {
     editorFrame.value.contentWindow?.postMessage({ __ceseCommand: tool.command || tool.id }, '*');
   }
@@ -789,6 +929,7 @@ function onRibbonTool(tool: any) {
   else if (tool.command === 'version') openPanel('version');
   else if (tool.command === 'fullscreen') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }
   else if (tool.command === 'refresh') loadInstance();
+  else if (tool.command === 'immersive') { /* 沉浸模式占位，选中态由 activeRibbonTool 控制 */ }
   else if (tool.command === 'share') showShareDialog.value = true;
 }
 function handleUndo() { if (iframeReady.value && editorFrame.value) editorFrame.value.contentWindow?.postMessage({ __ceseCommand: 'undo' }, '*'); }
@@ -836,6 +977,14 @@ function closeExamEditor() {
   }
 }
 
+// 重新挂载考试编辑器插件 iframe
+function reloadExamPlugin() {
+  if (!examEditorMode.value) return;
+  const f = examEditorFile.value;
+  examEditorMode.value = false;
+  nextTick(() => { if (f) { examEditorMode.value = true; examEditorFile.value = f; } });
+}
+
 function triggerExamPluginSave() {
   // 通过 PluginEditorFrame 暴露的 iframe 元素发送保存命令
   const frame = examPluginFrame.value;
@@ -854,9 +1003,6 @@ function triggerExamPluginCommand(command: string) {
     iframe.contentWindow?.postMessage({ __ceseCommand: command }, '*');
   }
 }
-
-// 考试 Ribbon 按钮命令列表
-const examButtonCommands = ['deploy', 'proctor', 'preview', 'sessions', 'students', 'grading'];
 
 async function listEa2Files() {
   await loadFileTree('exams');
@@ -1110,11 +1256,7 @@ onMounted(async () => {
 .row-btn.danger:hover { color: var(--status-error); }
 .row-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.split-tabs-scroll { display: flex; overflow-x: auto; flex: 1; scrollbar-width: none; }
-.split-tabs-scroll::-webkit-scrollbar { display: none; }
 .split-tab.add-tab { padding: var(--spacer-2) var(--spacer-2); border-left: 1px solid var(--divider-stroke); }
-.tab-close-btn { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; border-radius: 2px; margin-left: 2px; }
-.tab-close-btn:hover { background: var(--subtle-pressed); color: var(--status-error); }
 .check-icon { margin-left: auto; color: var(--status-success); }
 .split-content > * { flex: 1; }
 
@@ -1199,5 +1341,150 @@ onMounted(async () => {
   line-height: 1.5;
   resize: none;
   outline: none;
+}
+
+/* Diff 标签栏 */
+.editor-tabs-row {
+  border-bottom: 1px solid var(--divider-stroke);
+  background: var(--subtle-secondary);
+  flex-shrink: 0;
+}
+.editor-tabs {
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.editor-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  padding: var(--spacer-1) var(--spacer-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  margin-left: var(--spacer-1);
+  margin-top: var(--spacer-1);
+  margin-bottom: -1px;
+}
+.editor-tab:hover { background: var(--subtle-pressed); color: var(--text-primary); }
+.editor-tab.active { background: var(--ctrl-fill-default); border-color: var(--divider-stroke); color: var(--text-primary); font-weight: 500; }
+.editor-tab .tab-icon { flex-shrink: 0; color: var(--text-tertiary); }
+.editor-tab.active .tab-icon { color: var(--accent-base); }
+.editor-tab .tab-title { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.editor-tab .tab-close {
+  width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-radius: var(--radius-xs);
+  color: var(--text-tertiary); cursor: pointer; flex-shrink: 0;
+}
+.editor-tab .tab-close:hover { background: var(--subtle-pressed); color: var(--text-primary); }
+
+/* Diff 查看器 */
+.ep-diff-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--app-bg);
+}
+.diff-header-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-1) var(--spacer-3);
+  background: var(--subtle-secondary);
+  border-bottom: 1px solid var(--divider-stroke);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.diff-summary-badge {
+  margin-left: auto;
+  display: flex;
+  gap: var(--spacer-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+.diff-summary-badge .diff-add { color: var(--status-success); }
+.diff-summary-badge .diff-del { color: var(--status-error); }
+.diff-lines-container {
+  flex: 1;
+  overflow: auto;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  tab-size: 4;
+}
+.diff-row {
+  display: flex;
+  min-height: 22px;
+  border-bottom: 1px solid transparent;
+}
+.diff-row.add { background: rgba(16, 124, 16, 0.1); border-bottom-color: rgba(16, 124, 16, 0.15); }
+.diff-row.del { background: rgba(196, 43, 28, 0.1); border-bottom-color: rgba(196, 43, 28, 0.15); }
+.diff-row.context { background: transparent; }
+.diff-row-num {
+  width: 44px; min-width: 44px;
+  text-align: right; padding: 0 8px;
+  color: var(--text-tertiary); font-size: 11px;
+  user-select: none; border-right: 1px solid var(--divider-stroke);
+  line-height: 22px;
+}
+.diff-row-sign {
+  width: 20px; min-width: 20px;
+  text-align: center; font-weight: 700;
+  user-select: none; line-height: 22px;
+}
+.diff-row.add .diff-row-sign { color: var(--status-success); }
+.diff-row.del .diff-row-sign { color: var(--status-error); }
+.diff-row-text {
+  flex: 1; padding: 0 8px;
+  white-space: pre; overflow-x: auto;
+  color: var(--text-primary); line-height: 22px;
+}
+
+/* 版本预览 */
+.preview-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--app-bg);
+}
+.preview-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-1) var(--spacer-3);
+  background: var(--subtle-secondary);
+  border-bottom: 1px solid var(--divider-stroke);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.preview-close {
+  margin-left: auto;
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; border-radius: var(--radius-sm);
+  color: var(--text-tertiary); cursor: pointer;
+}
+.preview-close:hover { background: var(--subtle-pressed); color: var(--text-primary); }
+.preview-textarea {
+  flex: 1;
+  width: 100%;
+  padding: 16px;
+  background: var(--app-bg);
+  color: var(--text-primary);
+  border: none;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  tab-size: 4;
 }
 </style>

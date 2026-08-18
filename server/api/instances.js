@@ -15,6 +15,28 @@
 const crypto = require('crypto');
 const { nowStr } = require('../lib/response');
 
+/** 从 FS 读取应用数据，合并到实例行 */
+function enrichWithApp(row) {
+  if (!row || !row.app_key) return row;
+  try {
+    const { AppFS } = require('../lib/dev-fs');
+    const app = AppFS.readByKey(row.app_key);
+    if (app) {
+      row.app_name = app.name;
+      row.app_category = app.category;
+      if (row._withManifest) {
+        row.app_info_manifest = app.app_info_manifest;
+        row.storage_manifest = app.storage_manifest;
+        row.editor_html = app.editor_html;
+        row.editor_js = app.editor_js;
+        row.interface_schema = app.interface_schema;
+        row.control_manifest = app.control_manifest;
+      }
+    }
+  } catch (e) { /* ignore */ }
+  return row;
+}
+
 /**
  * 当前可见实例列表：
  *  - 联盟账户：自己创建的实例 + 已加入学校的实例
@@ -27,48 +49,38 @@ function listVisibleInstances(Auth, DB) {
   let rows = [];
   if (Auth.isInstanceSub()) {
     rows = DB.all(
-      `SELECT i.*, a.name AS app_name, a.app_key, a.category AS app_category,
-              g.name AS group_name, g.sort_order AS group_order
+      `SELECT i.*, g.name AS group_name, g.sort_order AS group_order
        FROM instances i
-       LEFT JOIN apps a ON a.id = i.app_id
        LEFT JOIN instance_groups g ON g.id = i.group_id
        WHERE i.id = ?`,
       [user.instance_id]
     );
   } else if (Auth.isAlliance()) {
     rows = DB.all(
-      `SELECT i.*, a.name AS app_name, a.app_key, a.category AS app_category,
-              g.name AS group_name, g.sort_order AS group_order,
+      `SELECT i.*, g.name AS group_name, g.sort_order AS group_order,
               'owned' AS relation
        FROM instances i
-       LEFT JOIN apps a ON a.id = i.app_id
        LEFT JOIN instance_groups g ON g.id = i.group_id
        WHERE i.owner_key = ?
        UNION ALL
-       SELECT i.*, a.name AS app_name, a.app_key, a.category AS app_category,
-              NULL AS group_name, 0 AS group_order,
+       SELECT i.*, NULL AS group_name, 0 AS group_order,
               'shared' AS relation
        FROM instances i
        JOIN instance_shares s ON s.instance_id = i.id
-       LEFT JOIN apps a ON a.id = i.app_id
        WHERE s.target_type = 'alliance' AND s.target_user_id = 0
        UNION ALL
-       SELECT i.*, a.name AS app_name, a.app_key, a.category AS app_category,
-              NULL AS group_name, 0 AS group_order,
+       SELECT i.*, NULL AS group_name, 0 AS group_order,
               'shared' AS relation
        FROM instances i
        JOIN share_items si ON si.resource_type = 'instance' AND si.resource_id = i.id AND si.is_deleted = 0
-       JOIN share_user_permissions sup ON sup.share_id = si.id AND sup.target_user_id = ? AND sup.status = 'accepted'
-       LEFT JOIN apps a ON a.id = i.app_id`,
+       JOIN share_user_permissions sup ON sup.share_id = si.id AND sup.target_user_id = ? AND sup.status = 'accepted'`,
       [ownerKey, user.user_id ?? 0]
     );
   } else {
     rows = DB.all(
-      `SELECT i.*, a.name AS app_name, a.app_key, a.category AS app_category,
-              g.name AS group_name, g.sort_order AS group_order,
+      `SELECT i.*, g.name AS group_name, g.sort_order AS group_order,
               CASE WHEN i.owner_key = ? THEN 'owned' ELSE 'shared' END AS relation
        FROM instances i
-       LEFT JOIN apps a ON a.id = i.app_id
        LEFT JOIN instance_groups g ON g.id = i.group_id
        LEFT JOIN instance_shares s ON s.instance_id = i.id AND s.target_user_id = ? AND s.target_type = 'sub'
        LEFT JOIN share_items si ON si.resource_type = 'instance' AND si.resource_id = i.id AND si.is_deleted = 0
@@ -76,6 +88,10 @@ function listVisibleInstances(Auth, DB) {
        WHERE i.school_id = ? AND (i.owner_key = ? OR s.id IS NOT NULL OR sup.id IS NOT NULL)`,
       [ownerKey, user.user_id ?? 0, user.user_id ?? 0, user.school_id ?? 0, ownerKey]
     );
+  }
+  // 从 FS 读取应用数据
+  for (const r of rows) {
+    enrichWithApp(r);
   }
   return rows;
 }
@@ -116,21 +132,30 @@ module.exports = async (ctx) => {
     const id = parseInt(query.id ?? 0, 10) || 0;
     if (!Auth.canAccessInstance(id)) Response.error('无权访问该实例', 403, 403);
     const ins = DB.one(
-      `SELECT i.*, a.name AS app_name, a.app_key, a.category AS app_category,
-              a.app_info_manifest, a.storage_manifest, a.editor_html, a.editor_js, a.interface_schema,
-              a.control_manifest,
-              g.name AS group_name
+      `SELECT i.*, g.name AS group_name
        FROM instances i
-       LEFT JOIN apps a ON a.id = i.app_id
        LEFT JOIN instance_groups g ON g.id = i.group_id
        WHERE i.id = ?`,
       [id]
     );
     if (!ins) Response.error('实例不存在');
-    if (!Helpers.empty(ins.app_info_manifest)) ins.app_info_manifest = JSON.parse(ins.app_info_manifest);
-    if (!Helpers.empty(ins.storage_manifest)) ins.storage_manifest = JSON.parse(ins.storage_manifest);
-    if (!Helpers.empty(ins.interface_schema)) ins.interface_schema = JSON.parse(ins.interface_schema);
-    if (!Helpers.empty(ins.control_manifest)) ins.control_manifest = JSON.parse(ins.control_manifest);
+    // 从 FS 读取应用清单数据
+    ins._withManifest = true;
+    enrichWithApp(ins);
+    if (!Helpers.empty(ins.app_info_manifest) && typeof ins.app_info_manifest === 'object') {
+      // already an object from FS
+    } else if (!Helpers.empty(ins.app_info_manifest)) {
+      ins.app_info_manifest = JSON.parse(ins.app_info_manifest);
+    }
+    if (!Helpers.empty(ins.storage_manifest) && typeof ins.storage_manifest === 'string') {
+      ins.storage_manifest = JSON.parse(ins.storage_manifest);
+    }
+    if (!Helpers.empty(ins.interface_schema) && typeof ins.interface_schema === 'string') {
+      ins.interface_schema = JSON.parse(ins.interface_schema);
+    }
+    if (!Helpers.empty(ins.control_manifest) && typeof ins.control_manifest === 'string') {
+      ins.control_manifest = JSON.parse(ins.control_manifest);
+    }
     if (!Helpers.empty(ins.config)) ins.config = JSON.parse(ins.config);
     ins.can_write = Auth.canWriteInstance(id);
     Response.success(ins);
@@ -142,20 +167,49 @@ module.exports = async (ctx) => {
     const appId = parseInt(body.app_id ?? 0, 10) || 0;
     const groupId = parseInt(body.group_id ?? 0, 10) || 0;
     if (name === '') Response.error('实例名称不能为空');
+
+    // 检查数据空间配额
+    const username = Auth.allianceUsername();
+    const schoolId = Auth.schoolId() || 0;
+    if (username) {
+      const space = DB.one("SELECT * FROM web_hosting_spaces WHERE alliance_username = ? AND (is_web_space IS NULL OR is_web_space = 0)", [username]);
+      if (space) {
+        const quota = space.storage_quota || (10 * 1024 * 1024);
+        const totalUsed = parseInt(DB.scalar(
+          "SELECT COALESCE(SUM(file_size), 0) FROM web_hosting_files WHERE space_id = ?",
+          [space.id]
+        ) ?? 0, 10) || 0;
+        const instFiles = parseInt(DB.scalar(
+          "SELECT COALESCE(SUM(cf.file_size), 0) FROM cloud_files cf JOIN instances i ON i.id = cf.instance_id WHERE i.school_id = ?",
+          [schoolId]
+        ) ?? 0, 10) || 0;
+        const instStorage = parseInt(DB.scalar(
+          "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM instance_storage_data isd JOIN instances i ON i.id = isd.instance_id WHERE i.school_id = ?",
+          [schoolId]
+        ) ?? 0, 10) || 0;
+        if (totalUsed + instFiles + instStorage >= quota) {
+          Response.error('数据空间已满，请清理数据空间后再创建实例');
+        }
+      }
+    }
+
     if (appId > 0) {
       const { AppFS } = require('../lib/dev-fs');
       const allApps = AppFS.listPublished();
       const app = allApps.find(a => a._id === appId);
       if (!app) Response.error('所选应用不存在或未发布');
       type = app.category;
+      var appKey = app.app_key;
+    } else {
+      var appKey = null;
     }
-    const schoolId = Auth.schoolId() || 0;
     // 系统自动分配 instance_uid
     const instanceUid = 'inst-' + crypto.randomBytes(6).toString('hex');
     const now = nowStr();
     DB.insert('instances', {
       school_id: schoolId,
       app_id: appId > 0 ? appId : null,
+      app_key: appKey,
       name: name,
       service_type: type,
       status: 'running',

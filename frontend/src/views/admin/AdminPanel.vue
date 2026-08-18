@@ -41,12 +41,8 @@
                 <span class="info-label">管理员用户名</span>
                 <code>{{ tempAdminUser }}</code>
               </div>
-              <button
-                v-if="!user?.is_temp_admin"
-                class="btn btn-primary"
-                @click="toggleTempAdmin(!tempAdminEnabled)"
-                :disabled="busy"
-              >
+              <button v-if="!user?.is_temp_admin" class="btn btn-primary" @click="toggleTempAdmin(!tempAdminEnabled)"
+                :disabled="busy">
                 {{ tempAdminEnabled ? '禁用临时管理员模式' : '启用临时管理员模式' }}
               </button>
               <p v-else class="config-note">
@@ -98,13 +94,8 @@
               <span class="role-pill" :class="u.role">{{ getRoleLabel(u.role) }}</span>
             </div>
             <div class="col-super">
-              <button
-                class="toggle-btn"
-                :class="{ on: u.is_super_admin }"
-                @click="toggleSuperAdmin(u)"
-                :disabled="busy"
-                :title="u.is_super_admin ? '撤销最高管理员' : '设为最高管理员'"
-              >
+              <button class="toggle-btn" :class="{ on: u.is_super_admin }" @click="toggleSuperAdmin(u)" :disabled="busy"
+                :title="u.is_super_admin ? '撤销最高管理员' : '设为最高管理员'">
                 {{ u.is_super_admin ? '是' : '否' }}
               </button>
             </div>
@@ -122,7 +113,9 @@
           </div>
         </div>
         <div v-else class="empty-state">
-          <div class="empty-icon"><Icon icon="ri-user-search-line" :size="48" /></div>
+          <div class="empty-icon">
+            <Icon icon="ri-user-search-line" :size="48" />
+          </div>
           <div class="empty-text">暂无匹配用户</div>
         </div>
       </div>
@@ -148,12 +141,8 @@
               <div class="form-group">
                 <label>通知范围</label>
                 <div class="type-options">
-                  <label
-                    v-for="s in scopeOptions"
-                    :key="s.value"
-                    class="type-option"
-                    :class="{ active: notifScope === s.value }"
-                  >
+                  <label v-for="s in scopeOptions" :key="s.value" class="type-option"
+                    :class="{ active: notifScope === s.value }">
                     <input type="radio" v-model="notifScope" :value="s.value" hidden />
                     <Icon :icon="s.icon" :size="16" />
                     {{ s.label }}
@@ -170,12 +159,8 @@
               <div class="form-group">
                 <label>通知类型</label>
                 <div class="type-options">
-                  <label
-                    v-for="t in adminNotifTypes"
-                    :key="t.value"
-                    class="type-option"
-                    :class="{ active: adminNotifForm.type === t.value }"
-                  >
+                  <label v-for="t in adminNotifTypes" :key="t.value" class="type-option"
+                    :class="{ active: adminNotifForm.type === t.value }">
                     <input type="radio" v-model="adminNotifForm.type" :value="t.value" hidden />
                     <Icon :icon="t.icon" :size="16" />
                     {{ t.label }}
@@ -185,12 +170,8 @@
               <div class="form-group">
                 <label>通知对象</label>
                 <div class="type-options">
-                  <label
-                    v-for="t in adminTargetOptions"
-                    :key="t.value"
-                    class="type-option"
-                    :class="{ active: adminNotifForm.target_type === t.value }"
-                  >
+                  <label v-for="t in adminTargetOptions" :key="t.value" class="type-option"
+                    :class="{ active: adminNotifForm.target_type === t.value }">
                     <input type="radio" v-model="adminNotifForm.target_type" :value="t.value" hidden />
                     <Icon :icon="t.icon" :size="16" />
                     {{ t.label }}
@@ -212,11 +193,8 @@
                 <label>通知内容</label>
                 <textarea v-model="adminNotifForm.content" placeholder="输入通知内容" rows="3" maxlength="500"></textarea>
               </div>
-              <button
-                class="btn btn-primary"
-                @click="sendAdminNotification"
-                :disabled="adminNotifBusy || !adminNotifForm.title"
-              >
+              <button class="btn btn-primary" @click="sendAdminNotification"
+                :disabled="adminNotifBusy || !adminNotifForm.title">
                 <Icon icon="ri-send-plane-line" :size="14" />
                 {{ adminNotifBusy ? '发送中...' : '发送通知' }}
               </button>
@@ -367,7 +345,9 @@
                 <h3>知识库条目</h3>
                 <p>添加知识库内容，AI 将基于这些内容回答用户问题</p>
               </div>
-              <button class="btn btn-primary" @click="showKbForm = true; editingKbId = null; kbForm = { title: '', content: '', category: '' }" style="margin-left: auto;">
+              <button class="btn btn-primary"
+                @click="showKbForm = true; editingKbId = null; kbForm = { title: '', content: '', category: '' }"
+                style="margin-left: auto;">
                 <Icon icon="ri-add-line" :size="14" />
                 添加条目
               </button>
@@ -392,7 +372,8 @@
                     </div>
                     <span class="kb-item-category" v-if="entry.category">{{ entry.category }}</span>
                   </div>
-                  <div class="kb-item-content">{{ entry.content?.substring(0, 200) }}{{ entry.content?.length > 200 ? '...' : '' }}</div>
+                  <div class="kb-item-content">{{ entry.content?.substring(0, 200) }}{{ entry.content?.length > 200 ?
+                    '...' : '' }}</div>
                   <div class="kb-item-footer">
                     <span class="kb-item-time">{{ entry.updated_at }}</span>
                     <div class="kb-item-actions">
@@ -423,7 +404,8 @@
                 </div>
                 <div class="form-actions">
                   <button class="secondary-btn" @click="showKbForm = false; editingKbId = null">取消</button>
-                  <button class="primary-btn" @click="saveKbEntry" :disabled="kbBusy">{{ editingKbId ? '更新' : '添加' }}</button>
+                  <button class="primary-btn" @click="saveKbEntry" :disabled="kbBusy">{{ editingKbId ? '更新' : '添加'
+                    }}</button>
                 </div>
               </div>
             </div>
@@ -477,7 +459,8 @@
                         <Icon :icon="fileIcon(file.file_path)" :size="14" />
                         <code class="review-file-path">{{ file.file_path }}</code>
                         <span class="review-file-size">{{ formatBytes(file.file_size) }}</span>
-                        <span v-if="file.published_size > 0" class="review-file-diff">（已公开：{{ formatBytes(file.published_size) }}）</span>
+                        <span v-if="file.published_size > 0" class="review-file-diff">（已公开：{{
+                          formatBytes(file.published_size) }}）</span>
                         <span v-else class="review-file-new">新文件</span>
                       </div>
                       <div class="review-file-actions">
@@ -526,7 +509,8 @@
                 <p>暂无网页空间</p>
               </div>
               <div v-else class="webspace-list">
-                <div v-for="ws in webSpaces" :key="ws.id" class="webspace-item" :class="{ 'admin-disabled': ws.disabled_by_admin }">
+                <div v-for="ws in webSpaces" :key="ws.id" class="webspace-item"
+                  :class="{ 'admin-disabled': ws.disabled_by_admin }">
                   <div class="webspace-info">
                     <div class="webspace-name">
                       <Icon icon="ri-home-6-line" :size="14" />
@@ -537,27 +521,25 @@
                     </div>
                     <div class="webspace-meta">
                       <span>{{ ws.file_count || 0 }} 个文件</span>
-                      <span v-if="ws.pending_count > 0" class="webspace-pending-count">{{ ws.pending_count }} 个待审查</span>
+                      <span v-if="ws.pending_count > 0" class="webspace-pending-count">{{ ws.pending_count }}
+                        个待审查</span>
                       <span>{{ ws.title || '无标题' }}</span>
                     </div>
                   </div>
                   <div class="webspace-actions">
-                    <button
-                      v-if="!ws.disabled_by_admin"
-                      class="secondary-btn danger-btn-outline"
-                      @click="openDisableDialog(ws)"
-                    >
+                    <button v-if="!ws.disabled_by_admin" class="secondary-btn danger-btn-outline"
+                      @click="openDisableDialog(ws)">
                       <Icon icon="ri-forbid-line" :size="14" />
                       停用
                     </button>
-                    <button
-                      v-else
-                      class="secondary-btn"
-                      @click="enableWebSpace(ws)"
-                      :disabled="reviewBusy"
-                    >
+                    <button v-else class="secondary-btn" @click="enableWebSpace(ws)" :disabled="reviewBusy">
                       <Icon icon="ri-check-line" :size="14" />
                       启用
+                    </button>
+                    <button class="secondary-btn danger-btn-outline" @click="deleteWebSpaceConfirm(ws)"
+                      :disabled="reviewBusy">
+                      <Icon icon="ri-delete-bin-line" :size="14" />
+                      删除
                     </button>
                   </div>
                 </div>
@@ -613,7 +595,274 @@
             </div>
             <div class="dialog-footer">
               <button class="btn btn-ghost" @click="disableDialog.visible = false">取消</button>
-              <button class="btn btn-primary danger-btn" @click="confirmDisable" :disabled="reviewBusy || !disableDialog.reason">确认停用</button>
+              <button class="btn btn-primary danger-btn" @click="confirmDisable"
+                :disabled="reviewBusy || !disableDialog.reason">确认停用</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
+    </template>
+
+    <!-- ===== 数据空间管理 ===== -->
+    <template v-if="currentSection === 'dataspace'">
+      <section class="admin-section">
+        <h2 class="section-title">
+          <Icon icon="ri-hard-drive-2-line" :size="20" />
+          用户数据空间占用
+        </h2>
+        <div class="config-cards">
+          <div class="config-card config-card-full">
+            <div class="config-card-header">
+              <Icon icon="ri-database-2-line" :size="24" />
+              <div>
+                <h3>所有用户数据空间</h3>
+                <p>查看每位用户的数据空间使用情况，按用户ID或占用排序</p>
+              </div>
+              <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+                <span style="font-size:12px;color:var(--text-tertiary)">排序：</span>
+                <select v-model="dsSortBy" @change="loadDataSpaces"
+                  style="padding:4px 8px;font-size:12px;background:var(--ctrl-fill-default);border:1px solid var(--ctrl-border);border-radius:4px;color:var(--text-primary)">
+                  <option value="used">按占用</option>
+                  <option value="username">按用户ID</option>
+                </select>
+                <button class="icon-btn-sm"
+                  @click="dsSortOrder = dsSortOrder === 'desc' ? 'asc' : 'desc'; loadDataSpaces()"
+                  :title="dsSortOrder === 'desc' ? '降序' : '升序'">
+                  <Icon :icon="dsSortOrder === 'desc' ? 'ri-sort-desc' : 'ri-sort-asc'" :size="14" />
+                </button>
+              </div>
+            </div>
+            <div class="config-card-body">
+              <div v-if="dsLoading" class="loading-state">
+                <Icon icon="ri-loader-4-line" :size="24" class="spin" />
+                <span>加载中...</span>
+              </div>
+              <div v-else-if="dataSpaces.length === 0" class="model-empty">
+                <Icon icon="ri-hard-drive-2-line" :size="32" />
+                <p>暂无数据空间</p>
+              </div>
+              <div v-else class="dataspace-list">
+                <div v-for="ds in dataSpaces" :key="ds.space_id" class="dataspace-item"
+                  :class="{ 'is-full': ds.is_full }">
+                  <div class="dataspace-header">
+                    <div class="dataspace-user">
+                      <Icon icon="ri-user-line" :size="14" />
+                      <span class="dataspace-username">{{ ds.username }}</span>
+                    </div>
+                    <div class="dataspace-summary">
+                      <span class="dataspace-total">{{ formatBytes(ds.total_used) }} / {{ formatBytes(ds.quota)
+                        }}</span>
+                      <span class="dataspace-percent" :class="{ 'percent-full': ds.is_full }">{{ ds.used_percent
+                        }}%</span>
+                    </div>
+                  </div>
+                  <!-- 进度条 -->
+                  <div class="dataspace-bar">
+                    <div class="dataspace-bar-fill" :style="{ width: Math.min(ds.used_percent, 100) + '%' }"
+                      :class="{ 'bar-full': ds.is_full }"></div>
+                  </div>
+                  <!-- 详细占比 -->
+                  <div class="dataspace-breakdown">
+                    <div class="breakdown-item">
+                      <span class="breakdown-dot" style="background:#0067C0"></span>
+                      <span class="breakdown-label">云文件</span>
+                      <span class="breakdown-value">{{ formatBytes(ds.breakdown.web_hosting) }}</span>
+                    </div>
+                    <div class="breakdown-item">
+                      <span class="breakdown-dot" style="background:#107C10"></span>
+                      <span class="breakdown-label">实例文件</span>
+                      <span class="breakdown-value">{{ formatBytes(ds.breakdown.instance_files) }}</span>
+                    </div>
+                    <div class="breakdown-item">
+                      <span class="breakdown-dot" style="background:#CA8F04"></span>
+                      <span class="breakdown-label">实例存储</span>
+                      <span class="breakdown-value">{{ formatBytes(ds.breakdown.instance_storage) }}</span>
+                    </div>
+                    <div class="breakdown-item">
+                      <span class="breakdown-dot" style="background:#8764B8"></span>
+                      <span class="breakdown-label">版本记录</span>
+                      <span class="breakdown-value">{{ formatBytes(ds.breakdown.versions) }}</span>
+                    </div>
+                    <div class="breakdown-item">
+                      <span class="breakdown-dot" style="background:#E74856"></span>
+                      <span class="breakdown-label">操作记录</span>
+                      <span class="breakdown-value">{{ formatBytes(ds.breakdown.history) }}</span>
+                    </div>
+                  </div>
+                  <!-- 文件数量 -->
+                  <div class="dataspace-counts">
+                    <span>{{ ds.counts.instances }} 个实例</span>
+                    <span>{{ ds.counts.web_spaces }} 个网页空间</span>
+                    <span>{{ ds.counts.cloud_files }} 个云文件</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </template>
+
+    <!-- ===== 帮助中心管理 ===== -->
+    <template v-if="currentSection === 'help'">
+      <section class="admin-section">
+        <div class="help-admin-header">
+          <h2 class="section-title">
+            <Icon icon="ri-book-open-line" :size="20" />
+            帮助中心文档
+          </h2>
+          <button class="btn btn-primary" @click="openHelpCategoryForm(null)">
+            <Icon icon="ri-add-line" :size="14" />
+            新增一级目录
+          </button>
+        </div>
+        <div class="config-cards">
+          <div class="config-card config-card-full">
+            <div class="config-card-header">
+              <Icon icon="ri-file-list-3-line" :size="24" />
+              <div>
+                <h3>文档目录</h3>
+                <p>一级目录下的文章作为第二层展示，管理帮助中心内容</p>
+              </div>
+            </div>
+            <div class="config-card-body">
+              <div v-if="helpLoading" class="loading-state">
+                <Icon icon="ri-loader-4-line" :size="24" class="spin" />
+                <span>加载中...</span>
+              </div>
+              <div v-else-if="helpCategories.length === 0" class="model-empty">
+                <Icon icon="ri-book-open-line" :size="32" />
+                <p>暂无文档目录</p>
+                <span>点击「新增一级目录」创建帮助文档</span>
+              </div>
+              <div v-else class="help-admin-list">
+                <div v-for="cat in helpCategories" :key="cat.id" class="help-admin-category">
+                  <div class="help-admin-cat-header">
+                    <span class="help-admin-cat-icon">
+                      <Icon :icon="cat.icon || 'ri-article-line'" :size="18" />
+                    </span>
+                    <div class="help-admin-cat-info">
+                      <div class="help-admin-cat-title">
+                        {{ cat.title }}
+                        <span v-if="cat.is_published" class="review-pending-tag">已发布</span>
+                        <span v-else class="admin-disabled-tag">未发布</span>
+                        <span class="help-admin-count">{{ cat.articles?.length || 0 }} 篇文章</span>
+                      </div>
+                      <div class="help-admin-cat-summary">{{ cat.summary || '暂无简介' }}</div>
+                    </div>
+                    <div class="help-admin-cat-actions">
+                      <button class="secondary-btn" @click="openHelpArticleForm(cat, null)">
+                        <Icon icon="ri-add-line" :size="14" /> 新增文章
+                      </button>
+                      <button class="icon-btn-sm" title="编辑目录" @click="openHelpCategoryForm(cat)">
+                        <Icon icon="ri-edit-line" :size="14" />
+                      </button>
+                      <button class="icon-btn-sm danger" title="删除目录" @click="deleteHelpCategory(cat)">
+                        <Icon icon="ri-delete-bin-line" :size="14" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div v-if="cat.articles && cat.articles.length > 0" class="help-admin-articles">
+                    <div v-for="art in cat.articles" :key="art.id" class="help-admin-article">
+                      <div class="help-admin-art-info">
+                        <Icon icon="ri-file-text-line" :size="14" />
+                        <span class="help-admin-art-title">{{ art.title }}</span>
+                        <span v-if="art.is_published" class="review-pending-tag">已发布</span>
+                        <span v-else class="admin-disabled-tag">未发布</span>
+                        <span class="help-admin-art-preview">{{ (art.content || '').replace(/\s+/g, ' ').substring(0,
+                          60) }}</span>
+                      </div>
+                      <div class="help-admin-art-actions">
+                        <button class="icon-btn-sm" title="编辑文章" @click="openHelpArticleForm(cat, art)">
+                          <Icon icon="ri-edit-line" :size="14" />
+                        </button>
+                        <button class="icon-btn-sm danger" title="删除文章" @click="deleteHelpArticle(art)">
+                          <Icon icon="ri-delete-bin-line" :size="14" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div v-else class="help-admin-articles empty">
+                    <span>该目录下暂无文章</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 一级目录编辑对话框 -->
+      <Teleport to="body">
+        <div v-if="helpCategoryDialog.visible" class="dialog-overlay" @click.self="helpCategoryDialog.visible = false">
+          <div class="dialog">
+            <div class="dialog-header">
+              <h3>{{ helpCategoryDialog.editingId ? '编辑一级目录' : '新增一级目录' }}</h3>
+              <button class="dialog-close" @click="helpCategoryDialog.visible = false">
+                <Icon icon="ri-close-line" :size="18" />
+              </button>
+            </div>
+            <div class="dialog-body">
+              <div class="form-group">
+                <label>目录名称 <span class="required">*</span></label>
+                <input v-model="helpCategoryForm.title" type="text" placeholder="例如：快速开始" />
+              </div>
+              <div class="form-group">
+                <label>图标（RemixIcon 图标名）</label>
+                <input v-model="helpCategoryForm.icon" type="text" placeholder="例如：ri-rocket-line" />
+                <div class="help-icon-tips">
+                  <button v-for="ic in helpIconPresets" :key="ic" type="button" class="help-icon-chip"
+                    :class="{ active: helpCategoryForm.icon === ic }" @click="helpCategoryForm.icon = ic">
+                    <Icon :icon="ic" :size="14" /> {{ ic }}
+                  </button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>目录简介</label>
+                <textarea v-model="helpCategoryForm.summary" rows="2" placeholder="一句话说明该目录内容"></textarea>
+              </div>
+              <div class="form-group">
+                <label>排序（数字越小越靠前）</label>
+                <input v-model.number="helpCategoryForm.sort_order" type="number" placeholder="0" />
+              </div>
+            </div>
+            <div class="dialog-footer">
+              <button class="btn btn-ghost" @click="helpCategoryDialog.visible = false">取消</button>
+              <button class="btn btn-primary" @click="saveHelpCategory" :disabled="helpBusy">保存</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
+
+      <!-- 二级文章编辑对话框 -->
+      <Teleport to="body">
+        <div v-if="helpArticleDialog.visible" class="dialog-overlay" @click.self="helpArticleDialog.visible = false">
+          <div class="dialog help-article-dialog">
+            <div class="dialog-header">
+              <h3>{{ helpArticleDialog.editingId ? '编辑文章' : '新增文章' }} - {{ helpArticleDialog.categoryTitle }}</h3>
+              <button class="dialog-close" @click="helpArticleDialog.visible = false">
+                <Icon icon="ri-close-line" :size="18" />
+              </button>
+            </div>
+            <div class="dialog-body">
+              <div class="form-group">
+                <label>文章标题 <span class="required">*</span></label>
+                <input v-model="helpArticleForm.title" type="text" placeholder="例如：如何首次登录系统？" />
+              </div>
+              <div class="form-group">
+                <label>内容（支持 Markdown 格式）</label>
+                <textarea v-model="helpArticleForm.content" class="help-article-content" rows="16"
+                  placeholder="# 标题&#10;&#10;支持 **加粗**、`代码`、列表、链接等 Markdown 语法"></textarea>
+              </div>
+              <div class="form-group">
+                <label>排序（数字越小越靠前）</label>
+                <input v-model.number="helpArticleForm.sort_order" type="number" placeholder="0" />
+              </div>
+            </div>
+            <div class="dialog-footer">
+              <button class="btn btn-ghost" @click="helpArticleDialog.visible = false">取消</button>
+              <button class="btn btn-primary" @click="saveHelpArticle" :disabled="helpBusy">保存</button>
             </div>
           </div>
         </div>
@@ -632,12 +881,8 @@
           </div>
           <div class="dialog-body">
             <div class="role-options">
-              <label
-                v-for="r in availableRoles"
-                :key="r.value"
-                class="role-option"
-                :class="{ active: selectedRole === r.value }"
-              >
+              <label v-for="r in availableRoles" :key="r.value" class="role-option"
+                :class="{ active: selectedRole === r.value }">
                 <input type="radio" v-model="selectedRole" :value="r.value" hidden />
                 <Icon :icon="r.icon" :size="20" />
                 <div class="role-info">
@@ -684,7 +929,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { adminApi } from '../../api';
+import { adminApi, helpApi } from '../../api';
 import { useAuth } from '../../composables/useAuth';
 
 const route = useRoute();
@@ -700,6 +945,8 @@ const currentSection = computed(() => {
   if (route.path.endsWith('/notifications')) return 'notifications';
   if (route.path.endsWith('/ai-config')) return 'ai-config';
   if (route.path.endsWith('/web-hosting')) return 'web-hosting';
+  if (route.path.endsWith('/dataspace')) return 'dataspace';
+  if (route.path.endsWith('/help')) return 'help';
   return 'overview';
 });
 
@@ -708,6 +955,8 @@ const sectionTitle = computed(() => {
   if (currentSection.value === 'notifications') return '通知管理';
   if (currentSection.value === 'ai-config') return 'AI 配置';
   if (currentSection.value === 'web-hosting') return '网页空间';
+  if (currentSection.value === 'dataspace') return '数据空间';
+  if (currentSection.value === 'help') return '帮助中心';
   return '系统配置';
 });
 
@@ -1061,6 +1310,146 @@ async function enableWebSpace(ws: any) {
   }
 }
 
+async function deleteWebSpaceConfirm(ws: any) {
+  if (!confirm(`确认删除「${ws.alliance_username}」的网页空间（/site/${ws.slug}）？\n\n此操作将删除该空间下的所有文件，且不可恢复！`)) return;
+  reviewBusy.value = true;
+  try {
+    await adminApi.deleteWebSpace(ws.id);
+    alert('已删除网页空间');
+    await loadWebSpaces();
+    await loadPendingReviews();
+  } catch (e: any) {
+    alert(e.message || '删除失败');
+  } finally {
+    reviewBusy.value = false;
+  }
+}
+
+// 数据空间管理
+const dsLoading = ref(false);
+const dsSortBy = ref('used');
+const dsSortOrder = ref('desc');
+const dataSpaces = ref<any[]>([]);
+
+async function loadDataSpaces() {
+  dsLoading.value = true;
+  try {
+    dataSpaces.value = await adminApi.listDataSpaces(dsSortBy.value, dsSortOrder.value);
+  } catch { dataSpaces.value = []; }
+  finally { dsLoading.value = false; }
+}
+
+// 帮助中心文档管理
+const helpLoading = ref(false);
+const helpBusy = ref(false);
+const helpCategories = ref<any[]>([]);
+const helpCategoryDialog = ref({ visible: false, editingId: 0 as number | null });
+const helpArticleDialog = ref({ visible: false, editingId: 0 as number | null, categoryId: 0, categoryTitle: '' });
+const helpCategoryForm = ref({ title: '', icon: 'ri-article-line', summary: '', sort_order: 0 });
+const helpArticleForm = ref({ title: '', content: '', sort_order: 0 });
+
+const helpIconPresets = [
+  'ri-rocket-line', 'ri-graduation-cap-line', 'ri-settings-3-line',
+  'ri-cloud-line', 'ri-user-line', 'ri-shield-keyhole-line',
+  'ri-developer-board-line', 'ri-question-answer-line', 'ri-article-line',
+];
+
+async function loadHelpCategories() {
+  helpLoading.value = true;
+  try {
+    helpCategories.value = await helpApi.list();
+  } catch { helpCategories.value = []; }
+  finally { helpLoading.value = false; }
+}
+
+function openHelpCategoryForm(cat: any) {
+  if (cat) {
+    helpCategoryDialog.value = { visible: true, editingId: cat.id };
+    helpCategoryForm.value = {
+      title: cat.title,
+      icon: cat.icon || 'ri-article-line',
+      summary: cat.summary || '',
+      sort_order: cat.sort_order || 0,
+    };
+  } else {
+    helpCategoryDialog.value = { visible: true, editingId: null };
+    helpCategoryForm.value = { title: '', icon: 'ri-article-line', summary: '', sort_order: 0 };
+  }
+}
+
+async function saveHelpCategory() {
+  if (!helpCategoryForm.value.title.trim()) { alert('请输入目录名称'); return; }
+  helpBusy.value = true;
+  try {
+    const data = {
+      title: helpCategoryForm.value.title.trim(),
+      icon: helpCategoryForm.value.icon.trim() || 'ri-article-line',
+      summary: helpCategoryForm.value.summary.trim(),
+      sort_order: helpCategoryForm.value.sort_order || 0,
+    };
+    if (helpCategoryDialog.value.editingId) {
+      await helpApi.updateCategory(helpCategoryDialog.value.editingId, data);
+    } else {
+      await helpApi.createCategory(data);
+    }
+    helpCategoryDialog.value.visible = false;
+    await loadHelpCategories();
+  } catch (e: any) { alert(e.message || '保存失败'); }
+  finally { helpBusy.value = false; }
+}
+
+async function deleteHelpCategory(cat: any) {
+  const count = cat.articles?.length || 0;
+  if (!confirm(`确认删除目录「${cat.title}」？\n${count > 0 ? `该目录下的 ${count} 篇文章将一并删除，且不可恢复！` : '此操作不可恢复！'}`)) return;
+  helpBusy.value = true;
+  try {
+    await helpApi.deleteCategory(cat.id);
+    await loadHelpCategories();
+  } catch (e: any) { alert(e.message || '删除失败'); }
+  finally { helpBusy.value = false; }
+}
+
+function openHelpArticleForm(cat: any, art: any) {
+  if (art) {
+    helpArticleDialog.value = { visible: true, editingId: art.id, categoryId: cat.id, categoryTitle: cat.title };
+    helpArticleForm.value = { title: art.title, content: art.content || '', sort_order: art.sort_order || 0 };
+  } else {
+    helpArticleDialog.value = { visible: true, editingId: null, categoryId: cat.id, categoryTitle: cat.title };
+    helpArticleForm.value = { title: '', content: '', sort_order: 0 };
+  }
+}
+
+async function saveHelpArticle() {
+  if (!helpArticleForm.value.title.trim()) { alert('请输入文章标题'); return; }
+  helpBusy.value = true;
+  try {
+    const data = {
+      parent_id: helpArticleDialog.value.categoryId,
+      title: helpArticleForm.value.title.trim(),
+      content: helpArticleForm.value.content,
+      sort_order: helpArticleForm.value.sort_order || 0,
+    };
+    if (helpArticleDialog.value.editingId) {
+      await helpApi.updateArticle(helpArticleDialog.value.editingId, data);
+    } else {
+      await helpApi.createArticle(data);
+    }
+    helpArticleDialog.value.visible = false;
+    await loadHelpCategories();
+  } catch (e: any) { alert(e.message || '保存失败'); }
+  finally { helpBusy.value = false; }
+}
+
+async function deleteHelpArticle(art: any) {
+  if (!confirm(`确认删除文章「${art.title}」？此操作不可恢复！`)) return;
+  helpBusy.value = true;
+  try {
+    await helpApi.deleteArticle(art.id);
+    await loadHelpCategories();
+  } catch (e: any) { alert(e.message || '删除失败'); }
+  finally { helpBusy.value = false; }
+}
+
 async function loadAiConfig() {
   try {
     const res = await adminApi.aiConfig();
@@ -1196,6 +1585,8 @@ watch(currentSection, (section) => {
   if (section === 'notifications') { loadSchools(); loadUsers(); }
   if (section === 'ai-config') { loadAiConfig(); loadAiModels(); loadKbEntries(); }
   if (section === 'web-hosting') { loadWebSpaces(); loadPendingReviews(); }
+  if (section === 'dataspace') { loadDataSpaces(); }
+  if (section === 'help') { loadHelpCategories(); }
 }, { immediate: true });
 
 onMounted(loadConfig);
@@ -1218,10 +1609,19 @@ onMounted(loadConfig);
   font-weight: 500;
 }
 
-.admin-badge.temp { background: rgba(202, 143, 4, 0.1); color: #CA8F04; }
-.admin-badge.super { background: rgba(0, 103, 192, 0.1); color: #0067C0; }
+.admin-badge.temp {
+  background: rgba(202, 143, 4, 0.1);
+  color: #CA8F04;
+}
 
-.admin-section { margin-bottom: var(--spacer-6); }
+.admin-badge.super {
+  background: rgba(0, 103, 192, 0.1);
+  color: #0067C0;
+}
+
+.admin-section {
+  margin-bottom: var(--spacer-6);
+}
 
 .config-cards {
   display: grid;
@@ -1272,7 +1672,10 @@ onMounted(loadConfig);
   justify-content: space-between;
 }
 
-.status-label { font-size: var(--font-size-sm); color: var(--text-secondary); }
+.status-label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
 
 .status-value {
   font-size: var(--font-size-sm);
@@ -1283,7 +1686,10 @@ onMounted(loadConfig);
   color: var(--text-tertiary);
 }
 
-.status-value.on { background: rgba(16, 124, 16, 0.1); color: #107C10; }
+.status-value.on {
+  background: rgba(16, 124, 16, 0.1);
+  color: #107C10;
+}
 
 .config-info {
   display: flex;
@@ -1292,7 +1698,9 @@ onMounted(loadConfig);
   font-size: var(--font-size-sm);
 }
 
-.info-label { color: var(--text-tertiary); }
+.info-label {
+  color: var(--text-tertiary);
+}
 
 .config-info code {
   font-size: var(--font-size-xs);
@@ -1311,9 +1719,12 @@ onMounted(loadConfig);
   margin: 0;
 }
 
-.filter-bar { margin-bottom: var(--spacer-3); }
+.filter-bar {
+  margin-bottom: var(--spacer-3);
+}
 
-.loading-state, .empty-state {
+.loading-state,
+.empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1330,7 +1741,8 @@ onMounted(loadConfig);
   overflow: hidden;
 }
 
-.table-header, .table-row {
+.table-header,
+.table-row {
   display: grid;
   grid-template-columns: 2fr 1.2fr 0.8fr 0.8fr 0.7fr 1fr;
   gap: var(--spacer-3);
@@ -1352,7 +1764,9 @@ onMounted(loadConfig);
   transition: background var(--fast-duration);
 }
 
-.table-row:hover { background: var(--subtle-secondary); }
+.table-row:hover {
+  background: var(--subtle-secondary);
+}
 
 .col-name {
   display: flex;
@@ -1375,7 +1789,9 @@ onMounted(loadConfig);
   flex-shrink: 0;
 }
 
-.user-info { min-width: 0; }
+.user-info {
+  min-width: 0;
+}
 
 .user-name {
   font-size: var(--font-size-sm);
@@ -1413,9 +1829,20 @@ onMounted(loadConfig);
   font-weight: 500;
 }
 
-.role-pill.admin { background: rgba(0, 103, 192, 0.1); color: #0067C0; }
-.role-pill.teacher { background: rgba(16, 124, 16, 0.1); color: #107C10; }
-.role-pill.student { background: var(--subtle-secondary); color: var(--text-tertiary); }
+.role-pill.admin {
+  background: rgba(0, 103, 192, 0.1);
+  color: #0067C0;
+}
+
+.role-pill.teacher {
+  background: rgba(16, 124, 16, 0.1);
+  color: #107C10;
+}
+
+.role-pill.student {
+  background: var(--subtle-secondary);
+  color: var(--text-tertiary);
+}
 
 .toggle-btn {
   display: inline-flex;
@@ -1436,7 +1863,10 @@ onMounted(loadConfig);
   border-color: rgba(16, 124, 16, 0.3);
 }
 
-.toggle-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .status-pill {
   display: inline-flex;
@@ -1446,8 +1876,15 @@ onMounted(loadConfig);
   font-weight: 500;
 }
 
-.status-pill.active { background: rgba(16, 124, 16, 0.1); color: #107C10; }
-.status-pill.inactive { background: rgba(196, 43, 28, 0.1); color: #C42B1C; }
+.status-pill.active {
+  background: rgba(16, 124, 16, 0.1);
+  color: #107C10;
+}
+
+.status-pill.inactive {
+  background: rgba(196, 43, 28, 0.1);
+  color: #C42B1C;
+}
 
 .col-actions {
   display: flex;
@@ -1468,7 +1905,10 @@ onMounted(loadConfig);
   cursor: pointer;
 }
 
-.icon-btn-sm:hover { background: var(--subtle-pressed); color: var(--text-primary); }
+.icon-btn-sm:hover {
+  background: var(--subtle-pressed);
+  color: var(--text-primary);
+}
 
 .role-options {
   display: flex;
@@ -1489,7 +1929,9 @@ onMounted(loadConfig);
   color: var(--text-secondary);
 }
 
-.role-option:hover { background: var(--subtle-pressed); }
+.role-option:hover {
+  background: var(--subtle-pressed);
+}
 
 .role-option.active {
   border-color: var(--accent-base);
@@ -1497,9 +1939,16 @@ onMounted(loadConfig);
   color: var(--accent-base);
 }
 
-.role-name { font-size: var(--font-size-sm); font-weight: 600; }
+.role-name {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
 
-.role-desc { font-size: var(--font-size-xs); color: var(--text-tertiary); margin-top: 2px; }
+.role-desc {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
 
 .type-options {
   display: flex;
@@ -1520,7 +1969,9 @@ onMounted(loadConfig);
   transition: all var(--fast-duration);
 }
 
-.type-option:hover { background: var(--subtle-secondary); }
+.type-option:hover {
+  background: var(--subtle-secondary);
+}
 
 .type-option.active {
   border-color: var(--accent-base);
@@ -1534,9 +1985,13 @@ onMounted(loadConfig);
   margin: 0;
 }
 
-.admin-notif-msg.error { color: var(--status-error, #C42B1C); }
+.admin-notif-msg.error {
+  color: var(--status-error, #C42B1C);
+}
 
-.required { color: var(--status-error, #C42B1C); }
+.required {
+  color: var(--status-error, #C42B1C);
+}
 
 /* ===== AI 配置样式 ===== */
 .config-card-full {
@@ -1570,7 +2025,9 @@ onMounted(loadConfig);
   border-radius: var(--radius-md);
 }
 
-.model-item.disabled { opacity: 0.5; }
+.model-item.disabled {
+  opacity: 0.5;
+}
 
 .model-item.add-new {
   background: transparent;
@@ -1590,7 +2047,10 @@ onMounted(loadConfig);
   padding: var(--spacer-1);
 }
 
-.model-info { flex: 1; min-width: 0; }
+.model-info {
+  flex: 1;
+  min-width: 0;
+}
 
 .model-name {
   font-size: var(--font-size-sm);
@@ -1630,7 +2090,9 @@ onMounted(loadConfig);
   margin: 0;
 }
 
-.model-empty span { font-size: var(--font-size-xs); }
+.model-empty span {
+  font-size: var(--font-size-xs);
+}
 
 .model-form {
   display: flex;
@@ -1666,7 +2128,9 @@ onMounted(loadConfig);
   font-family: inherit;
 }
 
-.form-row textarea { resize: vertical; }
+.form-row textarea {
+  resize: vertical;
+}
 
 .form-row input:focus,
 .form-row select:focus,
@@ -1696,7 +2160,9 @@ onMounted(loadConfig);
   transition: border-color var(--fast-duration);
 }
 
-.kb-item:hover { border-color: var(--divider-stroke); }
+.kb-item:hover {
+  border-color: var(--divider-stroke);
+}
 
 .kb-item-header {
   display: flex;
@@ -1786,7 +2252,9 @@ onMounted(loadConfig);
   font-weight: 400;
 }
 
-.review-site-link:hover { text-decoration: underline; }
+.review-site-link:hover {
+  text-decoration: underline;
+}
 
 .review-time {
   font-size: 11px;
@@ -1828,8 +2296,15 @@ onMounted(loadConfig);
   border-radius: var(--radius-xs);
 }
 
-.review-file-size { color: var(--text-tertiary); }
-.review-file-diff { color: var(--text-tertiary); font-size: 11px; }
+.review-file-size {
+  color: var(--text-tertiary);
+}
+
+.review-file-diff {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
 .review-file-new {
   color: #107C10;
   font-size: 11px;
@@ -1927,7 +2402,10 @@ onMounted(loadConfig);
   transition: border-color var(--fast-duration);
 }
 
-.webspace-item:hover { border-color: var(--divider-stroke); }
+.webspace-item:hover {
+  border-color: var(--divider-stroke);
+}
+
 .webspace-item.admin-disabled {
   opacity: 0.7;
   background: rgba(196, 43, 28, 0.04);
@@ -1956,7 +2434,9 @@ onMounted(loadConfig);
   font-weight: 400;
 }
 
-.webspace-slug:hover { text-decoration: underline; }
+.webspace-slug:hover {
+  text-decoration: underline;
+}
 
 .webspace-meta {
   display: flex;
@@ -2016,4 +2496,315 @@ onMounted(loadConfig);
   opacity: 0.9;
 }
 
+/* ===== 帮助中心文档管理 ===== */
+.help-admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacer-4);
+}
+
+.help-admin-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-3);
+}
+
+.help-admin-category {
+  background: var(--subtle-secondary);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.help-admin-cat-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-3);
+  padding: var(--spacer-3);
+}
+
+.help-admin-cat-icon {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card-bg);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-md);
+  color: var(--accent-base);
+  font-size: 18px;
+}
+
+.help-admin-cat-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.help-admin-cat-title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  flex-wrap: wrap;
+}
+
+.help-admin-cat-summary {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.help-admin-count {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.help-admin-cat-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  flex-shrink: 0;
+}
+
+.help-admin-articles {
+  border-top: 1px solid var(--divider-stroke);
+  padding: var(--spacer-2) var(--spacer-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-1);
+  background: var(--card-bg);
+}
+
+.help-admin-articles.empty {
+  align-items: center;
+  padding: var(--spacer-3);
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.help-admin-article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacer-2);
+  padding: var(--spacer-2) var(--spacer-2);
+  border-radius: var(--radius-sm);
+  transition: background var(--fast-duration);
+}
+
+.help-admin-article:hover {
+  background: var(--subtle-secondary);
+}
+
+.help-admin-art-info {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  min-width: 0;
+  flex: 1;
+  color: var(--text-secondary);
+}
+
+.help-admin-art-title {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.help-admin-art-preview {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.help-admin-art-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.help-article-dialog {
+  max-width: 720px;
+  width: 90vw;
+}
+
+.help-article-content {
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.help-icon-tips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacer-1);
+  margin-top: var(--spacer-1);
+}
+
+.help-icon-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: var(--subtle-secondary);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--fast-duration);
+}
+
+.help-icon-chip:hover {
+  color: var(--text-primary);
+}
+
+.help-icon-chip.active {
+  background: var(--accent-bg);
+  border-color: var(--accent-base);
+  color: var(--accent-base);
+}
+
+/* ===== 数据空间管理 ===== */
+.dataspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-3);
+}
+
+.dataspace-item {
+  padding: var(--spacer-3);
+  background: var(--subtle-secondary);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-md);
+}
+
+.dataspace-item.is-full {
+  border-color: var(--status-error);
+  background: rgba(196, 43, 43, 0.06);
+}
+
+.dataspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--spacer-2);
+  gap: var(--spacer-2);
+}
+
+.dataspace-user {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  color: var(--text-tertiary);
+  min-width: 0;
+}
+
+.dataspace-username {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dataspace-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  flex-shrink: 0;
+}
+
+.dataspace-total {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, monospace);
+}
+
+.dataspace-percent {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.dataspace-percent.percent-full {
+  color: var(--status-error);
+}
+
+.dataspace-bar {
+  height: 6px;
+  background: var(--divider-stroke);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  margin-bottom: var(--spacer-2);
+}
+
+.dataspace-bar-fill {
+  height: 100%;
+  background: var(--accent-base);
+  border-radius: var(--radius-full);
+  transition: width var(--normal-duration);
+}
+
+.dataspace-bar-fill.bar-full {
+  background: var(--status-error);
+}
+
+.dataspace-breakdown {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--spacer-1) var(--spacer-3);
+  margin-bottom: var(--spacer-2);
+}
+
+.breakdown-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.breakdown-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.breakdown-label {
+  flex-shrink: 0;
+}
+
+.breakdown-value {
+  margin-left: auto;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-secondary);
+}
+
+.dataspace-counts {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-3);
+  flex-wrap: wrap;
+  padding-top: var(--spacer-2);
+  border-top: 1px solid var(--divider-stroke);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
 </style>

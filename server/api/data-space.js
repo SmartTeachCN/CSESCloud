@@ -72,13 +72,53 @@ function ensureDataSpace(DB, username) {
     slug: slug,
     title: username + ' 的数据空间',
     description: '',
-    storage_quota: 100 * 1024 * 1024,
+    storage_quota: 10 * 1024 * 1024, // 10MB
     is_enabled: 1,
     is_web_space: 0,
     created_at: now,
     updated_at: now,
   });
   return DB.one("SELECT * FROM web_hosting_spaces WHERE id = ?", [spaceId]);
+}
+
+/** 检查数据空间配额，超出时抛出错误 */
+function checkQuota(ctx, username, schoolId) {
+  const { DB, Response } = ctx;
+  const space = ensureDataSpace(DB, username);
+  const spaceId = space.id;
+  const quota = space.storage_quota || (10 * 1024 * 1024);
+
+  const webHostingUsed = parseInt(DB.scalar(
+    "SELECT COALESCE(SUM(file_size), 0) FROM web_hosting_files WHERE space_id = ?",
+    [spaceId]
+  ) ?? 0, 10) || 0;
+  const instanceFilesUsed = parseInt(DB.scalar(
+    "SELECT COALESCE(SUM(cf.file_size), 0) FROM cloud_files cf \
+     JOIN instances i ON i.id = cf.instance_id \
+     WHERE i.school_id = ?",
+    [schoolId]
+  ) ?? 0, 10) || 0;
+  const instanceStorageUsed = parseInt(DB.scalar(
+    "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM instance_storage_data isd \
+     JOIN instances i ON i.id = isd.instance_id \
+     WHERE i.school_id = ?",
+    [schoolId]
+  ) ?? 0, 10) || 0;
+  const versionUsed = parseInt(DB.scalar(
+    "SELECT COALESCE(SUM(LENGTH(content)), 0) FROM cloud_file_versions WHERE created_by = ?",
+    [username]
+  ) ?? 0, 10) || 0;
+  const historyUsed = parseInt(DB.scalar(
+    "SELECT COALESCE(SUM(LENGTH(content_snapshot)), 0) FROM cloud_file_history WHERE created_by = ?",
+    [username]
+  ) ?? 0, 10) || 0;
+
+  const totalUsed = webHostingUsed + instanceFilesUsed + instanceStorageUsed + versionUsed + historyUsed;
+  if (totalUsed >= quota) {
+    const usedDisplay = formatBytes(totalUsed);
+    const quotaDisplay = formatBytes(quota);
+    Response.error(`数据空间已满（${usedDisplay} / ${quotaDisplay}），请清理数据空间后再继续操作`);
+  }
 }
 
 function normalizePath(path) {
@@ -138,8 +178,9 @@ function buildWsTree(parentPath, dirMap, wsPrefix) {
   const items = dirMap[parentPath] ?? [];
   for (const f of items) {
     const childPath = f.file_path;
+    const isPublished = childPath.startsWith('/.published');
     const child = {
-      name: phpBasename(childPath),
+      name: isPublished && childPath === '/.published' ? '最后允许公开的版本' : phpBasename(childPath),
       path: wsPrefix + '/' + childPath.replace(/^\/+/, ''),
       is_directory: !!f.is_directory,
       size: f.file_size,
@@ -149,6 +190,7 @@ function buildWsTree(parentPath, dirMap, wsPrefix) {
       file_id: f.id,
       space_id: f.space_id ?? null,
       real_path: childPath,
+      protected: isPublished && !f.is_directory, // 文件只读，目录可展开
     };
     if (f.is_directory && dirMap[childPath]) {
       child.children = buildWsTree(childPath, dirMap, wsPrefix);
@@ -427,18 +469,54 @@ module.exports = async (ctx) => {
     });
 
     // 5. 操作记录目录
-    const histories = DB.all(
+    const historyChildren = [];
+
+    // 5a. Global 全局操作日志（所有平台操作，来自 audit_logs）
+    const globalLogs = DB.all(
+      "SELECT id, username, action, target, status, created_at \
+       FROM audit_logs \
+       WHERE school_id = ? \
+       ORDER BY id DESC LIMIT 100",
+      [schoolId]
+    );
+    const globalChildren = [];
+    for (const g of globalLogs) {
+      const label = (g.username || 'system') + ' - ' + (g.action || '') + ' - ' + (g.target || '');
+      globalChildren.push({
+        name: label + ' (' + g.created_at + ')',
+        path: DS_HISTORY + '/Global/' + g.id,
+        is_directory: false,
+        size: 0,
+        file_type: 'global_log',
+        updated_at: g.created_at,
+        source: 'global_log',
+        log_id: g.id,
+        log_data: { username: g.username, action: g.action, target: g.target, status: g.status, created_at: g.created_at },
+      });
+    }
+    historyChildren.push({
+      name: 'Global',
+      path: DS_HISTORY + '/Global',
+      is_directory: true,
+      source: 'global_logs_folder',
+      badge: '全局操作',
+      protected: true,
+      children: globalChildren,
+    });
+
+    // 5b. 文件操作记录（来自 cloud_operation_logs）
+    const fileHistories = DB.all(
       "SELECT id, file_id, file_name, action_type, action_label, created_at \
        FROM cloud_operation_logs \
        WHERE created_by = ? \
        ORDER BY created_at DESC LIMIT 50",
       [username]
     );
-    const historyChildren = [];
-    for (const h of histories) {
-      historyChildren.push({
+    const fileHistoryChildren = [];
+    for (const h of fileHistories) {
+      fileHistoryChildren.push({
         name: (h.file_name || '') + ' - ' + (h.action_label || h.action_type) + ' (' + h.created_at + ')',
-        path: DS_HISTORY + '/' + h.id,
+        path: DS_HISTORY + '/文件操作/' + h.id,
         is_directory: false,
         size: 0,
         file_type: 'history',
@@ -448,6 +526,18 @@ module.exports = async (ctx) => {
         file_id: h.file_id,
       });
     }
+    if (fileHistoryChildren.length > 0) {
+      historyChildren.push({
+        name: '文件操作',
+        path: DS_HISTORY + '/文件操作',
+        is_directory: true,
+        source: 'file_history_folder',
+        badge: '文件操作',
+        protected: true,
+        children: fileHistoryChildren,
+      });
+    }
+
     nodes.push({
       name: '操作记录',
       path: DS_HISTORY,
@@ -573,6 +663,29 @@ module.exports = async (ctx) => {
       });
     }
 
+    // 全局操作日志
+    if (source === 'global_log') {
+      const logId = parseInt(query.log_id ?? 0, 10) || 0;
+      const g = DB.one(
+        "SELECT * FROM audit_logs WHERE id = ? AND school_id = ?",
+        [logId, schoolId]
+      );
+      if (!g) Response.error('操作日志不存在');
+      Response.success({
+        content: JSON.stringify({
+          username: g.username,
+          action: g.action,
+          target: g.target,
+          status: g.status,
+          ip: g.ip,
+          created_at: g.created_at,
+        }, null, 2),
+        file_type: 'global_log',
+        source: 'global_log',
+        log_id: g.id,
+      });
+    }
+
     // 操作记录
     if (source === 'history_record') {
       const historyId = parseInt(query.history_id ?? 0, 10) || 0;
@@ -594,6 +707,7 @@ module.exports = async (ctx) => {
 
   // ===== 保存云文件内容 =====
   if (method === 'POST' && action === 'save') {
+    checkQuota(ctx, username, schoolId);
     const path = String(body.path ?? '').trim();
     const source = String(body.source ?? '').trim();
     const content = body.content ?? '';
@@ -626,6 +740,10 @@ module.exports = async (ctx) => {
         [fileId, username]
       );
       if (!file) Response.error('文件不存在');
+      // 禁止编辑 /.published/ 目录下的文件
+      if (String(file.file_path).startsWith('/.published')) {
+        Response.error('已公开版本文件不可编辑，仅可查看或删除');
+      }
       const now = nowStr();
       DB.update('web_hosting_files', {
         content: content,
@@ -722,9 +840,28 @@ module.exports = async (ctx) => {
       );
       if (!file) Response.error('文件不存在');
       if (file.is_directory) {
-        const prefix = String(file.file_path).replace(/\/+$/, '') + '/';
+        // 删除 /.published 目录时，同时清除所有原始文件的 published_content
+        if (String(file.file_path).startsWith('/.published')) {
+          const prefix = String(file.file_path).replace(/\/+$/, '') + '/';
+          // 获取所有将被删除的 published 文件
+          const pubFiles = DB.all(
+            "SELECT file_path FROM web_hosting_files WHERE space_id = ? AND (file_path = ? OR file_path LIKE ?)",
+            [file.space_id, file.file_path, prefix + '%']
+          );
+          for (const pf of pubFiles) {
+            if (pf.file_path === file.file_path) continue; // 跳过目录本身
+            // 找到原始文件路径并清除 published_content
+            const origPath = pf.file_path.replace('/.published', '');
+            DB.update('web_hosting_files', { published_content: null, published_size: 0 }, 'space_id = ? AND file_path = ?', [file.space_id, origPath]);
+          }
+        }
         DB.delete('web_hosting_files', 'space_id = ? AND (file_path = ? OR file_path LIKE ?)', [file.space_id, file.file_path, prefix + '%']);
       } else {
+        // 删除单个 published 文件时，清除原始文件的 published_content
+        if (String(file.file_path).startsWith('/.published')) {
+          const origPath = file.file_path.replace('/.published', '');
+          DB.update('web_hosting_files', { published_content: null, published_size: 0 }, 'space_id = ? AND file_path = ?', [file.space_id, origPath]);
+        }
         DB.delete('web_hosting_files', 'id = ?', [fileId]);
       }
       Response.success(null, '已删除');
@@ -735,6 +872,7 @@ module.exports = async (ctx) => {
 
   // ===== 创建网页空间 =====
   if (method === 'POST' && action === 'create-webspace') {
+    checkQuota(ctx, username, schoolId);
     const title = String(body.title ?? '').trim();
     if (title === '') Response.error('请输入空间名称');
     let slug = String(body.slug ?? '').trim();
@@ -756,7 +894,7 @@ module.exports = async (ctx) => {
       slug: slug,
       title: title,
       description: body.description ?? '',
-      storage_quota: 100 * 1024 * 1024,
+      storage_quota: 10 * 1024 * 1024, // 10MB
       is_enabled: 1,
       is_web_space: 1,
       created_at: now,
@@ -801,6 +939,7 @@ module.exports = async (ctx) => {
 
   // ===== 在网页空间中创建文件 =====
   if (method === 'POST' && action === 'webspace-create-file') {
+    checkQuota(ctx, username, schoolId);
     const spaceId = parseInt(body.space_id ?? 0, 10) || 0;
     const filePath = normalizePath(body.path ?? '');
     const content = body.content ?? '';
@@ -875,6 +1014,7 @@ module.exports = async (ctx) => {
 
   // ===== 上传文件到网页空间 =====
   if (method === 'POST' && action === 'webspace-upload') {
+    checkQuota(ctx, username, schoolId);
     const spaceId = parseInt(body.space_id ?? 0, 10) || 0;
     const dir = String(body.dir ?? '/').trim();
 
@@ -963,7 +1103,7 @@ module.exports = async (ctx) => {
     ) ?? 0, 10) || 0;
 
     const totalUsed = webHostingUsed + instanceFilesUsed + instanceStorageUsed + versionUsed + historyUsed;
-    const totalQuota = 500 * 1024 * 1024; // 500MB 总配额
+    const totalQuota = space.storage_quota || (10 * 1024 * 1024); // 使用空间实际配额，默认10MB
 
     // 文件数量统计
     const instanceCount = parseInt(DB.scalar(
@@ -982,9 +1122,10 @@ module.exports = async (ctx) => {
     Response.success({
       total_used: totalUsed,
       total_quota: totalQuota,
-      total_used_display: formatBytes(totalUsed),
-      total_quota_display: formatBytes(totalQuota),
-      used_percent: totalQuota > 0 ? Math.round((totalUsed / totalQuota) * 1000) / 10 : 0,
+      usedDisplay: formatBytes(totalUsed),
+      quotaDisplay: formatBytes(totalQuota),
+      percent: totalQuota > 0 ? Math.round((totalUsed / totalQuota) * 1000) / 10 : 0,
+      isFull: totalUsed >= totalQuota,
       breakdown: {
         web_hosting: { used: webHostingUsed, display: formatBytes(webHostingUsed) },
         instance_files: { used: instanceFilesUsed, display: formatBytes(instanceFilesUsed) },

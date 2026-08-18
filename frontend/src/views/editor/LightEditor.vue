@@ -1,5 +1,5 @@
 <template>
-  <div class="unified-editor">
+  <div class="unified-editor" :class="{ immersive }">
     <!-- ===== 左侧文件栏 ===== -->
     <aside class="file-sidebar" :class="{ collapsed: !sidebarOpen }">
       <div class="sidebar-header">
@@ -110,11 +110,17 @@
       <div class="editor-tabs-row" v-if="editorTabs.length > 0">
         <div class="editor-tabs">
           <div
-            v-for="tab in editorTabs"
+            v-for="(tab, gi) in editorTabs"
             :key="tab.id"
             class="editor-tab"
             :class="{ active: tab.id === activeEditorTabId, dirty: tab.dirty, 'diff-tab': tab.isDiff }"
             @click="onTabClick(tab.id)"
+            @contextmenu.prevent="!tab.isDiff && onOpenTabMenu(tab.id, $event)"
+            :draggable="!tab.isDiff"
+            @dragstart="onTabDragStart(gi, $event)"
+            @dragover.prevent="onTabDragOver(gi)"
+            @drop="onTabDrop"
+            @dragend="onTabDragEnd"
           >
             <Icon :icon="tab.icon" :size="14" class="tab-icon" />
             <span class="tab-title" :title="tab.name">{{ tab.name }}</span>
@@ -126,11 +132,40 @@
         </div>
       </div>
 
+      <!-- 标签右键菜单 -->
+      <Teleport to="body">
+        <div v-if="tabCtx.menu.visible" class="tab-menu-overlay" @click="tabCtx.close" @contextmenu.prevent="tabCtx.close">
+          <div class="tab-menu" :style="{ left: tabCtx.menu.x + 'px', top: tabCtx.menu.y + 'px' }">
+            <button class="tm-item" @click="tabCtx.run('close')">
+              <Icon icon="ri-close-line" :size="14" /> 关闭
+            </button>
+            <div class="tm-divider"></div>
+            <button class="tm-item" @click="tabCtx.run('closeAll')">
+              <Icon icon="ri-close-circle-line" :size="14" /> 关闭所有标签
+            </button>
+            <button class="tm-item" @click="tabCtx.run('closeOthers')">
+              <Icon icon="ri-file-close-line" :size="14" /> 关闭其他标签
+            </button>
+            <button class="tm-item" @click="tabCtx.run('closeLeft')">
+              <Icon icon="ri-arrow-left-s-line" :size="14" /> 关闭左侧标签
+            </button>
+            <button class="tm-item" @click="tabCtx.run('closeRight')">
+              <Icon icon="ri-arrow-right-s-line" :size="14" /> 关闭右侧标签
+            </button>
+          </div>
+        </div>
+      </Teleport>
+
       <!-- Ribbon 工具栏 -->
       <RibbonToolbar
         :editor-info="editorInfo"
         :saving="saving"
         :is-instance="false"
+        :show-view-ribbon="true"
+        :manifest="ribbonManifest"
+        :system-right-tools="systemRightTools"
+        :system-right-selected-tool="isSourceView ? 'toggle-view' : ''"
+        :selected-tool="immersive ? 'immersive' : ''"
         :can-undo="!!currentFile"
         :can-redo="!!currentFile"
         :can-save="!!currentFile"
@@ -160,11 +195,14 @@
             :tabs="editorTabs"
             :active-tab-id="activeEditorTabId"
             :read-only="false"
+            :show-source="isSourceView"
             :hide-tabs="true"
             @tab-click="onTabClick"
             @tab-close="onTabClose"
             @update:content="onContentUpdate"
             @plugin-save="onPluginSave"
+            @plugin-change="onEditorPluginChange"
+            @plugin-ribbon="onPluginRibbon"
             @monaco-save="saveFile"
             @monaco-find="openPanel('find')"
             @monaco-replace="openPanel('find')"
@@ -238,15 +276,15 @@
         </div>
 
         <!-- 分隔条 -->
-        <div v-if="!rightPanelCollapsed" class="editor-splitter" @mousedown="startDrag"></div>
+        <div v-if="!effectiveRightPanelCollapsed" class="editor-splitter" @mousedown="startDrag"></div>
 
         <!-- 右侧面板 -->
-        <div class="split-area" :class="{ collapsed: rightPanelCollapsed }" :style="rightPanelCollapsed ? {} : { width: rightPanelWidth + '%' }">
-          <button class="panel-collapse-btn" @click="rightPanelCollapsed = !rightPanelCollapsed" :title="rightPanelCollapsed ? '展开面板' : '收起面板'">
-            <Icon :icon="rightPanelCollapsed ? 'ri-menu-fold-line' : 'ri-menu-unfold-line'" :size="14" />
+        <div class="split-area" :class="{ collapsed: effectiveRightPanelCollapsed }" :style="effectiveRightPanelCollapsed ? {} : { width: rightPanelWidth + '%' }">
+          <button class="panel-collapse-btn" @click="rightPanelCollapsed = !rightPanelCollapsed" :title="effectiveRightPanelCollapsed ? '展开面板' : '收起面板'">
+            <Icon :icon="effectiveRightPanelCollapsed ? 'ri-menu-fold-line' : 'ri-menu-unfold-line'" :size="14" />
           </button>
 
-          <template v-if="!rightPanelCollapsed">
+          <template v-if="!effectiveRightPanelCollapsed">
             <div class="split-tabs" ref="splitTabsRef">
               <div class="split-tabs-scroll">
                 <button
@@ -336,6 +374,7 @@
               <VersionHistoryPanel
                 v-else-if="activePanel === 'version'"
                 ref="versionHistoryRef"
+                :key="currentFile?.id || 'no-file'"
                 :file-id="currentFile?.source === 'cloud' ? currentFile.id : ''"
                 :file-name="currentFile?.name || ''"
                 :is-owner="currentFile?.source !== 'shared'"
@@ -343,6 +382,7 @@
                 @restore="onVersionRestore"
                 @open-workspace-config="openPanel('workspace')"
                 @view-diff="openDiffTab"
+                @preview-version="openPreviewTab"
               />
               <WorkspaceConfig
                 v-else-if="activePanel === 'workspace'"
@@ -462,6 +502,7 @@ import WorkspaceConfig from '../../components/editor/panels/WorkspaceConfig.vue'
 import StatusBarExtensions from '../../components/editor/panels/StatusBarExtensions.vue';
 import { pluginApi } from '../../api';
 import { useAuth } from '../../composables/useAuth';
+import { useTabContextMenu } from '../../composables/useTabContextMenu';
 import { api } from '../../api/client';
 
 const router = useRouter();
@@ -630,6 +671,24 @@ function openDiffTab(payload: { label1: string; label2: string; diffLines: any[]
   rightPanelCollapsed.value = true;
 }
 
+function openPreviewTab(payload: { content: string; label: string; fileName: string }) {
+  const id = `preview-${Date.now()}`;
+  const name = `版本预览: ${payload.fileName}`;
+  const editorFile: EditorFile = {
+    id,
+    name,
+    icon: 'ri-eye-line',
+    size: formatSize(new TextEncoder().encode(payload.content).length),
+    modified: payload.fileName,
+    dirty: false,
+    source: 'local',
+    content: payload.content,
+    ext: 'txt',
+    readOnly: true,
+  };
+  openFile(editorFile);
+}
+
 function closeDiffTab(tabId: string) {
   diffTabs.value = diffTabs.value.filter(dt => dt.id !== tabId);
   // 如果 diff 标签全部关闭，恢复第一个文件标签
@@ -640,6 +699,64 @@ function closeDiffTab(tabId: string) {
 
 const cloudFiles = ref<CloudFile[]>([]);
 const cloudLoading = ref(false);
+
+// ===== 标签页右键菜单 + 拖动排序 =====
+const tabCtx = useTabContextMenu({
+  getTabs: () => openTabs.value,
+  getActiveId: () => currentFile.value?.id || '',
+  setActive: (id) => { const t = openTabs.value.find(x => x.id === id); if (t) selectTab(t); },
+  removeTabs: (ids) => removeTabsBulk(ids),
+  saveActive: saveTabActive,
+});
+function onOpenTabMenu(id: string, e: MouseEvent) { tabCtx.open(id, e); }
+
+function removeTabsBulk(ids: string[]) {
+  const idSet = new Set(ids);
+  const hadActive = currentFile.value ? idSet.has(currentFile.value.id) : false;
+  const prevIdx = currentFile.value ? openTabs.value.findIndex(t => t.id === currentFile.value.id) : -1;
+  openTabs.value = openTabs.value.filter(t => !idSet.has(t.id));
+  if (hadActive) {
+    if (openTabs.value.length === 0) {
+      currentFile.value = null;
+      dirty.value = false;
+      activePlugin.value = null;
+    } else {
+      const idx = Math.min(prevIdx, openTabs.value.length - 1);
+      const next = openTabs.value[Math.max(0, idx)] || openTabs.value[0];
+      currentFile.value = next;
+      dirty.value = next.dirty;
+      updatePluginIndicator(next.ext);
+    }
+  }
+}
+
+async function saveTabActive(): Promise<boolean> {
+  if (!currentFile.value) return false;
+  if (currentFile.value.readOnly) return false;
+  await saveFile();
+  return true;
+}
+
+// 拖动排序（仅对文件标签生效）
+let dragTabIdx = -1;
+function onTabDragStart(i: number, e: DragEvent) {
+  const total = openTabs.value.length;
+  if (i >= total) return; // diff 标签不可拖
+  dragTabIdx = i;
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+}
+function onTabDragOver(i: number) {
+  const total = openTabs.value.length;
+  if (dragTabIdx < 0 || dragTabIdx === i) return;
+  if (dragTabIdx >= total || i >= total) return; // 仅文件标签之间排序
+  const arr = [...openTabs.value];
+  const [item] = arr.splice(dragTabIdx, 1);
+  arr.splice(i, 0, item);
+  openTabs.value = arr;
+  dragTabIdx = i;
+}
+function onTabDrop() { dragTabIdx = -1; }
+function onTabDragEnd() { dragTabIdx = -1; }
 
 // ===== 云文件加号菜单 =====
 const showCloudPlusMenu = ref(false);
@@ -830,6 +947,33 @@ function handleShareCloudFile(file: CloudFile) {
 // ===== 插件系统（仅用于顶栏指示器） =====
 const activePlugin = ref<any>(null);
 const allPlugins = ref<any[]>([]);
+// 平台保存按钮已请求插件同步内容，避免与插件 emitSave 回调重复请求
+const pluginSaveRequested = ref(false);
+
+// ===== 正式化编辑 Ribbon：插件“靠左”Ribbon + 系统“靠右”Ribbon =====
+const editorPlugin = ref<any>(null);
+const dynamicPluginRibbon = ref<any[] | undefined>(undefined);
+const isSourceView = ref(false);
+const immersive = ref(false);
+
+function onEditorPluginChange(plugin: any) {
+  editorPlugin.value = plugin;
+  dynamicPluginRibbon.value = plugin?.ribbon ? [...plugin.ribbon] : undefined;
+  isSourceView.value = false;
+}
+function onPluginRibbon(groups: any[]) {
+  dynamicPluginRibbon.value = groups;
+}
+// 左侧 Ribbon：插件编辑器 → 插件自定义；非插件 → 走 RibbonToolbar 内置编辑分组
+const ribbonManifest = computed(() => dynamicPluginRibbon.value);
+// 右侧系统 Ribbon：插件编辑器显示 重载 + 源文件/可视化 切换
+const systemRightTools = computed(() => {
+  if (!editorPlugin.value) return [];
+  return [
+    { id: 'reload', label: '重载编辑器', icon: 'ri-refresh-line', command: 'reload' },
+    { id: 'toggle-view', label: isSourceView.value ? '可视化编辑器' : '查看源文件', icon: isSourceView.value ? 'ri-eye-line' : 'ri-code-box-line', type: 'select', command: 'toggle-view' },
+  ];
+});
 
 // ===== 编辑器语言 =====
 const currentFileType = computed(() => {
@@ -903,7 +1047,8 @@ function onPluginSave(content: string) {
     currentFile.value.content = content;
     currentFile.value.dirty = false;
     dirty.value = false;
-    saveFile();
+    pluginSaveRequested.value = false;
+    doSaveFile();
   }
 }
 
@@ -1138,6 +1283,19 @@ async function saveFile() {
     alert('此文件为只读分享，无法保存。');
     return;
   }
+  // 插件编辑器（且未切换为源文件视图）：先向插件发送保存命令，由 onPluginSave 同步内容后走 doSaveFile 上传
+  if (activePlugin.value && !isSourceView.value && !pluginSaveRequested.value) {
+    pluginSaveRequested.value = true;
+    editorPaneRef.value?.sendCommand?.('save');
+    // 插件若未响应（如保存校验被取消），自动复位以便下次可再次请求
+    setTimeout(() => { pluginSaveRequested.value = false; }, 3000);
+    return;
+  }
+  await doSaveFile();
+}
+
+async function doSaveFile() {
+  if (!currentFile.value) return;
   saving.value = true;
 
   try {
@@ -1147,11 +1305,16 @@ async function saveFile() {
         content: currentFile.value.content || '',
         file_type: currentFile.value.ext,
       });
-      // 自动保存版本历史
-      if (versionHistoryRef.value) {
-        const label = `保存 ${new Date().toLocaleString('zh-CN')}`;
-        await versionHistoryRef.value.saveVersion(currentFile.value.content || '', label);
-      }
+      // 直接调用 API 保存版本历史（不依赖 panel ref）
+      try {
+        const versionLabel = `保存 ${new Date().toLocaleString('zh-CN')}`;
+        await api.post('/cloud-files?action=version-save', {
+          file_id: parseInt(currentFile.value.id),
+          file_name: currentFile.value.name,
+          content: currentFile.value.content || '',
+          version_label: versionLabel,
+        });
+      } catch { /* 静默失败 */ }
       // 记录操作日志
       if (operationHistoryRef.value) {
         await operationHistoryRef.value.logOperation({
@@ -1178,6 +1341,7 @@ function saveCurrentFile() {
 function onRibbonTool(tool: any) {
   if (tool.command === 'find') openPanel('find');
   else if (tool.command === 'replace') openPanel('find');
+  else if (tool.command === 'goto') editorPaneRef.value?.gotoLine();
   else if (tool.command === 'history') openPanel('history');
   else if (tool.command === 'version') openPanel('version');
   else if (tool.command === 'share') {
@@ -1188,6 +1352,34 @@ function onRibbonTool(tool: any) {
   else if (tool.command === 'fullscreen') {
     if (document.fullscreenElement) document.exitFullscreen();
     else document.documentElement.requestFullscreen();
+  }
+  else if (tool.command === 'immersive') immersive.value = !immersive.value;
+  else if (tool.command === 'refresh') handleRibbonRefresh();
+  else if (tool.command === 'reload') editorPaneRef.value?.reloadPlugin();
+  else if (tool.command === 'toggle-view') isSourceView.value = !isSourceView.value;
+  else if (editorPlugin.value && tool.command) {
+    // 插件自定义 Ribbon 命令 → 转发给插件 iframe
+    editorPaneRef.value?.sendCommand?.(tool.command);
+  }
+}
+
+async function handleRibbonRefresh() {
+  const f = currentFile.value;
+  if (!f) return;
+  if (f.dirty && !confirm('刷新将丢弃未保存的内容，是否继续？')) return;
+  if (f.source === 'cloud' || f.source === 'shared') {
+    try {
+      const data = await cloudApi.get(Number(f.id));
+      f.content = data.content || '';
+      f.dirty = false;
+      dirty.value = false;
+      editorPaneRef.value?.setValue(f.content || '');
+    } catch (e: any) {
+      alert('刷新失败: ' + (e.message || '未知错误'));
+    }
+  } else {
+    f.dirty = false;
+    dirty.value = false;
   }
 }
 
@@ -1226,6 +1418,25 @@ function handleImport() {
 }
 
 function handleExport() {
+  // 如果 diff 标签激活，导出 diff 内容
+  if (diffTabs.value.length > 0 && !currentFile.value) {
+    const activeDiff = diffTabs.value[diffTabs.value.length - 1];
+    if (!activeDiff) return;
+    let text = `差异对比: ${activeDiff.label1} → ${activeDiff.label2}\n`;
+    text += `${'='.repeat(60)}\n`;
+    for (const line of activeDiff.diffLines) {
+      const sign = line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ';
+      text += `${sign} ${line.text}\n`;
+    }
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `diff-${activeDiff.label1}-${activeDiff.label2}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    return;
+  }
   if (!currentFile.value) return;
   const blob = new Blob([currentFile.value.content || ''], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -1537,6 +1748,33 @@ onMounted(() => {
 
 .props-panel { padding: var(--spacer-3); }
 .property-list { display: flex; flex-direction: column; gap: var(--spacer-3); }
+
+/* ===== 标签右键菜单 ===== */
+.tab-menu-overlay { position: fixed; inset: 0; z-index: 2000; }
+.tab-menu {
+  position: fixed; min-width: 168px;
+  background: var(--flyout-bg); border: 1px solid var(--flyout-border);
+  border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  padding: var(--spacer-1); z-index: 2001;
+}
+.tm-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: var(--spacer-2) var(--spacer-3); border: none; background: transparent;
+  color: var(--text-primary); font-size: var(--font-size-sm); cursor: pointer;
+  border-radius: var(--radius-sm); text-align: left;
+}
+.tm-item:hover { background: var(--subtle-secondary); }
+.tm-divider { height: 1px; background: var(--divider-stroke); margin: var(--spacer-1) 0; }
+.editor-tab[draggable='true'] { cursor: grab; }
+.editor-tab[draggable='true']:active { cursor: grabbing; }
+
+/* ===== 沉浸模式 ===== */
+.unified-editor.immersive .file-sidebar { display: none; }
+.unified-editor.immersive .editor-main .editor-top-bar { display: none; }
+.unified-editor.immersive .editor-main .editor-tabs-row { display: none; }
+.unified-editor.immersive .editor-main .editor-splitter { display: none; }
+.unified-editor.immersive .editor-main .split-area { display: none; }
+.unified-editor.immersive .editor-status-bar { display: none; }
 
 
 

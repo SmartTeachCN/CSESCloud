@@ -22,20 +22,37 @@
  *  - POST action=fork              fork 共享市场应用到自己的应用列表
  */
 const crypto = require('crypto');
+const fs = require('fs');
 const { nowStr } = require('../../lib/response');
 const { AppFS } = require('../../lib/dev-fs');
 
 /** 按 app_key 查找应用（支持 id 兼容） */
 function findApp(appFS, query) {
-  // 优先用 app_key
   if (query.app_key) return appFS.readByKey(query.app_key);
-  // 兼容旧版 id 参数：遍历所有应用查找
   if (query.id) {
     const id = parseInt(query.id, 10) || 0;
     const all = appFS.listAll();
     return all.find(a => a._id === id) || null;
   }
   return null;
+}
+
+/** 根据应用所在目录，写入到正确位置（共享市场或用户目录） */
+function writeApp(app, data) {
+  if (fs.existsSync(AppFS.sharedDir(app.app_key))) {
+    AppFS.writeShared(app.app_key, data);
+  } else {
+    AppFS.writeUser(app.developer_username, app.app_key, data);
+  }
+}
+
+/** 根据应用所在目录，删除正确位置 */
+function deleteAppByKey(app) {
+  if (fs.existsSync(AppFS.sharedDir(app.app_key))) {
+    AppFS.deleteApp(app.app_key);
+  } else {
+    AppFS.deleteUserApp(app.developer_username, app.app_key);
+  }
 }
 
 module.exports = async (ctx) => {
@@ -147,7 +164,7 @@ module.exports = async (ctx) => {
 
   // ===== 更新基础信息 =====
   if (method === 'POST' && action === 'update') {
-    let app = findApp(AppFS, query);
+    let app = findApp(AppFS, body);
     if (!app) Response.error('应用不存在');
     if (!isSuperAdmin && app.developer_username !== effectiveDeveloper) {
       Response.error('无权编辑此应用');
@@ -157,13 +174,13 @@ module.exports = async (ctx) => {
     if ('version' in body) updates.version = String(body.version).trim();
     if ('description' in body) updates.description = body.description;
     if ('category' in body) updates.category = body.category;
-    AppFS.writeUser(effectiveDeveloper, app.app_key, updates);
+    writeApp(app, updates);
     Response.success(null, '已保存');
   }
 
   // ===== 保存某类清单 =====
   if (method === 'POST' && action === 'save-manifest') {
-    let app = findApp(AppFS, query);
+    let app = findApp(AppFS, body);
     if (!app) Response.error('应用不存在');
     if (!isSuperAdmin && app.developer_username !== effectiveDeveloper) {
       Response.error('无权编辑此应用');
@@ -185,14 +202,14 @@ module.exports = async (ctx) => {
     }
     const fsUpdate = { updated_at: nowStr() };
     fsUpdate[field] = value;
-    AppFS.writeUser(effectiveDeveloper, app.app_key, fsUpdate);
+    writeApp(app, fsUpdate);
     Auth.logAudit(0, 0, 'update', `开发者 ${effectiveDeveloper} 保存应用清单 ${type}`);
     Response.success(null, '清单已保存');
   }
 
   // ===== 发布应用 =====
   if (method === 'POST' && action === 'publish') {
-    let app = findApp(AppFS, query);
+    let app = findApp(AppFS, body);
     if (!app) Response.error('应用不存在');
     if (!isSuperAdmin && app.developer_username !== effectiveDeveloper) {
       Response.error('无权编辑此应用');
@@ -203,50 +220,50 @@ module.exports = async (ctx) => {
     if (!app.storage_manifest || !app.storage_manifest.collections) {
       Response.error('发布前请先完成实例存储清单');
     }
-    AppFS.writeUser(effectiveDeveloper, app.app_key, { status: 'published', updated_at: nowStr() });
+    writeApp(app, { status: 'published', updated_at: nowStr() });
     Auth.logAudit(0, 0, 'update', `开发者 ${effectiveDeveloper} 发布应用 ${app.name}`);
     Response.success(null, '应用已发布');
   }
 
   // ===== 归档应用 =====
   if (method === 'POST' && action === 'archive') {
-    let app = findApp(AppFS, query);
+    let app = findApp(AppFS, body);
     if (!app) Response.error('应用不存在');
     if (!isSuperAdmin && app.developer_username !== effectiveDeveloper) {
       Response.error('无权编辑此应用');
     }
-    AppFS.writeUser(effectiveDeveloper, app.app_key, { status: 'archived', updated_at: nowStr() });
+    writeApp(app, { status: 'archived', updated_at: nowStr() });
     Response.success(null, '应用已归档');
   }
 
   // ===== 删除应用 =====
   if (method === 'POST' && action === 'delete') {
-    let app = findApp(AppFS, query);
+    let app = findApp(AppFS, body);
     if (!app) Response.error('应用不存在');
     if (!isSuperAdmin && app.developer_username !== effectiveDeveloper) {
       Response.error('无权删除此应用');
     }
-    AppFS.deleteUserApp(effectiveDeveloper, app.app_key);
+    deleteAppByKey(app);
     Auth.logAudit(0, 0, 'delete', `开发者 ${effectiveDeveloper} 删除应用 ${app.name}`);
     Response.success(null, '应用已删除');
   }
 
   // ===== 切换共享状态 =====
   if (method === 'POST' && action === 'share') {
-    let app = findApp(AppFS, query);
+    let app = findApp(AppFS, body);
     if (!app) Response.error('应用不存在');
     if (!isSuperAdmin && app.developer_username !== effectiveDeveloper) {
       Response.error('无权编辑此应用');
     }
     const newShared = app.is_shared ? 0 : 1;
-    AppFS.writeUser(effectiveDeveloper, app.app_key, { is_shared: newShared, updated_at: nowStr() });
+    writeApp(app, { is_shared: newShared, updated_at: nowStr() });
     Auth.logAudit(0, 0, 'update', `开发者 ${effectiveDeveloper} ` + (newShared ? '共享' : '取消共享') + ` 应用 ${app.name}`);
     Response.success({ is_shared: newShared }, newShared ? '已共享到市场' : '已取消共享');
   }
 
   // ===== Fork 共享市场应用到自己的应用列表 =====
   if (method === 'POST' && action === 'fork') {
-    const src = findApp(AppFS, query);
+    const src = findApp(AppFS, body);
     if (!src || !src.is_shared) Response.error('源应用不存在或未共享');
     if (src.developer_username === effectiveDeveloper) Response.error('不能 fork 自己的应用');
     const newKey = 'app_' + crypto.createHash('md5')

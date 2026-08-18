@@ -1,540 +1,963 @@
 <template>
-  <div class="help-center">
-    <div class="page-header">
-      <div class="page-header-left">
-        <h1 class="page-title">帮助中心</h1>
-        <p class="page-description">查找常见问题解答，或联系我们的支持团队</p>
+  <div class="doc-center">
+    <!-- 顶部：标题 + 搜索 -->
+    <header class="doc-header">
+      <div class="doc-header-left">
+        <h1 class="doc-title">文档中心</h1>
+        <p class="doc-subtitle">帮助文档与使用教程</p>
       </div>
-    </div>
+      <div class="doc-search">
+        <Icon icon="ri-search-line" :size="15" class="doc-search-icon" />
+        <input
+          v-model="searchQuery"
+          type="text"
+          placeholder="搜索文档..."
+        />
+        <button v-if="searchQuery" class="doc-search-clear" @click="searchQuery = ''" title="清除">
+          <Icon icon="ri-close-line" :size="14" />
+        </button>
+      </div>
+    </header>
 
-    <div class="search-section">
-      <div class="search-box">
-        <svg class="search-icon" width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M6.5 12.0032C9.53757 12.0032 12 9.54079 12 6.50323C12 3.46566 9.53757 1.00323 6.5 1.00323C3.46243 1.00323 1 3.46566 1 6.50323C1 9.54079 3.46243 12.0032 6.5 12.0032Z M7.06135 11.3855C8.86395 10.8993 10.399 9.65071 11.1805 8.03318L14.2715 11.1242C14.4668 11.3194 14.4668 11.636 14.2715 11.8313C14.0763 12.0265 13.7597 12.0265 13.5644 11.8313L10.4734 8.74026C9.67115 10.3708 8.11256 11.6344 6.27498 12.1328L5.79157 11.1596Z" />
-        </svg>
-        <input type="text" v-model="searchQuery" placeholder="搜索帮助文档、FAQ..." />
-        <button class="btn btn-primary" @click="handleSearch">搜索</button>
-      </div>
-      <div class="popular-tags">
-        <span class="tags-label">热门搜索：</span>
-        <button
-          v-for="tag in popularTags"
-          :key="tag"
-          class="tag"
-          @click="searchQuery = tag"
-        >{{ tag }}</button>
-      </div>
-    </div>
-
-    <div class="help-layout">
-      <div class="faq-section">
-        <div class="section-header">
-          <h2 class="section-title">常见问题</h2>
-          <div class="section-tabs">
-            <button
-              v-for="cat in categories"
-              :key="cat.key"
-              class="tab-btn"
-              :class="{ active: activeCategory === cat.key }"
-              @click="activeCategory = cat.key"
-            >{{ cat.label }}</button>
-          </div>
+    <div class="doc-body">
+      <!-- 左栏：双级目录 -->
+      <aside class="doc-sidebar">
+        <!-- 二级视图：上方返回一级目录 -->
+        <div v-if="activeCategory" class="doc-sidebar-back">
+          <button class="doc-back-btn" @click="goBackToCategories">
+            <Icon icon="ri-arrow-left-s-line" :size="16" />
+            <span>返回目录</span>
+          </button>
         </div>
 
-        <div class="accordion-list">
-          <div
-            v-for="(item, idx) in filteredFaqs"
-            :key="item.id"
-            class="accordion-item"
-            :class="{ open: openIndex === idx }"
+        <!-- 一级目录（大） -->
+        <nav v-if="!activeCategory" class="doc-nav">
+          <div class="doc-nav-title">目录</div>
+          <button
+            v-for="cat in filteredCategories"
+            :key="cat.id"
+            class="doc-nav-item level-1"
+            @click="selectCategory(cat)"
           >
-            <button class="accordion-header" @click="openIndex = openIndex === idx ? -1 : idx">
-              <span class="accordion-q">{{ item.question }}</span>
-              <svg
-                class="accordion-icon"
-                :class="{ rotated: openIndex === idx }"
-                width="14" height="14" viewBox="0 0 16 16" fill="currentColor"
-              >
-                <path d="M4.42784 5.42843C4.62352 5.23325 4.93724 5.23285 5.13305 5.42767L7.99935 8.28882L10.8653 5.42767C11.0611 5.23285 11.3748 5.23325 11.5705 5.42843C11.7662 5.62361 11.7666 5.9373 11.5715 6.13311L8.35762 9.34703C8.16244 9.5427 7.84876 9.54231 7.65295 9.34703L4.43906 6.13311C4.24325 5.9373 4.24285 5.62361 4.42784 5.42843Z" />
-              </svg>
+            <span class="doc-nav-icon"><Icon :icon="cat.icon || 'ri-article-line'" :size="18" /></span>
+            <span class="doc-nav-label">{{ cat.title }}</span>
+            <span class="doc-nav-count">{{ cat.article_count }}</span>
+          </button>
+          <div v-if="filteredCategories.length === 0" class="doc-nav-empty">
+            <Icon icon="ri-search-line" :size="20" />
+            <span>未找到匹配的目录</span>
+          </div>
+        </nav>
+
+        <!-- 二级文章（小） -->
+        <nav v-else class="doc-nav">
+          <div class="doc-nav-current">
+            <span class="doc-nav-icon"><Icon :icon="activeCategory.icon || 'ri-article-line'" :size="18" /></span>
+            <span class="doc-nav-label">{{ activeCategory.title }}</span>
+          </div>
+          <div class="doc-nav-divider"></div>
+          <button
+            v-for="art in filteredArticles"
+            :key="art.id"
+            class="doc-nav-item level-2"
+            :class="{ active: activeArticle && activeArticle.id === art.id }"
+            @click="selectArticle(art)"
+          >
+            <Icon icon="ri-file-text-line" :size="13" class="doc-nav-file-icon" />
+            <span class="doc-nav-label">{{ art.title }}</span>
+          </button>
+          <div v-if="filteredArticles.length === 0" class="doc-nav-empty">
+            <Icon icon="ri-search-line" :size="20" />
+            <span>未找到匹配的文章</span>
+          </div>
+        </nav>
+      </aside>
+
+      <!-- 主内容区 -->
+      <main class="doc-content">
+        <!-- 未选择目录：欢迎 + 分类卡片 -->
+        <template v-if="!activeCategory">
+          <div class="doc-hero">
+            <h2>欢迎使用 CSES Cloud 智教云</h2>
+            <p>这里汇集了平台的使用指南与常见问题，帮助你快速上手</p>
+          </div>
+          <div v-if="filteredCategories.length === 0" class="doc-empty">
+            <Icon icon="ri-book-open-line" :size="48" />
+            <p>暂无帮助文档</p>
+            <span>请稍后再来查看，或联系管理员获取帮助</span>
+          </div>
+          <div v-else class="doc-cards">
+            <button
+              v-for="cat in filteredCategories"
+              :key="cat.id"
+              class="doc-card"
+              @click="selectCategory(cat)"
+            >
+              <span class="doc-card-icon"><Icon :icon="cat.icon || 'ri-article-line'" :size="26" /></span>
+              <div class="doc-card-info">
+                <div class="doc-card-title">{{ cat.title }}</div>
+                <div class="doc-card-summary">{{ cat.summary || '查看该分类下的文档' }}</div>
+                <div class="doc-card-count">{{ cat.article_count }} 篇文章</div>
+              </div>
+              <Icon icon="ri-arrow-right-s-line" :size="20" class="doc-card-arrow" />
             </button>
-            <div v-if="openIndex === idx" class="accordion-body">
-              <div class="accordion-a">{{ item.answer }}</div>
-              <div class="accordion-footer">
-                <span class="accordion-meta">有用 · {{ item.helpful }}</span>
-                <div class="accordion-actions">
-                  <button class="btn-ghost-sm" @click="markHelpful(item)"><Icon icon="ri-thumb-up-line" :size="14" /> 有用</button>
-                  <button class="btn-ghost-sm"><Icon icon="ri-book-open-line" :size="14" /> 查看文档</button>
-                </div>
-              </div>
-            </div>
           </div>
-          <div v-if="filteredFaqs.length === 0" class="empty-state">
-            <div class="empty-icon"><Icon icon="ri-search-line" :size="48" /></div>
-            <div class="empty-text">未找到相关问题，试试其他关键词</div>
-          </div>
-        </div>
-      </div>
+        </template>
 
-      <div class="sidebar-section">
-        <div class="panel contact-card">
-          <div class="panel-header">
-            <h3 class="panel-title">联系支持</h3>
-          </div>
-          <div class="panel-body">
-            <div class="contact-icon"><Icon icon="ri-question-answer-line" :size="40" /></div>
-            <div class="contact-title">需要更多帮助？</div>
-            <div class="contact-desc">我们的支持团队随时为您解答疑问</div>
-            <div class="contact-methods">
-              <div class="method-row">
-                <span class="method-icon"><Icon icon="ri-mail-line" :size="18" /></span>
-                <div>
-                  <div class="method-label">邮件支持</div>
-                  <div class="method-value">support@cses-cloud.edu</div>
-                </div>
-              </div>
-              <div class="method-row">
-                <span class="method-icon"><Icon icon="ri-customer-service-2-line" :size="18" /></span>
-                <div>
-                  <div class="method-label">在线客服</div>
-                  <div class="method-value">工作日 9:00 - 18:00</div>
-                </div>
-              </div>
-              <div class="method-row">
-                <span class="method-icon"><Icon icon="ri-phone-line" :size="18" /></span>
-                <div>
-                  <div class="method-label">技术热线</div>
-                  <div class="method-value">400-888-0001</div>
-                </div>
-              </div>
+        <!-- 已选目录但未选文章：目录简介 + 文章列表 -->
+        <template v-else-if="!activeArticle">
+          <div class="doc-category-hero">
+            <span class="doc-category-icon"><Icon :icon="activeCategory.icon || 'ri-article-line'" :size="28" /></span>
+            <div>
+              <h2>{{ activeCategory.title }}</h2>
+              <p>{{ activeCategory.summary || '选择下方文章查看详细内容' }}</p>
             </div>
-            <button class="btn btn-primary btn-full">提交工单</button>
           </div>
-        </div>
+          <div v-if="filteredArticles.length === 0" class="doc-empty">
+            <Icon icon="ri-file-text-line" :size="40" />
+            <p>该分类下暂无文章</p>
+          </div>
+          <div v-else class="doc-article-list">
+            <button
+              v-for="art in filteredArticles"
+              :key="art.id"
+              class="doc-article-item"
+              @click="selectArticle(art)"
+            >
+              <Icon icon="ri-file-text-line" :size="18" class="doc-article-icon" />
+              <span class="doc-article-title">{{ art.title }}</span>
+              <Icon icon="ri-arrow-right-s-line" :size="18" class="doc-article-arrow" />
+            </button>
+          </div>
+        </template>
 
-        <div class="panel resources-card">
-          <div class="panel-header">
-            <h3 class="panel-title">快速链接</h3>
+        <!-- 文章内容 -->
+        <template v-else>
+          <div class="doc-breadcrumb">
+            <button class="doc-breadcrumb-link" @click="goBackToCategories">文档中心</button>
+            <Icon icon="ri-arrow-right-s-line" :size="14" class="doc-breadcrumb-sep" />
+            <button class="doc-breadcrumb-link" @click="selectCategory(activeCategory)">{{ activeCategory.title }}</button>
+            <Icon icon="ri-arrow-right-s-line" :size="14" class="doc-breadcrumb-sep" />
+            <span class="doc-breadcrumb-current">{{ activeArticle.title }}</span>
           </div>
-          <div class="panel-body">
-            <div class="resource-item">
-              <span class="resource-icon"><Icon icon="ri-book-2-line" :size="24" /></span>
-              <div>
-                <div class="resource-title">API 文档</div>
-                <div class="resource-desc">REST API 参考</div>
-              </div>
-            </div>
-            <div class="resource-item">
-              <span class="resource-icon"><Icon icon="ri-graduation-cap-line" :size="24" /></span>
-              <div>
-                <div class="resource-title">视频教程</div>
-                <div class="resource-desc">入门到精通</div>
-              </div>
-            </div>
-            <div class="resource-item">
-              <span class="resource-icon"><Icon icon="ri-code-s-slash-line" :size="24" /></span>
-              <div>
-                <div class="resource-title">开发者社区</div>
-                <div class="resource-desc">GitHub Discussions</div>
-              </div>
-            </div>
-            <div class="resource-item">
-              <span class="resource-icon"><Icon icon="ri-file-list-3-line" :size="24" /></span>
-              <div>
-                <div class="resource-title">更新日志</div>
-                <div class="resource-desc">版本发布说明</div>
-              </div>
-            </div>
+
+          <div v-if="articleLoading" class="doc-article-loading">
+            <Icon icon="ri-loader-4-line" :size="24" class="spin" />
+            <span>加载中...</span>
           </div>
-        </div>
-      </div>
+
+          <article v-else class="doc-article">
+            <h1 class="doc-article-heading">{{ activeArticle.title }}</h1>
+            <div v-if="activeArticle.updated_at" class="doc-article-meta">
+              更新于 {{ String(activeArticle.updated_at).slice(0, 10) }}
+            </div>
+            <div v-if="activeArticle.content" class="doc-article-body" v-html="renderedContent"></div>
+            <div v-else class="doc-article-empty">该文章暂无内容</div>
+            <div class="doc-article-footer">
+              <span class="doc-feedback-label">这篇文章对你有帮助吗？</span>
+              <button class="doc-feedback-btn" @click="feedback = true" :disabled="feedback">
+                <Icon icon="ri-thumb-up-line" :size="14" />
+                {{ feedback ? '感谢反馈' : '有帮助' }}
+              </button>
+            </div>
+          </article>
+        </template>
+      </main>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
+import { marked } from 'marked';
+import { helpApi } from '../../api';
 
-interface FaqItem {
-  id: string;
-  category: string;
-  question: string;
-  answer: string;
-  helpful: number;
+marked.use({ breaks: true, gfm: true });
+
+interface HelpCategory {
+  id: number;
+  title: string;
+  summary: string;
+  icon: string;
+  article_count: number;
+  articles: { id: number; title: string; sort_order: number }[];
 }
 
 const searchQuery = ref('');
-const activeCategory = ref('getting-started');
-const openIndex = ref(-1);
+const categories = ref<HelpCategory[]>([]);
+const loading = ref(true);
+const articleLoading = ref(false);
+const activeCategory = ref<HelpCategory | null>(null);
+const activeArticle = ref<any>(null);
+const feedback = ref(false);
 
-const popularTags = ['如何登录', '重置密码', '部署服务', 'API 密钥', '数据导出'];
-
-const categories = [
-  { key: 'getting-started', label: '入门指南' },
-  { key: 'teacher', label: '教师指南' },
-  { key: 'developer', label: '开发者指南' }
-];
-
-const faqs = ref<FaqItem[]>([
-  { id: 'f1', category: 'getting-started', question: '如何首次登录系统？', answer: '使用管理员提供的账号信息登录。首次登录后请立即修改密码并完善个人信息。系统支持多种登录方式，包括学号/工号登录、邮箱登录和手机登录。', helpful: 24 },
-  { id: 'f2', category: 'getting-started', question: '忘记密码怎么办？', answer: '在登录页面点击"忘记密码"链接，通过绑定的手机或邮箱接收验证码即可重置密码。如果无法接收验证码，请联系系统管理员进行人工重置。', helpful: 18 },
-  { id: 'f3', category: 'getting-started', question: '如何创建新班级？', answer: '进入"校园集控 > 班级列表"页面，点击"新建班级"按钮，填写班级名称、所属课程、任课教师等信息即可创建。支持批量导入学生名单。', helpful: 31 },
-  { id: 'f4', category: 'teacher', question: '如何管理学生名单？', answer: '在班级详情页面可以查看和管理学生名单。支持单个添加、批量导入(Excel/CSV)、从其他班级转入等多种方式。', helpful: 15 },
-  { id: 'f5', category: 'teacher', question: '如何发布课程资料？', answer: '在班级主页的"资料"标签页中，点击"上传文件"按钮，支持 PDF、PPT、视频等多种格式。可设置学生查看权限和下载权限。', helpful: 12 },
-  { id: 'f6', category: 'teacher', question: '如何查看学生学习数据？', answer: '进入班级详情后，切换到"数据统计"标签页，可以查看学生的登录时长、任务完成率、活跃度等关键指标。支持按日/周/月查看趋势。', helpful: 9 },
-  { id: 'f7', category: 'developer', question: '如何获取 API 密钥？', answer: '进入"开发者中心"页面，点击"创建 API 密钥"按钮。请妥善保管密钥，不要泄露给第三方。密钥仅在创建时显示一次。', helpful: 42 },
-  { id: 'f8', category: 'developer', question: 'API 请求频率限制是多少？', answer: '免费版用户每分钟最多 60 次请求，专业版每分钟 300 次，企业版不限。如需更高配额，请联系商务团队。', helpful: 28 },
-  { id: 'f9', category: 'developer', question: '如何配置 Webhook？', answer: '在"开发者中心 > Webhook 配置"页面，添加 Webhook URL 并选择需要接收的事件类型。系统会将事件推送到指定的 HTTPS 端点。', helpful: 21 }
-]);
-
-const filteredFaqs = computed(() => {
-  const query = searchQuery.value.toLowerCase();
-  let items = faqs.value;
-  if (activeCategory.value) {
-    items = items.filter(f => f.category === activeCategory.value);
-  }
-  if (query) {
-    items = items.filter(f =>
-      f.question.toLowerCase().includes(query) ||
-      f.answer.toLowerCase().includes(query)
-    );
-  }
-  return items;
+// 搜索过滤：一级视图过滤目录，二级视图过滤文章
+const filteredCategories = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase();
+  if (!q) return categories.value;
+  return categories.value.filter(c =>
+    c.title.toLowerCase().includes(q) ||
+    (c.summary || '').toLowerCase().includes(q)
+  );
 });
 
-function handleSearch() {
-  openIndex.value = -1;
+const filteredArticles = computed(() => {
+  if (!activeCategory.value) return [];
+  const q = searchQuery.value.trim().toLowerCase();
+  if (!q) return activeCategory.value.articles;
+  return activeCategory.value.articles.filter(a => a.title.toLowerCase().includes(q));
+});
+
+const renderedContent = computed(() => {
+  const c = activeArticle.value?.content || '';
+  return marked.parse(c, { breaks: true, gfm: true }) as string;
+});
+
+async function loadTree() {
+  loading.value = true;
+  try {
+    categories.value = await helpApi.tree();
+  } catch (e: any) {
+    categories.value = [];
+    console.error('加载帮助文档失败:', e);
+  } finally {
+    loading.value = false;
+  }
 }
 
-function markHelpful(item: FaqItem) {
-  item.helpful++;
+function selectCategory(cat: HelpCategory) {
+  activeCategory.value = cat;
+  activeArticle.value = null;
+  feedback.value = false;
 }
+
+function goBackToCategories() {
+  activeCategory.value = null;
+  activeArticle.value = null;
+  feedback.value = false;
+}
+
+async function selectArticle(art: { id: number; title: string }) {
+  activeArticle.value = { id: art.id, title: art.title, content: '', updated_at: '' };
+  articleLoading.value = true;
+  feedback.value = false;
+  try {
+    const detail = await helpApi.get(art.id);
+    activeArticle.value = { ...detail };
+  } catch (e: any) {
+    activeArticle.value = { id: art.id, title: art.title, content: '', updated_at: '' };
+    console.error('加载文章失败:', e);
+  } finally {
+    articleLoading.value = false;
+  }
+}
+
+watch(searchQuery, () => {
+  if (activeCategory.value) activeArticle.value = null;
+});
+
+loadTree();
 </script>
 
 <style scoped>
-.help-center {
+.doc-center {
   padding: var(--spacer-5);
-  max-width: 1300px;
+  max-width: 1280px;
   margin: 0 auto;
-}
-
-.search-section {
-  margin-bottom: var(--spacer-6);
-}
-
-.search-box {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  padding: var(--spacer-1) var(--spacer-1) var(--spacer-1) var(--spacer-4);
-  background: var(--card-bg);
-  border: 1px solid var(--card-stroke);
-  border-radius: var(--radius-xl);
-}
-
-.search-icon {
-  color: var(--text-tertiary);
-  flex-shrink: 0;
-}
-
-.search-box input {
-  flex: 1;
-  height: 36px;
-  background: transparent;
-  border: none;
-  outline: none;
-  font-size: var(--font-size-base);
-  color: var(--text-primary);
-  font-family: var(--font-family);
-}
-
-.search-box input::placeholder {
-  color: var(--text-tertiary);
-}
-
-.popular-tags {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  margin-top: var(--spacer-3);
-  flex-wrap: wrap;
-}
-
-.tags-label {
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-}
-
-.tag {
-  padding: var(--spacer-1) var(--spacer-2);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  background: var(--subtle-secondary);
-  border: none;
-  border-radius: var(--radius-full);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--fast-duration), color var(--fast-duration);
-}
-
-.tag:hover {
-  background: var(--accent-base);
-  color: var(--accent-text);
-}
-
-.help-layout {
-  display: grid;
-  grid-template-columns: 1fr 340px;
-  gap: var(--spacer-5);
-}
-
-@media (max-width: 1024px) {
-  .help-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-.section-tabs {
-  display: flex;
-  gap: var(--spacer-1);
-  background: var(--card-bg);
-  border: 1px solid var(--card-stroke);
-  border-radius: var(--radius-md);
-  padding: 2px;
-}
-
-.tab-btn {
-  padding: var(--spacer-1) var(--spacer-3);
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  transition: background var(--fast-duration), color var(--fast-duration);
-}
-
-.tab-btn.active {
-  background: var(--subtle-secondary);
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.accordion-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacer-2);
-}
-
-.accordion-item {
-  background: var(--card-bg);
-  border: 1px solid var(--card-stroke);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  transition: box-shadow var(--fast-duration);
-}
-
-.accordion-item.open {
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
-}
-
-.accordion-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-  padding: var(--spacer-3) var(--spacer-4);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  transition: background var(--fast-duration);
-}
-
-.accordion-header:hover {
-  background: var(--subtle-secondary);
-}
-
-.accordion-q {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.accordion-icon {
-  color: var(--text-tertiary);
-  transition: transform var(--fast-duration);
-  flex-shrink: 0;
-}
-
-.accordion-icon.rotated {
-  transform: rotate(180deg);
-}
-
-.accordion-body {
-  padding: 0 var(--spacer-4) var(--spacer-4);
-}
-
-.accordion-a {
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  line-height: 1.7;
-  padding-top: var(--spacer-2);
-}
-
-.accordion-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: var(--spacer-3);
-  padding-top: var(--spacer-3);
-  border-top: 1px solid var(--divider-stroke);
-}
-
-.accordion-meta {
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-}
-
-.accordion-actions {
-  display: flex;
-  gap: var(--spacer-2);
-}
-
-.sidebar-section {
   display: flex;
   flex-direction: column;
   gap: var(--spacer-4);
+  min-height: 100%;
 }
 
-.panel {
-  background: var(--card-bg);
-  border: 1px solid var(--card-stroke);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
+/* ===== 顶部 ===== */
+.doc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacer-4);
+  padding: var(--spacer-2) 0;
+  flex-wrap: wrap;
 }
 
-.panel-header {
-  padding: var(--spacer-4);
-  border-bottom: 1px solid var(--divider-stroke);
+.doc-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.panel-title {
-  font-size: var(--font-size-base);
-  font-weight: 600;
+.doc-title {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
   color: var(--text-primary);
   margin: 0;
 }
 
-.panel-body {
-  padding: var(--spacer-4);
+.doc-subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+  margin: 0;
 }
 
-.contact-card {
-  text-align: center;
+.doc-search {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  width: 320px;
+  max-width: 100%;
+  padding: var(--spacer-1) var(--spacer-3);
+  background: var(--card-bg);
+  border: 1px solid var(--card-stroke);
+  border-radius: var(--radius-full);
+  transition: border-color var(--fast-duration);
 }
 
-.contact-icon {
-  font-size: 40px;
+.doc-search:focus-within {
+  border-color: var(--accent-base);
+}
+
+.doc-search-icon {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.doc-search input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+}
+
+.doc-search input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.doc-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.doc-search-clear:hover {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+}
+
+/* ===== 主体布局 ===== */
+.doc-body {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacer-4);
+  flex: 1;
+  min-height: 0;
+}
+
+/* ===== 左栏 ===== */
+.doc-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--card-bg);
+  border: 1px solid var(--card-stroke);
+  border-radius: var(--radius-lg);
+  padding: var(--spacer-3);
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.doc-sidebar-back {
   margin-bottom: var(--spacer-2);
 }
 
-.contact-title {
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.contact-desc {
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-  margin-top: var(--spacer-1);
-}
-
-.contact-methods {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacer-3);
-  margin: var(--spacer-4) 0;
-}
-
-.method-row {
-  display: flex;
+.doc-back-btn {
+  display: inline-flex;
   align-items: center;
-  gap: var(--spacer-3);
-  padding: var(--spacer-2);
-  background: var(--subtle-secondary);
-  border-radius: var(--radius-md);
-  text-align: left;
-}
-
-.method-icon {
-  font-size: 20px;
-}
-
-.method-label {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.method-value {
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-  margin-top: 2px;
-}
-
-.resource-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-3);
-  padding: var(--spacer-2);
+  gap: 2px;
+  padding: 4px var(--spacer-2);
+  background: transparent;
+  border: none;
   border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--accent-base);
   cursor: pointer;
   transition: background var(--fast-duration);
 }
 
-.resource-item:hover {
+.doc-back-btn:hover {
   background: var(--subtle-secondary);
 }
 
-.resource-icon {
-  font-size: 24px;
-  width: 40px;
-  height: 40px;
+.doc-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.doc-nav-title {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: var(--spacer-1) var(--spacer-2);
+  margin-bottom: var(--spacer-1);
+}
+
+/* 一级目录：大 */
+.doc-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: background var(--fast-duration), color var(--fast-duration);
+  padding: var(--spacer-2);
+}
+
+.doc-nav-item.level-1 {
+  padding: var(--spacer-3) var(--spacer-2);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.doc-nav-item.level-1:hover,
+.doc-nav-item.level-1.active {
+  background: var(--subtle-secondary);
+}
+
+.doc-nav-icon {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--subtle-secondary);
   border-radius: var(--radius-md);
-  flex-shrink: 0;
+  color: var(--accent-base);
+  font-size: 18px;
 }
 
-.resource-title {
+.doc-nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-nav-count {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  font-weight: 400;
+}
+
+/* 二级文章：小 */
+.doc-nav-current {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-2);
   font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-primary);
 }
 
-.resource-desc {
+.doc-nav-divider {
+  height: 1px;
+  background: var(--divider-stroke);
+  margin: var(--spacer-1) 0 var(--spacer-2);
+}
+
+.doc-nav-item.level-2 {
+  padding: var(--spacer-2);
+  padding-left: var(--spacer-2);
   font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.doc-nav-item.level-2:hover {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+}
+
+.doc-nav-item.level-2.active {
+  background: var(--subtle-secondary);
+  color: var(--accent-base);
+  font-weight: 600;
+}
+
+.doc-nav-file-icon {
+  flex-shrink: 0;
   color: var(--text-tertiary);
-  margin-top: 2px;
 }
 
-.empty-state {
-  text-align: center;
-  padding: var(--spacer-12);
+.doc-nav-item.level-2.active .doc-nav-file-icon {
+  color: var(--accent-base);
 }
 
-.empty-icon {
-  font-size: 48px;
-  margin-bottom: var(--spacer-3);
+.doc-nav-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-8) var(--spacer-2);
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
 }
 
-.empty-text {
+/* ===== 主内容区 ===== */
+.doc-content {
+  flex: 1;
+  min-width: 0;
+  background: var(--card-bg);
+  border: 1px solid var(--card-stroke);
+  border-radius: var(--radius-lg);
+  padding: var(--spacer-6);
+}
+
+/* 欢迎页 */
+.doc-hero {
+  padding: var(--spacer-5) var(--spacer-4);
+  margin-bottom: var(--spacer-5);
+  background: var(--subtle-secondary);
+  border-radius: var(--radius-lg);
+}
+
+.doc-hero h2 {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 var(--spacer-2);
+}
+
+.doc-hero p {
   font-size: var(--font-size-sm);
   color: var(--text-tertiary);
+  margin: 0;
+}
+
+.doc-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--spacer-3);
+}
+
+.doc-card {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-3);
+  padding: var(--spacer-4);
+  background: var(--card-bg);
+  border: 1px solid var(--card-stroke);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  transition: border-color var(--fast-duration), box-shadow var(--fast-duration), transform var(--fast-duration);
+}
+
+.doc-card:hover {
+  border-color: var(--accent-base);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+  transform: translateY(-2px);
+}
+
+.doc-card-icon {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--subtle-secondary);
+  border-radius: var(--radius-md);
+  color: var(--accent-base);
+  font-size: 26px;
+}
+
+.doc-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.doc-card-title {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.doc-card-summary {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-card-count {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 6px;
+}
+
+.doc-card-arrow {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+/* 分类落地页 */
+.doc-category-hero {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-4);
+  padding: var(--spacer-4);
+  margin-bottom: var(--spacer-5);
+  background: var(--subtle-secondary);
+  border-radius: var(--radius-lg);
+}
+
+.doc-category-icon {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card-bg);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-md);
+  color: var(--accent-base);
+  font-size: 28px;
+}
+
+.doc-category-hero h2 {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 var(--spacer-1);
+}
+
+.doc-category-hero p {
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
+.doc-article-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-2);
+}
+
+.doc-article-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-3);
+  padding: var(--spacer-3) var(--spacer-4);
+  background: var(--card-bg);
+  border: 1px solid var(--card-stroke);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  transition: border-color var(--fast-duration), background var(--fast-duration);
+}
+
+.doc-article-item:hover {
+  border-color: var(--accent-base);
+  background: var(--subtle-secondary);
+}
+
+.doc-article-icon {
+  color: var(--accent-base);
+  flex-shrink: 0;
+}
+
+.doc-article-title {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.doc-article-arrow {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+/* 文章页 */
+.doc-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: var(--spacer-4);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  flex-wrap: wrap;
+}
+
+.doc-breadcrumb-link {
+  background: transparent;
+  border: none;
+  padding: 2px 4px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  border-radius: var(--radius-xs);
+  transition: color var(--fast-duration);
+}
+
+.doc-breadcrumb-link:hover {
+  color: var(--accent-base);
+}
+
+.doc-breadcrumb-sep {
+  flex-shrink: 0;
+}
+
+.doc-breadcrumb-current {
+  color: var(--text-primary);
+  font-weight: 500;
+  padding: 2px 4px;
+}
+
+.doc-article-heading {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 var(--spacer-2);
+  line-height: 1.4;
+}
+
+.doc-article-meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  padding-bottom: var(--spacer-4);
+  border-bottom: 1px solid var(--divider-stroke);
+  margin-bottom: var(--spacer-5);
+}
+
+.doc-article-body {
+  font-size: var(--font-size-base);
+  color: var(--text-secondary);
+  line-height: 1.8;
+}
+
+.doc-article-body :deep(h1),
+.doc-article-body :deep(h2),
+.doc-article-body :deep(h3),
+.doc-article-body :deep(h4) {
+  color: var(--text-primary);
+  font-weight: 700;
+  margin: 1.6em 0 0.6em;
+  line-height: 1.4;
+}
+
+.doc-article-body :deep(h1) { font-size: 1.6em; }
+.doc-article-body :deep(h2) { font-size: 1.4em; }
+.doc-article-body :deep(h3) { font-size: 1.2em; }
+.doc-article-body :deep(h4) { font-size: 1.05em; }
+
+.doc-article-body :deep(h1:first-child),
+.doc-article-body :deep(h2:first-child),
+.doc-article-body :deep(h3:first-child),
+.doc-article-body :deep(h4:first-child) {
+  margin-top: 0;
+}
+
+.doc-article-body :deep(p) {
+  margin: 0.8em 0;
+}
+
+.doc-article-body :deep(ul),
+.doc-article-body :deep(ol) {
+  padding-left: 1.6em;
+  margin: 0.8em 0;
+}
+
+.doc-article-body :deep(li) {
+  margin: 0.3em 0;
+}
+
+.doc-article-body :deep(a) {
+  color: var(--accent-base);
+  text-decoration: none;
+}
+
+.doc-article-body :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.doc-article-body :deep(blockquote) {
+  margin: 1em 0;
+  padding: 0.6em 1em;
+  border-left: 3px solid var(--accent-base);
+  background: var(--subtle-secondary);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-secondary);
+}
+
+.doc-article-body :deep(code) {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9em;
+  background: var(--subtle-secondary);
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  color: var(--text-primary);
+}
+
+.doc-article-body :deep(pre) {
+  background: var(--app-bg);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-md);
+  padding: var(--spacer-3);
+  overflow-x: auto;
+  margin: 1em 0;
+}
+
+.doc-article-body :deep(pre code) {
+  background: transparent;
+  padding: 0;
+}
+
+.doc-article-body :deep(table) {
+  border-collapse: collapse;
+  margin: 1em 0;
+  width: 100%;
+}
+
+.doc-article-body :deep(th),
+.doc-article-body :deep(td) {
+  border: 1px solid var(--divider-stroke);
+  padding: 0.5em 0.8em;
+  text-align: left;
+}
+
+.doc-article-body :deep(th) {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.doc-article-body :deep(img) {
+  max-width: 100%;
+  border-radius: var(--radius-md);
+}
+
+.doc-article-empty {
+  padding: var(--spacer-8);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.doc-article-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-12);
+  color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.doc-article-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-3);
+  margin-top: var(--spacer-8);
+  padding-top: var(--spacer-4);
+  border-top: 1px solid var(--divider-stroke);
+}
+
+.doc-feedback-label {
+  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+}
+
+.doc-feedback-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  padding: var(--spacer-1) var(--spacer-3);
+  background: var(--subtle-secondary);
+  border: 1px solid var(--card-stroke);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--fast-duration);
+}
+
+.doc-feedback-btn:hover:not(:disabled) {
+  background: var(--accent-base);
+  color: var(--accent-text);
+  border-color: var(--accent-base);
+}
+
+.doc-feedback-btn:disabled {
+  color: #107C10;
+  border-color: rgba(16, 124, 16, 0.3);
+  background: rgba(16, 124, 16, 0.08);
+  cursor: default;
+}
+
+.doc-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-12);
+  color: var(--text-tertiary);
+}
+
+.doc-empty p {
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.doc-empty span {
+  font-size: var(--font-size-xs);
+}
+
+@media (max-width: 860px) {
+  .doc-body {
+    flex-direction: column;
+  }
+
+  .doc-sidebar {
+    width: 100%;
+    position: static;
+    max-height: none;
+  }
 }
 </style>

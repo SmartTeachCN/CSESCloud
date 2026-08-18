@@ -48,6 +48,9 @@
                 </div>
               </div>
               <div class="version-actions-compact" v-if="expandedId === ver.id">
+                <button class="mini-btn preview" @click.stop="previewVersion(ver)" title="预览版本">
+                  <Icon icon="ri-eye-line" :size="12" />
+                </button>
                 <button class="mini-btn restore" @click.stop="confirmRestore(ver)" title="恢复到此版本">
                   <Icon icon="ri-arrow-go-back-line" :size="12" />
                 </button>
@@ -171,6 +174,8 @@ const emit = defineEmits<{
   openWorkspaceConfig: [];
   /** 在编辑器区域打开 diff 标签 */
   viewDiff: [payload: { label1: string; label2: string; diffLines: any[]; additions: number; deletions: number }];
+  /** 预览版本内容（在新标签中打开） */
+  previewVersion: [payload: { content: string; label: string; fileName: string }];
 }>();
 
 const versions = ref<any[]>([]);
@@ -416,6 +421,32 @@ function confirmRestore(ver: any) {
   showRestoreConfirm.value = true;
 }
 
+async function previewVersion(ver: any) {
+  // 如果还没加载内容，先加载
+  let content = previewContent.value;
+  if (!content || content === '[加载失败]') {
+    try {
+      loadingPreview.value = true;
+      const result = await api.get<any>(`/cloud-files?action=version-get&version_id=${ver.id}`);
+      content = result?.content || '';
+      previewContent.value = content;
+    } catch {
+      content = '[加载失败]';
+    } finally {
+      loadingPreview.value = false;
+    }
+  }
+  if (content && content !== '[加载失败]') {
+    const label = ver.version_label || ver.label || 'v?';
+    const time = formatTime(ver.created_at || ver.time);
+    emit('previewVersion', {
+      content,
+      label,
+      fileName: `${props.fileName} ${time}`,
+    });
+  }
+}
+
 async function doRestore() {
   if (!pendingRestore.value) return;
   const ver = pendingRestore.value;
@@ -659,6 +690,11 @@ defineExpose({ saveVersion, loadVersions });
   color: var(--text-primary);
 }
 .mini-btn.restore:hover {
+  background: var(--accent-base);
+  border-color: var(--accent-base);
+  color: white;
+}
+.mini-btn.preview:hover {
   background: var(--accent-base);
   border-color: var(--accent-base);
   color: white;

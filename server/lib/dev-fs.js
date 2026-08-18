@@ -432,6 +432,7 @@ const PluginFS = {
       editor_html: readText(path.join(dir, 'editor.html')),
       editor_js: readText(path.join(dir, 'editor.js')),
       editor_css: readText(path.join(dir, 'editor.css')),
+      ribbon: manifest.ribbon || [],
     };
   },
 
@@ -472,6 +473,10 @@ const PluginFS = {
     }
     if (data.icon !== undefined) merged.icon = data.icon;
     if (data.status !== undefined) merged.status = data.status;
+    if (data.ribbon !== undefined) {
+      merged.ribbon = Array.isArray(data.ribbon)
+        ? data.ribbon : (typeof data.ribbon === 'string' ? JSON.parse(data.ribbon) : []);
+    }
     if (data.developer_username !== undefined) merged.developer_username = data.developer_username;
     if (data.is_official !== undefined) merged.is_official = data.is_official ? true : false;
     if (data.updated_at !== undefined) merged.updated_at = data.updated_at;
@@ -506,6 +511,7 @@ const PluginFS = {
       status: 'draft',
       developer_username: username,
       is_official: false,
+      ribbon: data.ribbon || [],
       created_at: now,
       updated_at: now,
     };

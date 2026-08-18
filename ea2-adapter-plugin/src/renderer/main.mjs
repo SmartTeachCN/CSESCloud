@@ -74,6 +74,7 @@ function createSettingsPage(ctx) {
       var platform = ref('');
       var showWizard = ref(false);
       var connecting = ref(false);
+      var refreshing = ref(false);
       var wizardStatus = ref('');
       var wizardStatusType = ref('');
 
@@ -112,6 +113,9 @@ function createSettingsPage(ctx) {
       var isConnected = computed(function () {
         return connectionStatus.value === 'connected';
       });
+      var isRefreshing = computed(function () {
+        return connectionStatus.value === '__refresh__' || refreshing.value;
+      });
       var hasError = computed(function () {
         return connectionStatus.value && connectionStatus.value.startsWith('error');
       });
@@ -119,10 +123,27 @@ function createSettingsPage(ctx) {
         return !connectionStatus.value || connectionStatus.value === 'disconnected' || connectionStatus.value === '未连接';
       });
       var statusText = computed(function () {
+        if (isRefreshing.value) return '刷新中...';
         if (isConnected.value) return '已连接';
         if (hasError.value) return connectionStatus.value.replace('error: ', '');
         return '未连接';
       });
+
+      function refreshConnection() {
+        if (!serverUrl.value.trim()) {
+          alert('请先配置服务器地址');
+          return;
+        }
+        if (refreshing.value) return;
+        refreshing.value = true;
+        // 通过设置变更触发主进程重新连接、上报在线状态并协商协议
+        ctx.api.settings.patch({ connectionStatus: '__refresh__' })
+          .catch(function (e) { console.error('[CSES Cloud] 触发刷新失败', e); })
+          .then(function () {
+            // 短暂展示刷新态，由后续 onChanged 更新最终状态
+            setTimeout(function () { refreshing.value = false; }, 2500);
+          });
+      }
 
       function openWizard() {
         showWizard.value = !showWizard.value;
@@ -251,6 +272,20 @@ function createSettingsPage(ctx) {
               marginBottom: '10px',
             }
           }, isConnected.value ? '已连接 ✓' : '打开连接向导'),
+
+          // 刷新连接状态按钮（重连 + 上报在线 + 协商协议）
+          h('button', {
+            onClick: refreshConnection,
+            disabled: refreshing.value,
+            style: {
+              width: '100%', padding: '10px 16px',
+              background: refreshing.value ? 'rgba(136,136,136,0.15)' : 'transparent',
+              color: refreshing.value ? 'var(--text-secondary, #888)' : 'var(--text-primary, #d4d4d4)',
+              border: '1px solid var(--border-color, #3c3c3c)',
+              borderRadius: '6px', fontSize: '13px', cursor: refreshing.value ? 'default' : 'pointer',
+              marginBottom: '10px',
+            }
+          }, refreshing.value ? '刷新中...' : '刷新状态'),
 
           // 内联连接向导（始终渲染，通过 display 控制可见性）
           h('div', {

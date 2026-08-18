@@ -602,3 +602,19 @@ CREATE TABLE IF NOT EXISTS ea2_commands (
 CREATE INDEX IF NOT EXISTS idx_ea2_commands_instance ON ea2_commands(instance_id);
 CREATE INDEX IF NOT EXISTS idx_ea2_commands_device ON ea2_commands(device_id);
 CREATE INDEX IF NOT EXISTS idx_ea2_commands_status ON ea2_commands(status);
+
+-- ===== 帮助中心文档 =====
+-- parent_id = 0 表示一级目录（分类），否则为所属一级目录 ID（二级文章）
+CREATE TABLE IF NOT EXISTS help_content (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_id INTEGER NOT NULL DEFAULT 0,
+    title TEXT NOT NULL,
+    content TEXT,                               -- Markdown 内容（仅二级文章使用）
+    summary TEXT,                               -- 一级目录简介
+    icon TEXT DEFAULT 'ri-article-line',        -- 一级目录图标（RemixIcon 图标名）
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_published INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_help_content_parent ON help_content(parent_id);

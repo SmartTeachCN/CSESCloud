@@ -22,11 +22,14 @@ function assertInstance(Response, instanceId, schoolId) {
 
 // 取实例的存储清单
 function getStorageManifest(instanceId) {
-  const app = DB.one("SELECT a.storage_manifest FROM instances i JOIN apps a ON a.id = i.app_id WHERE i.id = ?", [instanceId]);
-  if (!app || !app.storage_manifest) return { collections: [] };
-  let m = null;
-  try { m = JSON.parse(app.storage_manifest); } catch (_) { m = null; }
-  return m || { collections: [] };
+  const ins = DB.one("SELECT app_key FROM instances WHERE id = ?", [instanceId]);
+  if (!ins || !ins.app_key) return { collections: [] };
+  try {
+    const { AppFS } = require('../lib/dev-fs');
+    const app = AppFS.readByKey(ins.app_key);
+    if (app && app.storage_manifest) return app.storage_manifest;
+  } catch (e) { /* ignore */ }
+  return { collections: [] };
 }
 
 module.exports = async (ctx) => {

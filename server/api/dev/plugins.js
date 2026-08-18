@@ -110,18 +110,19 @@ module.exports = async (ctx) => {
       editor_js: body.editor_js ?? '// 自定义编辑器 JS',
       editor_css: body.editor_css ?? '',
       icon: body.icon ?? 'ri-plug-line',
+      ribbon: Array.isArray(body.ribbon) ? body.ribbon : [],
     });
     Response.success({ _id: plugin._id, plugin_key: plugin.plugin_key });
   }
 
   // ===== 更新插件 =====
   if (method === 'POST' && action === 'update') {
-    const plugin = findPlugin(PluginFS, query);
+    const plugin = findPlugin(PluginFS, body);
     if (!plugin) Response.error('插件不存在');
     if (plugin.developer_username !== effectiveDeveloper) Response.error('无权编辑此插件');
     const now = nowStr();
     const fsUpdate = { updated_at: now };
-    for (const k of ['name', 'version', 'description', 'editor_html', 'editor_js', 'editor_css', 'icon']) {
+    for (const k of ['name', 'version', 'description', 'editor_html', 'editor_js', 'editor_css', 'icon', 'ribbon']) {
       if (k in body) fsUpdate[k] = body[k];
     }
     if ('extensions' in body && Array.isArray(body.extensions)) {
@@ -133,7 +134,7 @@ module.exports = async (ctx) => {
 
   // ===== 发布插件 =====
   if (method === 'POST' && action === 'publish') {
-    const plugin = findPlugin(PluginFS, query);
+    const plugin = findPlugin(PluginFS, body);
     if (!plugin) Response.error('插件不存在');
     if (plugin.developer_username !== effectiveDeveloper) Response.error('无权编辑此插件');
     PluginFS.writeUser(effectiveDeveloper, plugin.plugin_key, { status: 'published', updated_at: nowStr() });
@@ -142,7 +143,7 @@ module.exports = async (ctx) => {
 
   // ===== 归档插件 =====
   if (method === 'POST' && action === 'archive') {
-    const plugin = findPlugin(PluginFS, query);
+    const plugin = findPlugin(PluginFS, body);
     if (!plugin) Response.error('插件不存在');
     if (plugin.developer_username !== effectiveDeveloper) Response.error('无权编辑此插件');
     PluginFS.writeUser(effectiveDeveloper, plugin.plugin_key, { status: 'archived', updated_at: nowStr() });
@@ -151,7 +152,7 @@ module.exports = async (ctx) => {
 
   // ===== 删除插件 =====
   if (method === 'POST' && action === 'delete') {
-    const plugin = findPlugin(PluginFS, query);
+    const plugin = findPlugin(PluginFS, body);
     if (!plugin) Response.error('插件不存在');
     if (plugin.developer_username !== effectiveDeveloper) Response.error('无权删除此插件');
     PluginFS.deleteUserPlugin(effectiveDeveloper, plugin.plugin_key);

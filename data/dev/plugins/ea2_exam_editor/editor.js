@@ -1,12 +1,29 @@
 var examData={examName:'',message:'',examInfos:[]},selectedExamIdx=-1,dirty=false,validationErrors=[],validationWarnings=[];
-var wizard={active:false,step:'date',day:1,dayDate:'',startTime:'',currentSubject:'',currentDuration:'',currentBreak:'',materials:[],subjects:[],editIdx:-1,lunchSkipped:false};
+var wizard={active:false,step:'date',day:1,dayDate:'',wizStart:'',currentSubject:'',currentDuration:'',currentBreak:'',materials:[],subjects:[],editIdx:-1};
 var SUBJECT_PRESETS={语文:120,数学:120,英语:120,物理:90,化学:90,生物:90,历史:90,地理:90,政治:90,音乐:60,体育:60,美术:60,'通用技术':45,信息技术:45,劳动:45};
 var BREAK_PRESETS=[10,15,20,30,40];
 
 (function init(){
   if(window.CSEditor&&window.CSEditor.file&&window.CSEditor.file.content){try{var p=JSON.parse(window.CSEditor.file.content);if(p&&typeof p==='object'){examData.examName=p.examName||'';examData.message=p.message||'';examData.examInfos=Array.isArray(p.examInfos)?p.examInfos:[]}}catch(e){}}
   renderAll();runValidation();initSplitters();updateWizardBtn();
+  setupRibbon();
 })();
+
+// Ribbon 工具栏的分组与工具在 manifest.json 的 ribbon 字段中声明（随插件配置透传给平台），
+// 这里仅监听平台 Ribbon 按钮下发的命令并分派到编辑函数。
+function setupRibbon(){
+  window.addEventListener('message', function(e){
+    if(!e.data||!e.data.__ceseCommand)return;
+    switch(e.data.__ceseCommand){
+      case 'ea2-add-exam': addExamInfo(); break;
+      case 'ea2-wizard': startWizard(); break;
+      case 'ea2-sort': sortExamInfosByTime(); break;
+      case 'ea2-format': formatConfig(); break;
+      case 'ea2-validate': runValidation(); break;
+      case 'ea2-add-material': if(selectedExamIdx<0){alert('请先选择一个场次');}else{addMaterial();} break;
+    }
+  });
+}
 
 function renderAll(){
   document.getElementById('ea2ExamName').value=examData.examName;
@@ -42,7 +59,7 @@ function renderExamList(){
 }
 
 function selectExam(idx){selectedExamIdx=idx;renderExamList();renderExamDetail(idx)}
-function selectWizardSubject(wizIdx){wizard.editIdx=wizIdx;var s=wizard.subjects[wizIdx];wizard.currentSubject=s.name;wizard.currentDuration=s.duration;wizard.currentBreak=s.break||0;wizard.materials=s.materials?JSON.parse(JSON.stringify(s.materials)):[];wizard.step='subject';selectedExamIdx=-(wizIdx+1);renderAll()}
+function selectWizardSubject(wizIdx){wizard.editIdx=wizIdx;var s=wizard.subjects[wizIdx];wizard.currentSubject=s.name;wizard.currentDuration=s.duration;wizard.currentBreak=s.break||0;wizard.materials=s.materials?JSON.parse(JSON.stringify(s.materials)):[];wizard.wizStart=s.start||'';wizard.step='subject';selectedExamIdx=-(wizIdx+1);renderAll()}
 
 function renderExamDetail(idx){/* 省略，不变 */
   var info=examData.examInfos[idx];if(!info)return;
@@ -67,10 +84,22 @@ function removeExamInfo(idx){examData.examInfos.splice(idx,1);if(selectedExamIdx
 function addMaterial(){if(selectedExamIdx<0)return;if(!examData.examInfos[selectedExamIdx].materials)examData.examInfos[selectedExamIdx].materials=[];examData.examInfos[selectedExamIdx].materials.push({name:'',quantity:0,unit:''});renderExamDetail(selectedExamIdx);dirty=true}
 function removeMaterial(mi){if(selectedExamIdx<0)return;examData.examInfos[selectedExamIdx].materials.splice(mi,1);renderExamDetail(selectedExamIdx);dirty=true}
 
+// 将所有场次按开始时间升序排列
+function sortExamInfosByTime(){
+  if(!examData.examInfos||examData.examInfos.length===0)return;
+  examData.examInfos.sort(function(a,b){return (new Date(a.start||0).getTime())-(new Date(b.start||0).getTime())});
+  selectedExamIdx=0;
+  renderAll();runValidation();dirty=true;
+}
+
 // ===== 向导 =====
 function startWizard(){
+  if(examData.examInfos.length>0){
+    alert('创建向导需在没有场次时使用。当前已存在 '+examData.examInfos.length+' 个场次，请先清空现有场次，或直接使用「新建场次」。');
+    return;
+  }
   var defBrk=getMostUsedBreak();
-  wizard={active:true,step:'date',day:1,dayDate:'',startTime:'',currentSubject:'',currentDuration:'',currentBreak:defBrk,materials:[],subjects:[],editIdx:-1,lunchSkipped:false};
+  wizard={active:true,step:'date',day:1,dayDate:'',wizStart:'',currentSubject:'',currentDuration:'',currentBreak:defBrk,materials:[],subjects:[],editIdx:-1};
   selectedExamIdx=-1;renderAll();
 }
 
@@ -82,53 +111,6 @@ function getMostUsedBreak(){
 }
 
 function cancelWizard(){wizard.active=false;renderAll()}
-
-// 计算当前表单数据下的下一场开始时间，用于实时饭空检测
-function calcProjectedMeal(){
-  if(wizard.step!=='subject'||wizard.editIdx>=0)return null;
-  if(!wizard.dayDate||!wizard.startTime)return null;
-  // 获取当前表单中的时长和休息
-  var durEl=document.getElementById('wizDuration'),brkEl=document.getElementById('wizBreak');
-  var dur=durEl?parseInt(durEl.value)||SUBJECT_PRESETS[wizard.currentSubject]||60:60;
-  var brk=brkEl?parseInt(brkEl.value)||0:0;
-  // 计算当前场次的开始时间
-  var curStart=new Date(wizard.dayDate+'T'+wizard.startTime);
-  var curEnd=new Date(curStart.getTime()+dur*60000);
-  var nextStart=new Date(curEnd.getTime()+brk*60000);
-  var h=nextStart.getHours(),m=nextStart.getMinutes(),t=h*60+m;
-  if(t>=710&&t<780&&!wizard.lunchSkipped)return{type:'lunch',time:nextStart,label:'午饭休息',resume:'13:00',range:'11:50-13:00'};
-  if(t>=960&&t<1140)return{type:'dinner',time:nextStart,label:'晚饭休息',resume:'19:00',range:'16:00-19:00'};
-  return null;
-}
-
-// 检测当前科目结束时间是否横跨或靠近饭空时间
-function calcCurrentMeal(){
-  if(wizard.step!=='subject'||wizard.editIdx>=0)return null;
-  if(!wizard.dayDate||!wizard.startTime)return null;
-  var durEl=document.getElementById('wizDuration'),brkEl=document.getElementById('wizBreak');
-  var dur=durEl?parseInt(durEl.value)||SUBJECT_PRESETS[wizard.currentSubject]||60:60;
-  var curStart=new Date(wizard.dayDate+'T'+wizard.startTime);
-  var curEnd=new Date(curStart.getTime()+dur*60000);
-  var endMin=curEnd.getHours()*60+curEnd.getMinutes();
-  // 横跨午饭时间 (11:50-13:00): 结束时间在11:50后 且 开始时间在13:00前
-  var startMin=curStart.getHours()*60+curStart.getMinutes();
-  if(startMin<780&&endMin>710&&!wizard.lunchSkipped){
-    return{type:'lunch',spans:true,label:'午饭休息',range:'11:50-13:00'};
-  }
-  // 结束时间临近午饭开始 (≤30分钟)
-  if(endMin>=680&&endMin<=710&&!wizard.lunchSkipped){
-    return{type:'lunch',spans:false,label:'午饭休息',range:'11:50-13:00',near:true};
-  }
-  // 横跨晚饭时间 (16:00-19:00)
-  if(startMin<1140&&endMin>960){
-    return{type:'dinner',spans:true,label:'晚饭休息',range:'16:00-19:00'};
-  }
-  // 结束时间临近晚饭开始 (≤30分钟)
-  if(endMin>=930&&endMin<=960){
-    return{type:'dinner',spans:false,label:'晚饭休息',range:'16:00-19:00',near:true};
-  }
-  return null;
-}
 
 function renderWizard(){
   document.getElementById('ea2DetailTitle').textContent='考试创建向导';
@@ -143,30 +125,10 @@ function renderWizard(){
     html+='<button class="ea2-preset-break" onclick="wizSetDatePreset(2)">后天</button>';
     html+='</div>';
     html+='<div class="ea2-wizard-actions"><button class="ea2-btn primary large" onclick="wizConfirmDate()">确认</button><button class="ea2-btn" onclick="cancelWizard()">取消</button></div>';
-  }else if(w.step==='time'){
-    html+='<div class="ea2-wizard-subtitle">第 '+w.day+' 天 — 选择开始时间'+(w.startTime?'（已自动填充）':'')+'</div>';
-    html+='<div class="ea2-wizard-step"><span class="ea2-wizard-step-icon">2</span>第 '+w.day+' 天开始时间</div>';
-    html+='<div class="ea2-wizard-field"><label>请选择开始时间</label><input type="time" id="wizTime" value="'+(w.startTime||'')+'" /></div>';
-    html+='<div class="ea2-preset-breaks" style="margin-top:4px">';
-    html+='<button class="ea2-preset-break" onclick="wizSetTimePreset(\'08:00\')">8:00</button>';
-    html+='<button class="ea2-preset-break" onclick="wizSetTimePreset(\'07:40\')">7:40</button>';
-    html+='<button class="ea2-preset-break" onclick="wizSetTimePreset(\'09:00\')">9:00</button>';
-    html+='</div>';
-    html+='<div class="ea2-wizard-actions"><button class="ea2-btn primary large" onclick="wizConfirmTime()">确认</button><button class="ea2-btn" onclick="cancelWizard()">取消</button></div>';
-  }else if(w.step==='lunch'||w.step==='dinner'){
-    var isLunch=w.step==='lunch';
-    html+='<div class="ea2-wizard-subtitle">第 '+w.day+' 天 — '+(isLunch?'午饭休息':'晚饭休息')+'</div>';
-    html+='<div class="ea2-wizard-step"><span class="ea2-wizard-step-icon">🍽</span>下一场进入'+(isLunch?'午饭':'晚饭')+'时段</div>';
-    html+='<div class="ea2-wizard-field"><label>请输入'+(isLunch?'下午':'夜间')+'开考时间</label><input type="time" id="wizMealResume" value="'+(isLunch?'13:00':'19:00')+'" /></div>';
-    html+='<div class="ea2-wizard-actions">'+
-      '<button class="ea2-btn primary large" onclick="wizConfirmMeal()">确认并继续</button>'+
-      (isLunch?'<button class="ea2-btn" onclick="wizSkipMeal()">跳过午饭</button>':'')+
-      '<button class="ea2-btn" onclick="wizCancelMeal()">返回</button></div>';
   }else{
-    var meal=calcProjectedMeal();
     html+='<div class="ea2-wizard-subtitle">第 '+w.day+' 天 — '+(w.editIdx>=0?'编辑第 '+(w.editIdx+1)+' 场':'已添加 '+w.subjects.length+' 个科目')+'</div>';
-    if(meal){html+='<div class="ea2-wizard-subtitle" style="color:var(--ea2-warning)">下一场开始时间将进入 '+meal.label+' 时段（'+meal.range+'）</div>'}
     html+='<div class="ea2-wizard-step"><span class="ea2-wizard-step-icon">3</span>科目信息</div>';
+    html+='<div class="ea2-wizard-field"><label>开始时间 <span style="color:var(--ea2-muted)">（默认 = 上一场结束 + 休息，可手动修改）</span></label><input type="datetime-local" id="wizStart" value="'+escAttr(w.wizStart||'')+'" oninput="if(window.wizard)window.wizard.wizStart=this.value" /></div>';
     html+='<div class="ea2-wizard-field"><label>科目名称</label><input type="text" id="wizSubject" value="'+escAttr(w.currentSubject)+'" placeholder="输入或点击下方预设" /></div>';
     html+='<div class="ea2-preset-grid">';
     for(var k in SUBJECT_PRESETS){html+='<button class="ea2-preset-chip'+(w.currentSubject===k?' selected':'')+'" onclick="wizSelectSubject(\''+k+'\')"><span class="preset-name">'+k+'</span><span class="preset-dur">'+SUBJECT_PRESETS[k]+'′</span></button>'}
@@ -179,10 +141,7 @@ function renderWizard(){
     html+='<button class="ea2-preset-break clear'+(w.currentBreak===0?' selected':'')+'" onclick="wizSetBreak(0)">清空</button>';
     var customBrk=w.currentBreak&&BREAK_PRESETS.indexOf(w.currentBreak)<0&&w.currentBreak!==0?w.currentBreak:null;
     if(customBrk)html+='<button class="ea2-preset-break selected" onclick="wizSetBreak('+customBrk+')">'+customBrk+'′</button>';
-    BREAK_PRESETS.forEach(function(b){
-      if(b===w.currentBreak)html+='<button class="ea2-preset-break selected" onclick="wizSetBreak('+b+')">'+b+'′</button>';
-      else html+='<button class="ea2-preset-break" onclick="wizSetBreak('+b+')">'+b+'′</button>';
-    });
+    BREAK_PRESETS.forEach(function(b){html+='<button class="ea2-preset-break'+(b===w.currentBreak?' selected':'')+'" onclick="wizSetBreak('+b+')">'+b+'′</button>'});
     html+='</div>';
     html+='<div class="ea2-wizard-field"><label>材料</label><div class="ea2-tag-list" id="wizTagList">';
     w.materials.forEach(function(m,mi){html+='<span class="ea2-tag">'+escHtml(m.name)+' ×'+m.quantity+'<button class="ea2-tag-remove" onclick="wizRemoveTag('+mi+')">×</button></span>'});
@@ -193,20 +152,7 @@ function renderWizard(){
         '<button class="ea2-btn danger" onclick="wizDeleteSubject('+w.editIdx+')">删除此场次</button>'+
         '<button class="ea2-btn" onclick="wizCancelEdit()">取消编辑</button>';
     }else{
-      var curMeal=calcCurrentMeal();
-      if(curMeal){
-        var mealLabel=curMeal.label;
-        if(curMeal.spans)html+='<div class="ea2-wizard-subtitle" style="color:var(--ea2-error)">当前考试已横跨'+mealLabel+'时段（'+curMeal.range+'）</div>';
-        else if(curMeal.near)html+='<div class="ea2-wizard-subtitle" style="color:var(--ea2-warning)">当前考试结束时间临近'+mealLabel+'时段（'+curMeal.range+'）</div>';
-        if(curMeal.spans){
-          html+='<button class="ea2-btn" onclick="wizGoMeal(\''+curMeal.type+'\')">'+mealLabel+'</button>';
-        }else{
-          html+='<button class="ea2-btn primary" onclick="wizSaveAndGoMeal(\''+curMeal.type+'\')">保存并配置'+mealLabel+'</button>'+
-            '<button class="ea2-btn" onclick="wizGoMeal(\''+curMeal.type+'\')">不保存配置'+mealLabel+'</button>';
-        }
-      }
-      if(meal){html+='<button class="ea2-btn" onclick="wizGoMeal(\''+meal.type+'\')">'+meal.label+'</button>'}
-      html+='<button class="ea2-btn primary" onclick="wizNextSubject()">当日下一场</button>'+
+      html+='<button class="ea2-btn primary" onclick="wizNextSubject()">保存并录入下一场</button>'+
         '<button class="ea2-btn" onclick="wizEndDay()">第'+w.day+'天结束</button>'+
         '<button class="ea2-btn primary" onclick="wizFinish()">录入完毕</button>';
     }
@@ -222,65 +168,36 @@ function wizOnFieldInput(){
   var d=document.getElementById('wizDuration'),b=document.getElementById('wizBreak');
   if(d)wizard.currentDuration=parseInt(d.value)||'';
   if(b)wizard.currentBreak=parseInt(b.value)||0;
-  // 实时更新饭空提示
-  updateMealHint();
-}
-function updateMealHint(){
-  var meal=calcProjectedMeal();
-  var hint=document.getElementById('ea2MealHint');
-  if(!hint)return;
-  if(meal)hint.innerHTML='<span style="color:var(--ea2-warning)">下一场开始时间将进入 '+meal.label+' 时段（'+meal.range+'）</span>';
-  else hint.innerHTML='';
 }
 
 function wizSetDatePreset(offset){
   var d=new Date();d.setDate(d.getDate()+offset);
   var val=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
-  document.getElementById('wizDate').value=val;
+  var el=document.getElementById('wizDate');if(el)el.value=val;
 }
 
-function wizSetTimePreset(val){document.getElementById('wizTime').value=val}
-
-function wizConfirmDate(){var d=document.getElementById('wizDate').value;if(!d)return;wizard.dayDate=d;wizard.lunchSkipped=false;wizard.step='time';renderAll()}
-function wizConfirmTime(){var t=document.getElementById('wizTime').value;if(!t)return;wizard.startTime=t;wizard.step='subject';renderAll()}
-
-function wizGoMeal(type){wizard.step=type;renderAll()}
-
-function wizSaveAndGoMeal(type){
-  var subj=document.getElementById('wizSubject').value.trim();
-  if(subj){wizNextSubject()}
-  wizard.step=type;renderAll();
-}
-
-function wizConfirmMeal(){
-  var t=document.getElementById('wizMealResume').value;if(!t)return;
-  if(wizard.step==='lunch')wizard.lunchSkipped=true;
-  wizard.startTime=t;
-  wizard.currentSubject='';wizard.currentDuration='';wizard.currentBreak=getMostUsedBreak();wizard.materials=[];wizard.editIdx=-1;
+function wizConfirmDate(){
+  var d=document.getElementById('wizDate').value;if(!d)return;
+  wizard.dayDate=d;
+  wizard.wizStart=d+'T08:00';
   wizard.step='subject';renderAll();
 }
 
-function wizSkipMeal(){wizard.lunchSkipped=true;wizard.step='subject';renderAll()}
-function wizCancelMeal(){wizard.step='subject';renderAll()}
-
 function wizNextSubject(){
+  var stEl=document.getElementById('wizStart');if(stEl)wizard.wizStart=stEl.value;
+  var startV=wizard.wizStart||'';
   var subj=document.getElementById('wizSubject').value.trim();
   var dur=parseInt(document.getElementById('wizDuration').value)||SUBJECT_PRESETS[wizard.currentSubject]||60;
   var brk=parseInt(document.getElementById('wizBreak').value)||0;
   if(!subj){alert('请输入科目名称');return}
-  var curStart=new Date(wizard.dayDate+'T'+wizard.startTime);
-  var dayEnd=new Date(wizard.dayDate+'T23:59:59');
+  if(!startV){alert('请设置开始时间');return}
+  var curStart=new Date(startV);
+  if(isNaN(curStart.getTime())){alert('开始时间无效');return}
   var examEnd=new Date(curStart.getTime()+dur*60000);
-  if(examEnd>dayEnd){examEnd=dayEnd;dur=Math.floor((dayEnd-curStart)/60000)}
   wizard.subjects.push({name:subj,start:formatLocal(curStart),end:formatLocal(examEnd),duration:dur,break:brk,alertTime:5,materials:wizard.materials.slice()});
-  var nextStart=new Date(examEnd.getTime()+brk*60000);
-  if(nextStart>=dayEnd){
-    // 先清除表单防止 wizEndDay 递归调用 wizNextSubject 重复保存
-    wizard.currentSubject='';wizard.currentDuration='';wizard.currentBreak=getMostUsedBreak();wizard.materials=[];wizard.editIdx=-1;
-    wizEndDay();return;
-  }
-  wizard.startTime=formatLocalTime(nextStart);
   wizard.currentSubject='';wizard.currentDuration='';wizard.currentBreak=getMostUsedBreak();wizard.materials=[];wizard.editIdx=-1;
+  // 下一场默认开始时间 = 当前场结束 + 休息，可手动更改
+  wizard.wizStart=formatLocal(new Date(examEnd.getTime()+brk*60000));
   renderAll();
 }
 
@@ -297,13 +214,18 @@ function wizCascadeAll(){if(wizard.subjects.length===0)return;cascadeFrom(0);ren
 
 function wizSaveEdit(){
   if(wizard.editIdx<0)return;
+  var stEl=document.getElementById('wizStart');if(stEl)wizard.wizStart=stEl.value;
+  var startV=wizard.wizStart||'';
   var subj=document.getElementById('wizSubject').value.trim();
   var dur=parseInt(document.getElementById('wizDuration').value)||SUBJECT_PRESETS[wizard.currentSubject]||60;
   var brk=parseInt(document.getElementById('wizBreak').value)||0;
   if(!subj){alert('请输入科目名称');return}
-  wizard.subjects[wizard.editIdx].name=subj;wizard.subjects[wizard.editIdx].duration=dur;wizard.subjects[wizard.editIdx].break=brk;wizard.subjects[wizard.editIdx].materials=wizard.materials.slice();
+  var s=wizard.subjects[wizard.editIdx];
+  s.name=subj;s.duration=dur;s.break=brk;s.materials=wizard.materials.slice();
+  if(startV){var cs=new Date(startV);if(!isNaN(cs.getTime())){s.start=formatLocal(cs);s.end=formatLocal(new Date(cs.getTime()+dur*60000))}}
   cascadeFrom(wizard.editIdx);
   wizard.editIdx=-1;wizard.currentSubject='';wizard.currentDuration='';wizard.currentBreak=getMostUsedBreak();wizard.materials=[];
+  wizard.wizStart=formatLocal(new Date(new Date(s.end).getTime()+(brk||0)*60000));
   renderAll();
 }
 
@@ -317,10 +239,11 @@ function wizDeleteSubject(idx){
 function wizCancelEdit(){wizard.editIdx=-1;wizard.currentSubject='';wizard.currentDuration='';wizard.currentBreak=getMostUsedBreak();wizard.materials=[];renderAll()}
 
 function wizEndDay(){
-  var subj=document.getElementById('wizSubject');
-  if(subj&&subj.value.trim()&&wizard.editIdx<0){var savedTime=wizard.startTime;wizNextSubject();wizard.startTime=savedTime;return}
+  var subj=document.getElementById('wizSubject'),stEl=document.getElementById('wizStart');
+  if(stEl)wizard.wizStart=stEl.value;
+  if(subj&&subj.value.trim()&&wizard.editIdx<0){wizNextSubject();return}
   wizard.day++;var d=new Date(wizard.dayDate+'T00:00:00');d.setDate(d.getDate()+1);
-  wizard.dayDate=formatLocalDate(d);wizard.lunchSkipped=false;wizard.editIdx=-1;
+  wizard.dayDate=formatLocalDate(d);wizard.wizStart='';wizard.editIdx=-1;
   wizard.currentSubject='';wizard.currentDuration='';wizard.currentBreak=getMostUsedBreak();wizard.materials=[];
   wizard.step='date';renderAll();
 }

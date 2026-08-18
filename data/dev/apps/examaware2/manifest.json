@@ -11,7 +11,7 @@
   "forked_from": null,
   "forked_by": null,
   "created_at": "2026-08-15 13:58:52",
-  "updated_at": "2026-08-17 10:26:25",
+  "updated_at": "2026-08-18 14:32:31",
   "ribbon": [
     {
       "label": "页面",
@@ -20,19 +20,22 @@
           "id": "page_connect",
           "label": "连接应用",
           "icon": "ri-link",
-          "command": "page_connect"
+          "command": "page_connect",
+          "type": "select"
         },
         {
           "id": "page_exams",
           "label": "考试管理",
           "icon": "ri-file-list-3-line",
-          "command": "page_exams"
+          "command": "page_exams",
+          "type": "select"
         },
         {
           "id": "page_config",
           "label": "应用配置",
           "icon": "ri-settings-3-line",
-          "command": "page_config"
+          "command": "page_config",
+          "type": "select"
         }
       ]
     }

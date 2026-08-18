@@ -1,10 +1,13 @@
 <template>
-  <div class="data-space">
+  <div class="data-space" :class="{ immersive }">
     <!-- 左侧文件树 -->
     <aside class="file-tree-panel">
       <div class="panel-header">
         <span class="panel-title">数据空间</span>
         <div class="panel-actions">
+          <button class="icon-btn" @click="goExport" title="导出数据">
+            <Icon icon="ri-download-2-line" :size="18" />
+          </button>
           <button class="icon-btn" @click="refreshTree" title="刷新">
             <Icon icon="ri-refresh-line" :size="18" />
           </button>
@@ -103,11 +106,17 @@
         <div class="editor-tabs-row" v-if="editorTabs.length > 0">
           <div class="editor-tabs">
             <div
-              v-for="tab in editorTabs"
+              v-for="(tab, gi) in editorTabs"
               :key="tab.id"
               class="editor-tab"
               :class="{ active: tab.id === (activeTab?.path || ''), dirty: tab.dirty }"
               @click="switchTab(tab.id)"
+              @contextmenu.prevent="onOpenTabMenu(tab.id, $event)"
+              draggable="true"
+              @dragstart="onTabDragStart(gi, $event)"
+              @dragover.prevent="onTabDragOver(gi)"
+              @drop="onTabDrop"
+              @dragend="onTabDragEnd"
             >
               <Icon :icon="tab.icon" :size="14" class="tab-icon" />
               <span class="tab-title" :title="tab.name">{{ tab.name }}</span>
@@ -119,11 +128,40 @@
           </div>
         </div>
 
+        <!-- 标签右键菜单 -->
+        <Teleport to="body">
+          <div v-if="tabCtx.menu.visible" class="tab-menu-overlay" @click="tabCtx.close" @contextmenu.prevent="tabCtx.close">
+            <div class="tab-menu" :style="{ left: tabCtx.menu.x + 'px', top: tabCtx.menu.y + 'px' }">
+              <button class="tm-item" @click="tabCtx.run('close')">
+                <Icon icon="ri-close-line" :size="14" /> 关闭
+              </button>
+              <div class="tm-divider"></div>
+              <button class="tm-item" @click="tabCtx.run('closeAll')">
+                <Icon icon="ri-close-circle-line" :size="14" /> 关闭所有标签
+              </button>
+              <button class="tm-item" @click="tabCtx.run('closeOthers')">
+                <Icon icon="ri-file-close-line" :size="14" /> 关闭其他标签
+              </button>
+              <button class="tm-item" @click="tabCtx.run('closeLeft')">
+                <Icon icon="ri-arrow-left-s-line" :size="14" /> 关闭左侧标签
+              </button>
+              <button class="tm-item" @click="tabCtx.run('closeRight')">
+                <Icon icon="ri-arrow-right-s-line" :size="14" /> 关闭右侧标签
+              </button>
+            </div>
+          </div>
+        </Teleport>
+
         <!-- Ribbon 工具栏 -->
         <RibbonToolbar
           :editor-info="editorInfo"
           :saving="saving"
           :is-instance="false"
+          :show-view-ribbon="true"
+          :manifest="ribbonManifest"
+          :system-right-tools="systemRightTools"
+          :system-right-selected-tool="isSourceView ? 'toggle-view' : ''"
+          :selected-tool="immersive ? 'immersive' : ''"
           :can-undo="!!activeTab"
           :can-redo="!!activeTab"
           :can-save="!!activeTab && !isReadOnly"
@@ -151,11 +189,14 @@
               :tabs="editorTabs"
               :active-tab-id="activeTab?.path || ''"
               :read-only="isReadOnly"
+              :show-source="isSourceView"
               :hide-tabs="true"
               @tab-click="switchTab"
               @tab-close="closeTab"
               @update:content="onContentUpdate"
               @plugin-save="onPluginSave"
+              @plugin-change="onEditorPluginChange"
+              @plugin-ribbon="onPluginRibbon"
               @monaco-save="saveCurrentTab"
               @monaco-find="openPanel('find')"
               @monaco-replace="openPanel('find')"
@@ -379,6 +420,19 @@
       </div>
     </div>
 
+    <!-- 分享对话框 -->
+    <ShareDialog
+      :visible="showShareDialog"
+      resource-type="cloud_file"
+      :resource-id="activeTab?.data?.file_id || ''"
+      :resource-name="activeTab?.name || ''"
+      resource-icon="ri-file-line"
+      resource-label="文件"
+      @close="showShareDialog = false"
+      @created="refreshTree"
+      @updated="refreshTree"
+    />
+
     <div v-if="toast" class="toast" :class="'toast-' + toast.type">
       <Icon :icon="toast.type === 'success' ? 'ri-check-line' : 'ri-error-warning-line'" :size="16" />
       <span>{{ toast.message }}</span>
@@ -387,9 +441,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue';
+import { ref, computed, onMounted, nextTick, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuth } from '../../composables/useAuth';
+import { useTabContextMenu } from '../../composables/useTabContextMenu';
 import { dataSpaceApi } from '../../api';
 import EditorPane from '../../components/editor/EditorPane.vue';
 import type { TabInfo } from '../../components/editor/EditorPane.vue';
@@ -398,10 +453,12 @@ import AiAssistantPanel from '../../components/editor/panels/AiAssistantPanel.vu
 import OperationHistoryPanel from '../../components/editor/panels/OperationHistoryPanel.vue';
 import VersionHistoryPanel from '../../components/editor/panels/VersionHistoryPanel.vue';
 import WorkspaceConfig from '../../components/editor/panels/WorkspaceConfig.vue';
+import ShareDialog from '../../components/editor/panels/ShareDialog.vue';
 
 const router = useRouter();
 const { user } = useAuth();
 const isAlliance = computed(() => user.value?.type === 'alliance');
+const showShareDialog = ref(false);
 
 // ===== 数据 =====
 const loading = ref(false);
@@ -424,7 +481,7 @@ const canCreateInSelected = computed(() => {
   if (!n) return false;
   return n.source === 'webspace' || n.source === 'webspace_file' || n.source === 'cloud_file';
 });
-const usage = ref<any>({ usedDisplay: '0 B', quotaDisplay: '500 MB', percent: 0 });
+const usage = ref<any>({ usedDisplay: '0 B', quotaDisplay: '10 MB', percent: 0 });
 
 // ===== 文件树 =====
 const visibleTree = computed(() => {
@@ -489,7 +546,7 @@ const activeTabPath = ref('');
 const activeTab = computed(() => openTabs.value.find(t => t.path === activeTabPath.value) || null);
 const isReadOnly = computed(() => {
   if (!activeTab.value) return false;
-  return ['version_record', 'history_record'].includes(activeTab.value.source);
+  return ['version_record', 'history_record'].includes(activeTab.value.source) || !!activeTab.value.protected;
 });
 const saving = ref(false);
 const autoSave = ref(true);
@@ -582,14 +639,24 @@ const editorTabs = computed<TabInfo[]>(() => openTabs.value.map(t => ({
   icon: fileIcon(t.node || t.data),
   isText: t.isText,
   content: t.content || '',
-  dirty: t.dirty,
-  language: t.data?.file_type || 'plaintext',
-  ext: t.data?.file_type || '',
+  dirty: t.source === 'webspace_config' ? false : t.dirty,
+  language: t.source === 'webspace_config' ? 'json' : (t.data?.file_type || 'plaintext'),
+  ext: t.source === 'webspace_config' ? 'json' : (t.data?.file_type || ''),
 })));
 
 function onContentUpdate(payload: { tabId: string; content: string }) {
   const tab = openTabs.value.find(t => t.path === payload.tabId);
-  if (tab) { tab.content = payload.content; tab.dirty = true; }
+  if (!tab) return;
+  tab.content = payload.content;
+  // 网页空间配置：JSON 编辑器变更 → 同步到右侧表单，不标记为 dirty
+  if (tab.source === 'webspace_config') {
+    try {
+      const parsed = JSON.parse(payload.content);
+      webspaceConfig.value = { ...parsed, space_id: webspaceConfig.value?.space_id };
+    } catch { /* JSON 解析失败，忽略 */ }
+    return; // 不标记 dirty
+  }
+  tab.dirty = true;
 }
 function onPluginSave(content: string) {
   if (activeTab.value) { activeTab.value.content = content; activeTab.value.dirty = false; }
@@ -601,6 +668,28 @@ function onAiApplyEdit(payload: { content: string; replaceAll?: boolean }) {
   editorPaneRef.value?.setValue(payload.content);
 }
 
+// 正式化编辑 Ribbon：插件“靠左”Ribbon + 系统“靠右”Ribbon
+const editorPlugin = ref<any>(null);
+const dynamicPluginRibbon = ref<any[] | undefined>(undefined);
+const isSourceView = ref(false);
+
+function onEditorPluginChange(plugin: any) {
+  editorPlugin.value = plugin;
+  dynamicPluginRibbon.value = plugin?.ribbon ? [...plugin.ribbon] : undefined;
+  isSourceView.value = false;
+}
+function onPluginRibbon(groups: any[]) {
+  dynamicPluginRibbon.value = groups;
+}
+const ribbonManifest = computed(() => dynamicPluginRibbon.value);
+const systemRightTools = computed(() => {
+  if (!editorPlugin.value) return [];
+  return [
+    { id: 'reload', label: '重载编辑器', icon: 'ri-refresh-line', command: 'reload' },
+    { id: 'toggle-view', label: isSourceView.value ? '可视化编辑器' : '查看源文件', icon: isSourceView.value ? 'ri-eye-line' : 'ri-code-box-line', type: 'select', command: 'toggle-view' },
+  ];
+});
+
 // Ribbon 操作
 function handleUndo() {
   editorPaneRef.value?.undo();
@@ -611,14 +700,52 @@ function handleRedo() {
 function onRibbonTool(tool: any) {
   if (tool.command === 'find') openPanel('find');
   else if (tool.command === 'replace') openPanel('find');
+  else if (tool.command === 'goto') editorPaneRef.value?.gotoLine();
   else if (tool.command === 'history') openPanel('history');
   else if (tool.command === 'version') openPanel('version');
-  else if (tool.command === 'share') { /* share */ }
+  else if (tool.command === 'share') {
+    if (!activeTab.value) return;
+    if (activeTab.value.source === 'cloud_file' || activeTab.value.source === 'webspace_file') {
+      showShareDialog.value = true;
+    } else {
+      showToast('error', '该文件暂不支持分享');
+    }
+  }
   else if (tool.command === 'import') { /* import */ }
   else if (tool.command === 'export') downloadFile();
   else if (tool.command === 'fullscreen') {
     if (document.fullscreenElement) document.exitFullscreen();
     else document.documentElement.requestFullscreen();
+  }
+  else if (tool.command === 'immersive') immersive.value = !immersive.value;
+  else if (tool.command === 'refresh') handleRibbonRefresh();
+  else if (tool.command === 'reload') editorPaneRef.value?.reloadPlugin();
+  else if (tool.command === 'toggle-view') isSourceView.value = !isSourceView.value;
+  else if (editorPlugin.value && tool.command) {
+    // 插件自定义 Ribbon 命令 → 转发给插件 iframe
+    editorPaneRef.value?.sendCommand?.(tool.command);
+  }
+}
+async function handleRibbonRefresh() {
+  const tab = activeTab.value;
+  if (!tab) return;
+  if (tab.dirty && !confirm('刷新将丢弃未保存的内容，是否继续？')) return;
+  const node = tab.node;
+  try {
+    const params: any = { path: tab.path, source: tab.source };
+    if (node?.file_id) params.file_id = node.file_id;
+    if (node?.instance_id) params.instance_id = node.instance_id;
+    if (node?.space_id) params.space_id = node.space_id;
+    if (node?.version_id) params.version_id = node.version_id;
+    if (node?.history_id) params.history_id = node.history_id;
+    const data = await dataSpaceApi.get(params);
+    tab.content = node?.source === 'webspace_config'
+      ? JSON.stringify(data.space_data || {}, null, 2)
+      : (data.content || '');
+    tab.dirty = false;
+    editorPaneRef.value?.setValue(tab.content);
+  } catch (e: any) {
+    showToast('error', '刷新失败: ' + (e.message || '未知错误'));
   }
 }
 function onAutoSaveChange(v: boolean) {
@@ -700,6 +827,11 @@ async function openFile(node: any) {
     if (node.source === 'webspace_config') {
       activePanel.value = 'webspace-config';
       webspaceConfig.value = node.space_data ? { ...node.space_data, space_id: node.space_id } : null;
+      // 确保 JSON 内容已加载
+      if (!existing.content) {
+        existing.content = JSON.stringify(node.space_data || {}, null, 2);
+        existing.isText = true;
+      }
     }
     return;
   }
@@ -711,13 +843,13 @@ async function openFile(node: any) {
     if (node.version_id) params.version_id = node.version_id;
     if (node.history_id) params.history_id = node.history_id;
     const data = await dataSpaceApi.get(params);
-    const isText = isTextFile(node);
+    const isText = node.source === 'webspace_config' ? true : isTextFile(node);
     const tab: Tab = {
       path: node.path,
       name: node.name,
       source: node.source,
       isText,
-      content: isText ? (data.content || '') : '',
+      content: node.source === 'webspace_config' ? JSON.stringify(data.space_data || {}, null, 2) : (isText ? (data.content || '') : ''),
       dirty: false,
       data,
       node,
@@ -740,7 +872,11 @@ function switchTab(path: string) {
   const tab = openTabs.value.find(t => t.path === path);
   if (tab?.source === 'webspace_config') {
     activePanel.value = 'webspace-config';
-    webspaceConfig.value = tab.node?.space_data ? { ...tab.node.space_data, space_id: tab.node.space_id } : null;
+    // 仅当切换到不同空间时才重新加载配置（保留当前表单修改）
+    const spaceId = tab.node?.space_id;
+    if (webspaceConfig.value?.space_id !== spaceId) {
+      webspaceConfig.value = tab.node?.space_data ? { ...tab.node.space_data, space_id } : null;
+    }
   }
 }
 
@@ -748,7 +884,8 @@ function closeTab(path: string) {
   const idx = openTabs.value.findIndex(t => t.path === path);
   if (idx === -1) return;
   const tab = openTabs.value[idx];
-  if (tab.dirty) {
+  // 网页空间配置不需要询问未保存
+  if (tab.dirty && tab.source !== 'webspace_config') {
     if (!confirm(`文件 "${tab.name}" 有未保存的更改，确定关闭吗？`)) return;
   }
   openTabs.value.splice(idx, 1);
@@ -757,9 +894,57 @@ function closeTab(path: string) {
   }
 }
 
+// ===== 标签页右键菜单 + 拖动排序 + 沉浸模式 =====
+const tabCtx = useTabContextMenu({
+  getTabs: () => openTabs.value,
+  getActiveId: () => activeTabPath.value,
+  setActive: (id) => { activeTabPath.value = id; },
+  removeTabs: (ids) => removeTabsBulk(ids),
+  saveActive: saveTabActive,
+});
+function onOpenTabMenu(id: string, e: MouseEvent) { tabCtx.open(id, e); }
+
+function removeTabsBulk(ids: string[]) {
+  const idSet = new Set(ids);
+  const hadActive = activeTabPath.value && idSet.has(activeTabPath.value);
+  const prevIdx = activeTabPath.value ? openTabs.value.findIndex(t => t.path === activeTabPath.value) : -1;
+  openTabs.value = openTabs.value.filter(t => !idSet.has(t.path));
+  if (hadActive) {
+    if (openTabs.value.length === 0) {
+      activeTabPath.value = '';
+    } else {
+      const idx = Math.min(prevIdx, openTabs.value.length - 1);
+      activeTabPath.value = (openTabs.value[Math.max(0, idx)] || openTabs.value[0]).path;
+    }
+  }
+}
+
+async function saveTabActive(): Promise<boolean> {
+  if (!activeTab.value || isReadOnly.value) return false;
+  await saveCurrentTab();
+  return true;
+}
+const immersive = ref(false);
+
+// 拖动排序
+let dragTabIdx = -1;
+function onTabDragStart(i: number, e: DragEvent) { dragTabIdx = i; if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; }
+function onTabDragOver(i: number) {
+  if (dragTabIdx < 0 || dragTabIdx === i) return;
+  const arr = [...openTabs.value];
+  const [item] = arr.splice(dragTabIdx, 1);
+  arr.splice(i, 0, item);
+  openTabs.value = arr;
+  dragTabIdx = i;
+}
+function onTabDrop() { dragTabIdx = -1; }
+function onTabDragEnd() { dragTabIdx = -1; }
+
 async function saveCurrentTab() {
   const tab = activeTab.value;
   if (!tab || !tab.isText || saving.value || isReadOnly.value) return;
+  // 网页空间配置通过右侧面板的保存按钮保存，不走此处
+  if (tab.source === 'webspace_config') return;
   saving.value = true;
   try {
     await dataSpaceApi.save({
@@ -817,6 +1002,20 @@ async function saveWebspaceConfig() {
     savingConfig.value = false;
   }
 }
+
+// 网页空间配置双向同步：右侧表单变更 → 左侧 JSON 编辑器
+let _webspaceConfigSyncLock = false;
+watch(webspaceConfig, (newVal) => {
+  if (_webspaceConfigSyncLock) return;
+  const tab = openTabs.value.find(t => t.source === 'webspace_config');
+  if (!tab || !newVal) return;
+  const json = JSON.stringify({ title: newVal.title, description: newVal.description, slug: newVal.slug, is_enabled: newVal.is_enabled }, null, 2);
+  if (tab.content === json) return;
+  _webspaceConfigSyncLock = true;
+  tab.content = json;
+  editorPaneRef.value?.setValue(json);
+  nextTick(() => { _webspaceConfigSyncLock = false; });
+}, { deep: true });
 
 function confirmDeleteWebspace() {
   deleteWebspaceTarget.value = true;
@@ -970,6 +1169,19 @@ function downloadFile(node?: any) {
   a.download = target.name || 'file.txt';
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// 跳转到数据空间导出页，可选携带当前选中目录进行预选
+function goExport() {
+  const dir = selectedDir.value;
+  const tab = activeTab.value;
+  if (tab && !tab.node?.is_directory) {
+    router.push('/console/data-export?file=' + encodeURIComponent(tab.path));
+  } else if (dir) {
+    router.push('/console/data-export?dir=' + encodeURIComponent(dir));
+  } else {
+    router.push('/console/data-export');
+  }
 }
 
 // ===== 查找替换 =====
@@ -1237,8 +1449,6 @@ onMounted(async () => {
 .right-tab:hover { color: var(--text-primary); }
 .right-tab.active { color: var(--text-primary); border-bottom-color: var(--accent-base); font-weight: 500; }
 .right-tab.add-tab { padding: var(--spacer-2) var(--spacer-2); border-left: 1px solid var(--divider-stroke); }
-.tab-close-btn { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; border-radius: 2px; margin-left: 2px; }
-.tab-close-btn:hover { background: var(--subtle-pressed); color: var(--status-error); }
 .panel-picker { position: absolute; top: 100%; right: 0; min-width: 160px; background: var(--flyout-bg); border: 1px solid var(--flyout-border); border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(0,0,0,0.15); z-index: 100; padding: var(--spacer-1); }
 .panel-picker-title { font-size: var(--font-size-xs); font-weight: 600; color: var(--text-tertiary); padding: var(--spacer-1) var(--spacer-2); }
 .panel-picker-item { display: flex; align-items: center; gap: var(--spacer-2); width: 100%; padding: var(--spacer-1) var(--spacer-2); border: none; background: transparent; color: var(--text-primary); font-size: var(--font-size-sm); cursor: pointer; border-radius: var(--radius-sm); }
@@ -1318,4 +1528,29 @@ onMounted(async () => {
 
 .empty-actions { padding: var(--spacer-4); text-align: center; }
 .empty-hint { color: var(--text-tertiary); font-size: var(--font-size-sm); }
+
+/* ===== 标签右键菜单 ===== */
+.tab-menu-overlay { position: fixed; inset: 0; z-index: 2000; }
+.tab-menu {
+  position: fixed; min-width: 168px;
+  background: var(--flyout-bg); border: 1px solid var(--flyout-border);
+  border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  padding: var(--spacer-1); z-index: 2001;
+}
+.tm-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: var(--spacer-2) var(--spacer-3); border: none; background: transparent;
+  color: var(--text-primary); font-size: var(--font-size-sm); cursor: pointer;
+  border-radius: var(--radius-sm); text-align: left;
+}
+.tm-item:hover { background: var(--subtle-secondary); }
+.tm-divider { height: 1px; background: var(--divider-stroke); margin: var(--spacer-1) 0; }
+.editor-tab[draggable='true'] { cursor: grab; }
+.editor-tab[draggable='true']:active { cursor: grabbing; }
+
+/* ===== 沉浸模式 ===== */
+.data-space.immersive .file-tree-panel { display: none; }
+.data-space.immersive .editor-right-col .editor-tabs-row { display: none; }
+.data-space.immersive .editor-right-col .editor-splitter { display: none; }
+.data-space.immersive .right-panel { display: none; }
 </style>
