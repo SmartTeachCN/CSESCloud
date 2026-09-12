@@ -14,7 +14,7 @@
         </nav>
         <div class="header-actions">
           <button class="btn-text" @click="goLogin">登录</button>
-          <button class="btn-primary" @click="goConsole">进入控制台</button>
+          <button class="btn btn-primary" @click="goConsole">进入控制台</button>
         </div>
       </div>
     </header>

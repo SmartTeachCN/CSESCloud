@@ -47,19 +47,26 @@ function switchPage(page) {
 function escHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function escAttr(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
-// ===== 设备管理 =====
+// ===== 设备管理（卡片化列表 + 多选 + 设备管理模态框） =====
+var deviceMultiSelect = false;
+var selectedDevices = new Set();
+var openMenuDeviceId = null;
+var modalDevice = null;       // 当前模态框设备（device_get 结果）
+var modalDeviceTab = 'basic';
+var cachedProfiles = [];      // 档案列表缓存（供设备模态框“活动课表”使用）
+
 async function refreshDevices() {
   try {
     var devices = await window.CSES.request('controlApi', { action: 'device_list', payload: {} }) || [];
     var profilePlaying = {};
     try {
-      var profiles = await window.CSES.request('listCiProfiles') || [];
-      document.getElementById('ciaStatProfiles').textContent = profiles.length;
-      profiles.forEach(function (p) {
+      cachedProfiles = await window.CSES.request('listCiProfiles') || [];
+      document.getElementById('ciaStatProfiles').textContent = cachedProfiles.length;
+      cachedProfiles.forEach(function (p) {
         (p.playing || []).forEach(function (devId) { profilePlaying[devId] = p; });
       });
     } catch (e) { /* 忽略 */ }
-    renderDeviceList(devices, profilePlaying);
+    renderDeviceCards(devices, profilePlaying);
     updateDeviceStats(devices);
   } catch (e) { console.error('获取设备列表失败:', e); }
 }
@@ -68,10 +75,10 @@ function deviceOnline(d) {
   return d.last_seen_at && (Date.now() - new Date(d.last_seen_at).getTime()) < 60000;
 }
 
-function renderDeviceList(devices, profilePlaying) {
-  var container = document.getElementById('ciaDeviceList');
+function renderDeviceCards(devices, profilePlaying) {
+  var container = document.getElementById('ciaDeviceGrid');
   if (!devices || devices.length === 0) {
-    container.innerHTML = '<div class="cia-empty">暂无设备连接，请生成注册码并在 ClassIsland 客户端的「CSES Cloud 适配器」设置中填入服务器地址与注册码</div>';
+    container.innerHTML = '<div class="cia-empty">暂无设备连接，请生成注册码并在 ClassIsland 客户端的「CSES Cloud 适配器」中导入凭据（或填写服务器地址与注册码）</div>';
     return;
   }
   var now = Date.now();
@@ -82,44 +89,106 @@ function renderDeviceList(devices, profilePlaying) {
     var rep = d.last_reported_state || {};
     var curProfile = rep.profile || null;
     var playing = profilePlaying[d.device_id];
-    var profileHtml = curProfile
-      ? '<div class="cia-device-profile"><span class="cia-dot"></span>当前档案: ' + escHtml(curProfile.name || curProfile.profile_name || '未命名') + (curProfile.version ? '（v' + escHtml(String(curProfile.version).slice(0, 8)) + '）' : '') + '</div>'
-      : (playing ? '<div class="cia-device-profile"><span class="cia-dot"></span>部署中: ' + escHtml(playing.profile_name || playing.name || '未命名') + '</div>' : (isOnline ? '' : ''));
-    return '<div class="cia-device-item">' +
-      '<span class="cia-device-status ' + (isOnline ? 'online' : 'offline') + '"></span>' +
-      '<div class="cia-device-info">' +
-        '<div class="cia-device-name">' + escHtml(d.display_name) + '</div>' +
-        '<div class="cia-device-meta">' + escHtml(d.platform || 'ClassIsland') + ' · ' + escHtml(d.app_version || '') + ' · ' + (isOnline ? '在线' : '离线') + ' · ' + (d.protocol === 'ws' ? 'WebSocket' : '长轮询') + '</div>' +
-        profileHtml + (notes ? '<div class="cia-device-notes">' + escHtml(notes) + '</div>' : '') +
+    var profileLine = curProfile
+      ? '<span class="cia-dot"></span>' + escHtml(curProfile.name || curProfile.profile_name || '未命名') + (curProfile.version ? '（' + escHtml(String(curProfile.version).slice(0, 8)) + '）' : '')
+      : (playing ? '<span class="cia-dot"></span>部署中: ' + escHtml(playing.profile_name || playing.name || '未命名') : '');
+    var checked = selectedDevices.has(d.device_id);
+    var meta = escHtml(d.platform || 'ClassIsland') + ' · ' + escHtml(d.app_version || '') + ' · ' +
+      (isOnline ? '在线' : '离线') + ' · ' + (d.protocol === 'ws' ? 'WebSocket' : '长轮询') +
+      (lastSeen ? '<br>最后在线 ' + escHtml(String(d.last_seen_at).slice(5, 16)) : '');
+    return '<div class="cia-device-card' + (checked && deviceMultiSelect ? ' selected' : '') + (deviceMultiSelect ? ' with-check' : '') + '" id="ciacard_' + escAttr(d.device_id) + '"' +
+      (deviceMultiSelect
+        ? ' onclick="toggleDeviceSelect(\'' + d.device_id + '\')"'
+        : ' onclick="openDeviceModal(\'' + d.device_id + '\')"') +
+      ' oncontextmenu="event.preventDefault(); event.stopPropagation(); toggleDeviceMenu(\'' + d.device_id + '\')"' +
+      ' title="点击查看/编辑设备，右键打开菜单">' +
+      (deviceMultiSelect ? '<span class="cia-device-card-check"><input type="checkbox" ' + (checked ? 'checked' : '') + ' onclick="event.stopPropagation();toggleDeviceSelect(\'' + d.device_id + '\')" /></span>' : '') +
+      '<div class="cia-device-card-head">' +
+        '<span class="cia-device-status ' + (isOnline ? 'online' : 'offline') + '"></span>' +
+        '<span class="cia-device-name" title="' + escAttr(d.display_name) + '">' + escHtml(d.display_name) + '</span>' +
+        '<button class="cia-device-card-menu-btn" title="设备菜单" onclick="event.stopPropagation();toggleDeviceMenu(\'' + d.device_id + '\')">&#8943;</button>' +
       '</div>' +
-      '<div class="cia-device-actions">' +
-        '<select class="cia-protocol-select" onchange="setDeviceProtocol(\'' + d.device_id + '\', this.value)" title="切换连接协议">' +
-          '<option value="poll"' + (d.protocol !== 'ws' ? ' selected' : '') + '>长轮询</option>' +
-          '<option value="ws"' + (d.protocol === 'ws' ? ' selected' : '') + '>WebSocket</option>' +
-        '</select>' +
-        '<button class="cia-btn small" onclick="editDeviceNotes(\'' + d.device_id + '\',\'' + escAttr(notes) + '\')">备注</button>' +
-        '<button class="cia-btn small" onclick="showDeviceCommands(\'' + d.device_id + '\')">命令</button>' +
-        '<button class="cia-btn small" onclick="showBroadcastDialog(\'' + d.device_id + '\',\'' + escAttr(d.display_name) + '\')">广播</button>' +
-        '<button class="cia-btn small danger" onclick="unregisterDevice(\'' + d.device_id + '\')">注销</button>' +
+      '<div class="cia-device-card-meta">' + meta + '</div>' +
+      '<div class="cia-device-card-profile">' + (profileLine || '<span style="color:var(--text-tertiary)">未应用档案</span>') + '</div>' +
+      (notes ? '<div class="cia-device-card-notes">' + escHtml(notes) + '</div>' : '') +
+      '<div class="cia-device-menu" id="ciamenu_' + escAttr(d.device_id) + '" style="display:none" onclick="event.stopPropagation()">' +
+        '<button class="cia-device-menu-item" onclick="closeDeviceMenu();openDeviceModal(\'' + d.device_id + '\')">查看 / 编辑设备</button>' +
+        '<button class="cia-device-menu-item" onclick="closeDeviceMenu();openDeviceModal(\'' + d.device_id + '\', \'broadcast\')">发送广播</button>' +
+        '<button class="cia-device-menu-item danger" onclick="closeDeviceMenu();unregisterDevice(\'' + d.device_id + '\', \'' + escAttr(d.display_name) + '\')">删除设备</button>' +
       '</div>' +
     '</div>';
   }).join('');
 }
 
-/** 切换设备连接协议（WS 设备立即生效；长轮询设备在下次轮询时生效） */
-async function setDeviceProtocol(deviceId, protocol) {
-  if (!confirm('确认将该设备切换为 ' + (protocol === 'ws' ? 'WebSocket' : '长轮询(REST)') + ' 连接协议？')) {
-    refreshDevices();
-    return;
+/** 卡片 ⋯ 菜单开关（同一时间只开一个；点击其他区域自动关闭） */
+function toggleDeviceMenu(deviceId) {
+  if (openMenuDeviceId === deviceId) { closeDeviceMenu(); return; }
+  closeDeviceMenu();
+  openMenuDeviceId = deviceId;
+  var menu = document.getElementById('ciamenu_' + deviceId);
+  if (menu) menu.style.display = '';
+}
+
+function closeDeviceMenu() {
+  if (!openMenuDeviceId) return;
+  var menu = document.getElementById('ciamenu_' + openMenuDeviceId);
+  if (menu) menu.style.display = 'none';
+  openMenuDeviceId = null;
+}
+
+document.addEventListener('click', function () { closeDeviceMenu(); });
+
+// ---- 多选 ----
+function toggleDeviceMultiSelect() {
+  deviceMultiSelect = !deviceMultiSelect;
+  if (!deviceMultiSelect) selectedDevices.clear();
+  document.getElementById('ciaDeviceMultiBar').style.display = deviceMultiSelect ? 'flex' : 'none';
+  refreshDevices();
+}
+
+function toggleDeviceSelect(deviceId) {
+  if (!deviceMultiSelect) return;
+  if (selectedDevices.has(deviceId)) selectedDevices.delete(deviceId);
+  else selectedDevices.add(deviceId);
+  updateDeviceMultiBar();
+  var card = document.getElementById('ciacard_' + deviceId);
+  if (card) card.classList.toggle('selected', selectedDevices.has(deviceId));
+  var check = card ? card.querySelector('input[type="checkbox"]') : null;
+  if (check) check.checked = selectedDevices.has(deviceId);
+}
+
+function updateDeviceMultiBar() {
+  document.getElementById('ciaDeviceMultiCount').textContent = '已选 ' + selectedDevices.size + ' 台设备';
+}
+
+function batchBroadcastDevices() {
+  if (selectedDevices.size === 0) { alert('请先选择设备'); return; }
+  showBroadcastDialog(Array.from(selectedDevices).join(','), selectedDevices.size + ' 台已选设备');
+}
+
+async function batchNotesDevices() {
+  if (selectedDevices.size === 0) { alert('请先选择设备'); return; }
+  var notes = prompt('为选中的 ' + selectedDevices.size + ' 台设备设置备注：');
+  if (notes === null) return;
+  var failed = 0;
+  for (var deviceId of Array.from(selectedDevices)) {
+    try {
+      await window.CSES.request('controlApi', { action: 'device_update_notes', payload: { device_id: deviceId, notes: notes } });
+    } catch (e) { failed++; }
   }
-  try {
-    var res = await window.CSES.request('controlApi', { action: 'device_set_protocol', payload: { device_id: deviceId, protocol: protocol } });
-    alert((res && res.notice) || '协议已切换');
-    setTimeout(refreshDevices, 1500);
-  } catch (e) {
-    alert('切换协议失败: ' + e.message);
-    refreshDevices();
+  alert(failed > 0 ? ('已完成，' + failed + ' 台设备备注更新失败') : '备注已更新');
+  refreshDevices();
+}
+
+async function batchDeleteDevices() {
+  if (selectedDevices.size === 0) { alert('请先选择设备'); return; }
+  if (!confirm('确认删除选中的 ' + selectedDevices.size + ' 台设备？此操作会解除绑定并清除其待执行命令。')) return;
+  for (var deviceId of Array.from(selectedDevices)) {
+    try { await window.CSES.request('controlApi', { action: 'device_unregister', payload: { device_id: deviceId } }); } catch (e) { /* 忽略 */ }
   }
+  selectedDevices.clear();
+  updateDeviceMultiBar();
+  refreshDevices();
 }
 
 function updateDeviceStats(devices) {
@@ -128,22 +197,146 @@ function updateDeviceStats(devices) {
   document.getElementById('ciaStatOnline').textContent = online;
 }
 
-function editDeviceNotes(deviceId, currentNotes) {
-  var notes = prompt('请输入设备备注：', currentNotes || '');
-  if (notes === null) return;
-  window.CSES.request('controlApi', { action: 'device_update_notes', payload: { device_id: deviceId, notes: notes } })
-    .then(function () { refreshDevices(); })
-    .catch(function (e) { alert('更新备注失败: ' + e.message); });
+/** 切换设备连接协议（WS 设备立即生效；长轮询设备在下次轮询时生效） */
+async function setDeviceProtocol(deviceId, protocol) {
+  if (!confirm('确认将该设备切换为 ' + (protocol === 'ws' ? 'WebSocket' : '长轮询(REST)') + ' 连接协议？')) {
+    renderDeviceNetworkTab();
+    refreshDevices();
+    return;
+  }
+  try {
+    var res = await window.CSES.request('controlApi', { action: 'device_set_protocol', payload: { device_id: deviceId, protocol: protocol } });
+    alert((res && res.notice) || '协议已切换');
+    modalDevice = await window.CSES.request('controlApi', { action: 'device_get', payload: { device_id: deviceId } });
+    renderDeviceNetworkTab();
+    setTimeout(refreshDevices, 1500);
+  } catch (e) {
+    alert('切换协议失败: ' + e.message);
+    refreshDevices();
+  }
 }
 
-function showDeviceCommands(deviceId) {
-  document.getElementById('ciaCmdTitle').textContent = '设备命令 - ' + deviceId;
-  document.getElementById('ciaCmdBody').innerHTML = '<div class="cia-empty">加载中...</div>';
-  document.getElementById('ciaCmdModal').style.display = '';
-  window.CSES.request('controlApi', { action: 'command_list', payload: { device_id: deviceId } }).then(function (cmds) {
+// ===== 设备管理模态框（基本 / 网络 / 广播 / 历史命令） =====
+async function openDeviceModal(deviceId, tab) {
+  try {
+    modalDevice = await window.CSES.request('controlApi', { action: 'device_get', payload: { device_id: deviceId } });
+  } catch (e) { alert('获取设备信息失败: ' + e.message); return; }
+  document.getElementById('ciaDeviceModalTitle').textContent = modalDevice.display_name || deviceId;
+  modalDeviceTab = tab || 'basic';
+  switchDeviceTab(modalDeviceTab);
+  document.getElementById('ciaDeviceModal').style.display = '';
+}
+
+function closeDeviceModal() {
+  document.getElementById('ciaDeviceModal').style.display = 'none';
+  modalDevice = null;
+  refreshDevices();
+}
+
+function switchDeviceTab(tab) {
+  modalDeviceTab = tab;
+  var tabs = document.querySelectorAll('#ciaDeviceModal .cia-modal-tab');
+  for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-tab') === tab);
+  if (tab === 'basic') renderDeviceBasicTab();
+  else if (tab === 'network') renderDeviceNetworkTab();
+  else if (tab === 'broadcast') renderDeviceBroadcastTab();
+  else if (tab === 'commands') renderDeviceCommandsTab();
+}
+
+function renderDeviceBasicTab() {
+  var box = document.getElementById('ciaDeviceTabBody');
+  if (!modalDevice) { box.innerHTML = ''; return; }
+  var rep = modalDevice.last_reported_state || {};
+  var curProfile = rep.profile || null;
+  var currentProfileName = curProfile ? (curProfile.name || curProfile.profile_name || '未命名') : '';
+  box.innerHTML =
+    // 档案 / 设置 两个左右并列的入口卡片
+    '<div class="cia-jump-cards">' +
+      '<div class="cia-jump-card">' +
+        '<div class="cia-jump-title">课表档案</div>' +
+        '<div class="cia-jump-value" title="' + escAttr(currentProfileName) + '">' + (currentProfileName ? escHtml(currentProfileName) : '未应用档案') + '</div>' +
+        '<button class="cia-jump-btn" onclick="openProfilePickerModal()">' +
+          '<span>选择档案应用</span>' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' +
+        '</button>' +
+      '</div>' +
+      '<div class="cia-jump-card">' +
+        '<div class="cia-jump-title">应用设置</div>' +
+        '<div class="cia-jump-value">同步 / 通知 / 客户端设置</div>' +
+        '<button class="cia-jump-btn" onclick="jumpToConfig()">' +
+          '<span>前往设置</span>' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>' +
+        '</button>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="cia-modal-section-title">基本信息</div>' +
+    '<table class="cia-device-info-table">' +
+      '<tr><th>设备 ID</th><td><code class="cia-code-chip">' + escHtml(modalDevice.device_id) + '</code></td></tr>' +
+      '<tr><th>平台 / 版本</th><td>' + escHtml(modalDevice.platform || 'ClassIsland') + ' · ' + escHtml(modalDevice.architecture || '') + ' · ' + escHtml(modalDevice.app_version || '') + '</td></tr>' +
+      '<tr><th>连接协议</th><td>' + (modalDevice.protocol === 'ws' ? 'WebSocket' : '长轮询') + '</td></tr>' +
+      '<tr><th>注册时间</th><td>' + escHtml(String(modalDevice.enrolled_at || '').slice(0, 19)) + '</td></tr>' +
+      '<tr><th>最后在线</th><td>' + escHtml(String(modalDevice.last_seen_at || '').slice(0, 19)) + (deviceOnline(modalDevice) ? '（在线）' : '') + '</td></tr>' +
+      '<tr><th>备注</th><td><div class="cia-inline-row"><input type="text" id="ciaDevNotes" value="' + escAttr(modalDevice.notes || '') + '" placeholder="设备备注" /><button class="cia-btn small" onclick="saveDeviceNotes()">保存</button></div></td></tr>' +
+    '</div>';
+}
+
+/** 广播 Tab（独立页签，含显示时长） */
+function renderDeviceBroadcastTab() {
+  var box = document.getElementById('ciaDeviceTabBody');
+  if (!modalDevice) { box.innerHTML = ''; return; }
+  box.innerHTML =
+    '<div class="cia-tip-box" style="margin-bottom:var(--spacer-3)">向该设备发送广播，客户端将以提醒（遮罩 + 正文）形式显示。</div>' +
+    '<div class="cia-field"><label>标题</label><input type="text" id="ciaDevBroadcastTitle" placeholder="通知标题" /></div>' +
+    '<div class="cia-field"><label>内容</label><textarea id="ciaDevBroadcastBody" rows="3" placeholder="广播正文（可选）"></textarea></div>' +
+    '<div class="cia-inline-row">' +
+      '<select id="ciaDevBroadcastSeverity"><option value="info">信息</option><option value="success">成功</option><option value="warning">警告</option><option value="error">错误</option></select>' +
+      '<input type="number" id="ciaDevBroadcastDuration" value="' + escAttr(getConfigField('notification.durationSeconds', 10)) + '" min="3" max="120" title="显示时长（秒）" />' +
+      '<span style="font-size:11px;color:var(--text-tertiary)">显示时长（秒）</span>' +
+      '<button class="cia-btn small primary" onclick="sendDeviceBroadcast()">发送广播</button>' +
+    '</div>' +
+    '<div class="cia-inline-row" style="margin-top:var(--spacer-3)">' +
+      '<button class="cia-btn small danger" onclick="dismissBroadcast(modalDevice.device_id)">撤回当前广播</button>' +
+    '</div>';
+}
+
+function renderDeviceNetworkTab() {
+  var box = document.getElementById('ciaDeviceTabBody');
+  if (!modalDevice) { box.innerHTML = ''; return; }
+  var protocol = modalDevice.protocol || 'poll';
+  var serverUrl = window.location.origin;
+  var uid = (window.CSES.instance && window.CSES.instance.uid) || '';
+  box.innerHTML =
+    '<div class="cia-modal-section-title">连接协议</div>' +
+    '<div class="cia-config-item" style="border:1px solid var(--divider-stroke);border-radius:var(--radius-md)">' +
+      '<div class="cia-config-item-main"><div class="cia-config-item-title">传输协议</div><div class="cia-config-item-desc">长轮询为 REST 轮询；WebSocket 为实时推送（客户端断线自动回退长轮询）。</div></div>' +
+      '<div class="cia-config-item-action"><select class="cia-protocol-select" id="ciaDevProtoSel">' +
+        '<option value="poll"' + (protocol !== 'ws' ? ' selected' : '') + '>长轮询</option>' +
+        '<option value="ws"' + (protocol === 'ws' ? ' selected' : '') + '>WebSocket</option>' +
+      '</select><button class="cia-btn small" onclick="applyDeviceProtocol()">应用</button></div>' +
+    '</div>' +
+    '<div class="cia-modal-section-title">连接信息</div>' +
+    '<table class="cia-device-info-table">' +
+      '<tr><th>REST 控制端点</th><td><code class="cia-code-chip">' + escHtml(serverUrl + '/api/rest-control?instance_uid=' + uid) + '</code></td></tr>' +
+      '<tr><th>WebSocket 网关</th><td><code class="cia-code-chip">' + escHtml(serverUrl + '/api/ws-control') + '</code></td></tr>' +
+      '<tr><th>轮询间隔限制</th><td id="ciaDevPollCell">读取中…</td></tr>' +
+    '</table>';
+  window.CSES.request('controlApi', { action: 'instance_protocol_get', payload: {} }).then(function (res) {
+    var cell = document.getElementById('ciaDevPollCell');
+    if (cell && res && res.poll_interval_seconds) cell.textContent = res.poll_interval_seconds + ' 秒（客户端按此限制自适应）';
+  }).catch(function () { });
+}
+
+function renderDeviceCommandsTab() {
+  var box = document.getElementById('ciaDeviceTabBody');
+  if (!modalDevice) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="cia-modal-section-title">历史命令（最近 100 条）</div><div id="ciaDevCmdList"><div class="cia-empty cia-empty-compact">加载中...</div></div>';
+  window.CSES.request('controlApi', { action: 'command_list', payload: { device_id: modalDevice.device_id } }).then(function (cmds) {
     var list = cmds || [];
+    var target = document.getElementById('ciaDevCmdList');
+    if (!target) return;
     if (list.length === 0) {
-      document.getElementById('ciaCmdBody').innerHTML = '<div class="cia-empty">暂无命令记录</div>';
+      target.innerHTML = '<div class="cia-empty">暂无命令记录</div>';
       return;
     }
     var rows = list.map(function (c) {
@@ -158,61 +351,199 @@ function showDeviceCommands(deviceId) {
         '<td><span class="' + stClass + '">' + escHtml(st) + '</span></td>' +
         '<td>' + escHtml((c.created_at || '').slice(0, 19)) + '</td></tr>';
     }).join('');
-    document.getElementById('ciaCmdBody').innerHTML =
-      '<table class="cia-cmd-table"><thead><tr><th>类型</th><th>参数</th><th>状态</th><th>时间</th></tr></thead><tbody>' +
-      rows + '</tbody></table>';
+    target.innerHTML = '<table class="cia-cmd-table"><thead><tr><th>类型</th><th>参数</th><th>状态</th><th>时间</th></tr></thead><tbody>' + rows + '</tbody></table>';
   }).catch(function (e) {
-    document.getElementById('ciaCmdBody').innerHTML = '<div class="cia-empty">加载失败: ' + escHtml(e.message || '') + '</div>';
+    var target = document.getElementById('ciaDevCmdList');
+    if (target) target.innerHTML = '<div class="cia-empty">加载失败: ' + escHtml(e.message || '') + '</div>';
   });
 }
 
-function closeCmdModal() {
-  document.getElementById('ciaCmdModal').style.display = 'none';
+function saveDeviceNotes() {
+  if (!modalDevice) return;
+  var notes = document.getElementById('ciaDevNotes').value;
+  window.CSES.request('controlApi', { action: 'device_update_notes', payload: { device_id: modalDevice.device_id, notes: notes } })
+    .then(function () {
+      modalDevice.notes = notes;
+      alert('备注已保存');
+      refreshDevices();
+    })
+    .catch(function (e) { alert('更新备注失败: ' + e.message); });
 }
 
-async function unregisterDevice(deviceId) {
-  if (!confirm('确认注销设备 ' + deviceId + '？')) return;
+/** 应用设置：跳转到应用配置界面（左侧栏选中该设备） */
+function jumpToConfig() {
+  var deviceId = modalDevice ? modalDevice.device_id : null;
+  closeDeviceModal();
+  switchPage('config');
+  if (!deviceId) return;
+  // 页面渲染后把左侧栏设备选择器定位到该设备
+  setTimeout(function () {
+    var sel = document.getElementById('ciaConfigDeviceSel');
+    if (!sel) return;
+    var optExists = Array.prototype.some.call(sel.options, function (o) { return o.value === deviceId; });
+    if (optExists) {
+      sel.value = deviceId;
+      switchConfigDevice(deviceId);
+    }
+  }, 300);
+}
+
+function sendDeviceBroadcast() {
+  if (!modalDevice) return;
+  var title = document.getElementById('ciaDevBroadcastTitle').value.trim();
+  var body = document.getElementById('ciaDevBroadcastBody').value.trim();
+  var severity = document.getElementById('ciaDevBroadcastSeverity').value;
+  var duration = parseInt(document.getElementById('ciaDevBroadcastDuration').value, 10) || 10;
+  duration = Math.min(Math.max(duration, 3), 120);
+  if (!title) { alert('请输入广播标题'); return; }
+  window.CSES.request('controlApi', {
+    action: 'command_create',
+    payload: {
+      command_type: 'broadcast.show',
+      device_id: modalDevice.device_id,
+      payload: {
+        broadcast_id: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()),
+        title: title, body: body, severity: severity, duration_seconds: duration,
+        expires_at: new Date(Date.now() + 3600000).toISOString()
+      }
+    }
+  }).then(function () { alert('广播已下发'); })
+    .catch(function (e) { alert('广播下发失败: ' + e.message); });
+}
+
+async function applyDeviceProtocol() {
+  if (!modalDevice) return;
+  var protocol = document.getElementById('ciaDevProtoSel').value;
+  await setDeviceProtocol(modalDevice.device_id, protocol);
+}
+
+function deleteDeviceFromModal() {
+  if (!modalDevice) return;
+  if (!confirm('确认删除设备「' + (modalDevice.display_name || modalDevice.device_id) + '」？此操作会解除绑定并清除其待执行命令。')) return;
+  var deviceId = modalDevice.device_id;
+  window.CSES.request('controlApi', { action: 'device_unregister', payload: { device_id: deviceId } })
+    .then(function () {
+      closeDeviceModal();
+      alert('设备已删除');
+    })
+    .catch(function (e) { alert('删除失败: ' + e.message); });
+}
+
+// ===== 档案选择弹框（课表档案「编辑」：弹出选一个档案并应用） =====
+var pickerDeviceId = null;
+var pickerSelectedProfileId = null;
+
+function openProfilePickerModal() {
+  if (!modalDevice) return;
+  pickerDeviceId = modalDevice.device_id;
+  pickerSelectedProfileId = null;
+  var rep = modalDevice.last_reported_state || {};
+  var currentId = rep.profile && rep.profile.config_id ? String(rep.profile.config_id) : '';
+  document.getElementById('ciaProfilePickerModal').style.display = '';
+  var list = document.getElementById('ciaProfilePickerList');
+  if (!cachedProfiles.length) {
+    list.innerHTML = '<div class="cia-empty">暂无档案，请先在「档案管理」页面创建</div>';
+    return;
+  }
+  list.innerHTML = cachedProfiles.map(function (p) {
+    var checked = String(p.id) === currentId;
+    if (checked) pickerSelectedProfileId = String(p.id);
+    return '<label class="cia-picker-item' + (checked ? ' selected' : '') + '" data-id="' + p.id + '">' +
+      '<input type="radio" name="ciaProfilePicker" value="' + p.id + '"' + (checked ? ' checked' : '') + ' onchange="pickerSelectedProfileId = String(this.value); markPickerSelection()" />' +
+      '<span class="cia-picker-main"><b>' + escHtml(p.profile_name || p.name) + '</b>' +
+      '<small>' + p.subjects + ' 科目 · ' + p.layouts + ' 时间表 · ' + p.plans + ' 课表</small></span>' +
+      (checked ? '<span class="cia-picker-current">当前</span>' : '') +
+      '</label>';
+  }).join('');
+}
+
+function markPickerSelection() {
+  var items = document.querySelectorAll('#ciaProfilePickerList .cia-picker-item');
+  for (var i = 0; i < items.length; i++) {
+    var radio = items[i].querySelector('input');
+    items[i].classList.toggle('selected', radio && radio.checked);
+  }
+}
+
+function closeProfilePicker() {
+  document.getElementById('ciaProfilePickerModal').style.display = 'none';
+  pickerDeviceId = null;
+  pickerSelectedProfileId = null;
+}
+
+async function confirmApplyProfile() {
+  if (!pickerDeviceId) return;
+  if (!pickerSelectedProfileId) { alert('请先选择一个档案'); return; }
+  try {
+    var res = await window.CSES.request('controlApi', {
+      action: 'profile_deploy',
+      payload: { profile_config_id: pickerSelectedProfileId, device_ids: [pickerDeviceId] }
+    });
+    closeProfilePicker();
+    alert('已下发档案应用命令（' + (res.profile_name || '档案') + '），客户端将在下次轮询/推送时应用。');
+    refreshDevices();
+  } catch (e) { alert('应用失败: ' + e.message); }
+}
+
+async function unregisterDevice(deviceId, displayName) {
+  if (!confirm('确认删除设备「' + (displayName || deviceId) + '」？此操作会解除绑定并清除其待执行命令。')) return;
   try {
     await window.CSES.request('controlApi', { action: 'device_unregister', payload: { device_id: deviceId } });
     refreshDevices();
-  } catch (e) { alert('注销失败: ' + e.message); }
+  } catch (e) { alert('删除失败: ' + e.message); }
 }
 
 // ===== 广播（通知接口：broadcast.show / broadcast.dismiss） =====
-var broadcastTargetId = null;
+var broadcastTargetIds = null; // null = 所有设备；数组 = 指定设备
 
-/** 打开广播弹窗（deviceId 为空 = 广播到所有设备） */
-function showBroadcastDialog(deviceId, displayName) {
-  broadcastTargetId = deviceId || '';
-  document.getElementById('ciaBroadcastTarget').textContent = deviceId ? (displayName || deviceId) : '所有设备';
+/** 打开广播弹窗（deviceIds 为空 = 广播到所有设备；数组 = 指定多台设备） */
+function showBroadcastDialog(deviceIds, displayName) {
+  broadcastTargetIds = deviceIds ? String(deviceIds).split(',').filter(Boolean) : null;
+  document.getElementById('ciaBroadcastTarget').textContent = displayName || (deviceIds ? deviceIds : '所有设备');
   document.getElementById('ciaBroadcastTitle').value = '通知';
   document.getElementById('ciaBroadcastBody').value = '';
   document.getElementById('ciaBroadcastSeverity').value = 'info';
+  document.getElementById('ciaBroadcastDuration').value = getConfigField('notification.durationSeconds', 10);
   document.getElementById('ciaBroadcastModal').style.display = '';
 }
 
 function closeBroadcastDialog() {
   document.getElementById('ciaBroadcastModal').style.display = 'none';
-  broadcastTargetId = null;
+  broadcastTargetIds = null;
 }
 
 async function sendBroadcast() {
   var title = document.getElementById('ciaBroadcastTitle').value.trim();
   var body = document.getElementById('ciaBroadcastBody').value.trim();
   var severity = document.getElementById('ciaBroadcastSeverity').value;
+  var duration = parseInt(document.getElementById('ciaBroadcastDuration').value, 10) || 10;
+  duration = Math.min(Math.max(duration, 3), 120);
   if (!title) { alert('请输入广播标题'); return; }
+  var targets = broadcastTargetIds;
   var payload = {
     broadcast_id: (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()),
     title: title,
     body: body,
     severity: severity,
+    duration_seconds: duration,
     expires_at: new Date(Date.now() + 3600000).toISOString()
   };
-  var cmdPayload = { command_type: 'broadcast.show', payload: payload };
-  if (broadcastTargetId) cmdPayload.device_id = broadcastTargetId;
   try {
-    var res = await window.CSES.request('controlApi', { action: 'command_create', payload: cmdPayload });
-    alert('广播已下发' + (res && res.max_delay_seconds > 0 ? '（长轮询设备最长延迟 ' + res.max_delay_seconds + ' 秒收到）' : ''));
+    if (targets && targets.length > 1) {
+      // 多设备：逐台定向下发
+      for (var i = 0; i < targets.length; i++) {
+        await window.CSES.request('controlApi', {
+          action: 'command_create',
+          payload: { command_type: 'broadcast.show', device_id: targets[i], payload: payload }
+        });
+      }
+      alert('广播已下发到 ' + targets.length + ' 台设备');
+    } else {
+      var cmdPayload = { command_type: 'broadcast.show', payload: payload };
+      if (targets && targets.length === 1) cmdPayload.device_id = targets[0];
+      var res = await window.CSES.request('controlApi', { action: 'command_create', payload: cmdPayload });
+      alert('广播已下发' + (res && res.max_delay_seconds > 0 ? '（长轮询设备最长延迟 ' + res.max_delay_seconds + ' 秒收到）' : ''));
+    }
     closeBroadcastDialog();
     refreshDevices();
   } catch (e) { alert('广播下发失败: ' + e.message); }
@@ -374,13 +705,12 @@ async function refreshProfileList() {
         '<div class="cia-profile-card-name">' + escHtml(p.profile_name || p.name) + '</div>' +
         '<div class="cia-profile-card-meta">' +
           '<span>' + p.subjects + ' 科目</span><span>' + p.layouts + ' 时间表</span><span>' + p.plans + ' 课表</span>' +
+          '<span>· ' + escHtml((p.updated_at || '').slice(0, 10)) + '</span>' +
         '</div>' +
-        '<div class="cia-profile-card-meta"><span class="cia-group-tag">' + escHtml(p.name) + '</span><span>' + escHtml((p.updated_at || '').slice(0, 19)) + '</span></div>' +
         playingHtml +
         (!multiSelectMode ? '<div class="cia-profile-card-actions">' +
-          '<button class="cia-btn small" onclick="event.stopPropagation();viewProfileDetail(\'' + p.id + '\')">详情</button>' +
-          '<button class="cia-btn small" onclick="event.stopPropagation();editProfile(\'' + p.id + '\')">编辑</button>' +
-          '<button class="cia-btn small primary" onclick="event.stopPropagation();openDeployDialog(\'' + p.id + '\')">部署</button>' +
+          '<button class="cia-btn small primary" onclick="event.stopPropagation();editProfile(\'' + p.id + '\')">编辑</button>' +
+          '<button class="cia-btn small" onclick="event.stopPropagation();openDeployDialog(\'' + p.id + '\')">部署</button>' +
           '<button class="cia-btn small danger" onclick="event.stopPropagation();deleteProfileConfirm(\'' + p.id + '\')">删除</button>' +
         '</div>' : '') +
       '</div>';
@@ -661,6 +991,8 @@ function refreshConfigDeviceSelector() {
     });
     sel.innerHTML = html;
     if (currentVal) sel.value = currentVal;
+    var count = document.getElementById('ciaConfigDeviceCount');
+    if (count) count.textContent = '包含全部 ' + (devices || []).length + ' 台设备';
   }).catch(function () { });
 }
 
@@ -697,6 +1029,48 @@ function renderConfigTab(tab) {
           '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">发送测试广播</div><div class="cia-config-item-desc">' + (isGlobal ? '向所有在线设备下发一条测试广播。' : '向该设备下发一条测试广播。') + '</div></div><div class="cia-config-item-action"><button class="cia-btn small" onclick="showBroadcastDialog(' + (isGlobal ? '' : ('\'' + configDeviceId + '\', \'\'') ) + ')">发送</button></div></div>' +
           '<div class="cia-config-divider"></div>' +
           '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">撤回广播</div><div class="cia-config-item-desc">向客户端下发 broadcast.dismiss 关闭当前提醒。</div></div><div class="cia-config-item-action"><button class="cia-btn small danger" onclick="dismissBroadcast(' + (isGlobal ? '' : ('\'' + configDeviceId + '\'')) + ')">撤回</button></div></div>' +
+        '</div>';
+      break;
+    case 'client':
+      html = '<h2>客户端设置 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        '<div class="cia-tip-box" style="margin-bottom:var(--spacer-3)">对应 ClassIsland 客户端的设置项，保存后经 settings.apply 即时下发并在客户端生效。</div>' +
+        '<div class="cia-config-card">' +
+          '<div class="cia-section-title">外观</div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">应用主题</div><div class="cia-config-item-desc">客户端界面主题。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.theme\', parseInt(this.value))"><option value="0"' + (getConfigField('client.theme', 0) === 0 ? ' selected' : '') + '>跟随系统</option><option value="1"' + (getConfigField('client.theme', 0) === 1 ? ' selected' : '') + '>明亮</option><option value="2"' + (getConfigField('client.theme', 0) === 2 ? ' selected' : '') + '>黑暗</option></select></div></div>' +
+          '<div class="cia-config-divider"></div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">背景不透明度</div><div class="cia-config-item-desc">主界面背景不透明度（%）。</div></div><div class="cia-config-item-action"><input type="number" min="0" max="100" value="' + escAttr(Math.round(getConfigField('client.opacity', 0.55) * 100)) + '" onchange="saveConfigField(\'client.opacity\', (parseInt(this.value)||55)/100)" style="width:90px" /><span style="font-size:11px;color:var(--text-tertiary)">%</span></div></div>' +
+          '<div class="cia-config-divider"></div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">界面缩放</div><div class="cia-config-item-desc">客户端界面缩放倍率。</div></div><div class="cia-config-item-action"><input type="number" step="0.05" min="0.5" max="2" value="' + escAttr(getConfigField('client.scale', 1)) + '" onchange="saveConfigField(\'client.scale\', parseFloat(this.value)||1)" style="width:90px" /><span style="font-size:11px;color:var(--text-tertiary)">倍</span></div></div>' +
+          '<div class="cia-config-divider"></div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">动画效果级别</div><div class="cia-config-item-desc">0 完整 / 1 减少 / 2 关闭。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.animationLevel\', parseInt(this.value))"><option value="0"' + (getConfigField('client.animationLevel', 0) === 0 ? ' selected' : '') + '>完整</option><option value="1"' + (getConfigField('client.animationLevel', 0) === 1 ? ' selected' : '') + '>减少</option><option value="2"' + (getConfigField('client.animationLevel', 0) === 2 ? ' selected' : '') + '>关闭</option></select></div></div>' +
+        '</div>' +
+        '<div class="cia-config-card">' +
+          '<div class="cia-section-title">提醒</div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">准备上课提醒</div><div class="cia-config-item-desc">上课前指定时间发出提醒。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.classPrepareEnabled\', this.value === \'true\')"><option value="true"' + (getConfigField('client.classPrepareEnabled', true) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('client.classPrepareEnabled', true) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
+          '<div class="cia-config-divider"></div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">提醒提前量</div><div class="cia-config-item-desc">准备上课提醒的提前秒数。</div></div><div class="cia-config-item-action"><input type="number" min="10" max="3600" value="' + escAttr(getConfigField('client.classPrepareSeconds', 60)) + '" onchange="saveConfigField(\'client.classPrepareSeconds\', parseInt(this.value)||60)" style="width:90px" /><span style="font-size:11px;color:var(--text-tertiary)">秒</span></div></div>' +
+          '<div class="cia-config-divider"></div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">下课提醒</div><div class="cia-config-item-desc">下课时发出提醒。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.classOffEnabled\', this.value === \'true\')"><option value="true"' + (getConfigField('client.classOffEnabled', true) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('client.classOffEnabled', true) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
+          '<div class="cia-config-divider"></div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">课程切换提醒</div><div class="cia-config-item-desc">课程切换时发出提醒。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.classChangingEnabled\', this.value === \'true\')"><option value="true"' + (getConfigField('client.classChangingEnabled', false) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('client.classChangingEnabled', false) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
+        '</div>' +
+        '<div class="cia-config-card">' +
+          '<div class="cia-section-title">显示</div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">时间点附加信息</div><div class="cia-config-item-desc">时间点上显示的附加信息类型。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.extraInfoType\', parseInt(this.value))"><option value="0"' + (getConfigField('client.extraInfoType', 0) === 0 ? ' selected' : '') + '>持续时间</option><option value="1"' + (getConfigField('client.extraInfoType', 0) === 1 ? ' selected' : '') + '>已过/持续</option><option value="2"' + (getConfigField('client.extraInfoType', 0) === 2 ? ' selected' : '') + '>剩余/持续</option><option value="3"' + (getConfigField('client.extraInfoType', 0) === 3 ? ' selected' : '') + '>已过百分比</option><option value="4"' + (getConfigField('client.extraInfoType', 0) === 4 ? ' selected' : '') + '>剩余时间</option><option value="5"' + (getConfigField('client.extraInfoType', 0) === 5 ? ' selected' : '') + '>倒计时</option></select></div></div>' +
+          '<div class="cia-config-divider"></div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">结束倒计时</div><div class="cia-config-item-desc">时间点结束前显示倒计时。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.countdownEnabled\', this.value === \'true\')"><option value="true"' + (getConfigField('client.countdownEnabled', false) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('client.countdownEnabled', false) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
+          '<div class="cia-config-divider"></div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">默认上课时长</div><div class="cia-config-item-desc">新建时间点时的默认上课时长。</div></div><div class="cia-config-item-action"><input type="number" min="1" max="600" value="' + escAttr(getConfigField('client.defaultOnClassMinutes', 40)) + '" onchange="saveConfigField(\'client.defaultOnClassMinutes\', parseInt(this.value)||40)" style="width:90px" /><span style="font-size:11px;color:var(--text-tertiary)">分钟</span></div></div>' +
+          '<div class="cia-config-divider"></div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">默认课间时长</div><div class="cia-config-item-desc">新建时间点时的默认课间时长。</div></div><div class="cia-config-item-action"><input type="number" min="0" max="600" value="' + escAttr(getConfigField('client.defaultBreakingMinutes', 10)) + '" onchange="saveConfigField(\'client.defaultBreakingMinutes\', parseInt(this.value)||10)" style="width:90px" /><span style="font-size:11px;color:var(--text-tertiary)">分钟</span></div></div>' +
+        '</div>' +
+        '<div class="cia-config-card">' +
+          '<div class="cia-section-title">时间</div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">精确时间</div><div class="cia-config-item-desc">使用 NTP 精确时间进行课程计算。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.exactTimeEnabled\', this.value === \'true\')"><option value="true"' + (getConfigField('client.exactTimeEnabled', true) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('client.exactTimeEnabled', true) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
+          '<div class="cia-config-divider"></div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">自动校时</div><div class="cia-config-item-desc">定期与 NTP 服务器校准时间。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.timeAutoAdjust\', this.value === \'true\')"><option value="true"' + (getConfigField('client.timeAutoAdjust', true) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('client.timeAutoAdjust', true) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
+          '<div class="cia-config-divider"></div>' +
+          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">手动时间偏移</div><div class="cia-config-item-desc">在精确时间基础上手动调整的偏移量。</div></div><div class="cia-config-item-action"><input type="number" value="' + escAttr(getConfigField('client.timeOffsetSeconds', 0)) + '" onchange="saveConfigField(\'client.timeOffsetSeconds\', parseFloat(this.value)||0)" style="width:110px" /><span style="font-size:11px;color:var(--text-tertiary)">秒</span></div></div>' +
         '</div>';
       break;
     case 'connect':

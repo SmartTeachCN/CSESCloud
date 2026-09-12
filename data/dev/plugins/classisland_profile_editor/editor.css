@@ -193,6 +193,16 @@ body { overflow: hidden; font-family: 'Segoe UI Variable', 'Segoe UI', system-ui
 }
 .ci-class-row select:focus, .ci-class-row input:focus { border-color: var(--ci-accent); }
 .ci-class-extra { font-size: 11px; color: var(--ci-warn); font-family: inherit; }
+.ci-quick-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  height: 28px; padding: 0 10px; border-radius: 6px; cursor: pointer;
+  background: var(--ci-accent-bg); color: var(--ci-accent);
+  border: 1px solid transparent; font-size: 12px; font-family: inherit; font-weight: 600;
+  transition: border-color 0.15s; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.ci-quick-chip:hover { border-color: var(--ci-accent); }
+.ci-quick-chip.ci-quick-missing { background: rgba(202, 143, 4, 0.12); color: var(--ci-warn); font-weight: 400; }
+.ci-week-plan.dim { opacity: 0.45; }
 
 /* ---- JSON 源码 / 通用回退 ---- */
 .ci-raw {
@@ -291,7 +301,21 @@ body { overflow: hidden; font-family: 'Segoe UI Variable', 'Segoe UI', system-ui
 .ci-week-lesson .ci-lesson-time { font-family: var(--ci-mono); font-size: 9px; color: var(--ci-text-3); }
 .ci-week-lesson .ci-lesson-name { color: var(--ci-text-2); }
 .ci-week-empty { color: var(--ci-text-3); font-size: 11px; padding: 4px 8px; }
-.ci-week-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 11px; color: var(--ci-text-3); }
+.ci-week-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 11px; color: var(--ci-text-3); flex-wrap: wrap; }
+.ci-week-autonext, .ci-quick-autonext { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ci-text-2); cursor: pointer; user-select: none; }
+.ci-week-autonext input, .ci-quick-autonext input { accent-color: var(--ci-accent); }
+.ci-quick-autonext { grid-column: 1 / -1; padding: 2px 2px 0; }
+/* 周视图课程为可点选按钮（对齐 ClassIsland 2 周视图编辑体验） */
+.ci-week-lesson {
+  display: flex; gap: 5px; padding: 3px 6px; align-items: baseline; width: 100%;
+  background: transparent; border: 1px solid transparent; border-radius: 5px;
+  cursor: pointer; font-family: inherit; text-align: left; transition: background 0.15s, border-color 0.15s;
+}
+.ci-week-lesson:hover { background: var(--ci-subtle); border-color: var(--ci-border); }
+.ci-week-lesson.editing { background: var(--ci-accent-bg); border-color: var(--ci-accent); }
+.ci-week-lesson.editing .ci-lesson-name { color: var(--ci-accent); font-weight: 700; }
+.ci-week-lesson .ci-lesson-time { font-family: var(--ci-mono); font-size: 9px; color: var(--ci-text-3); }
+.ci-week-lesson .ci-lesson-name { color: var(--ci-text-2); font-size: 12px; }
 
 /* ---- 月视图 ---- */
 .ci-month-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -334,6 +358,19 @@ body { overflow: hidden; font-family: 'Segoe UI Variable', 'Segoe UI', system-ui
 .ci-viz-1 .ci-viz-ratio { color: var(--ci-ok); }
 .ci-viz-3 .ci-viz-ratio { color: var(--ci-warn); }
 .ci-viz-2 .ci-viz-ratio { display: none; }
+.ci-viz-icon { width: 15px; height: 15px; flex-shrink: 0; color: var(--ci-text-2); display: inline-flex; align-items: center; }
+.ci-viz-icon svg { width: 15px; height: 15px; }
+.ci-viz-0 .ci-viz-icon { color: var(--ci-accent); }
+.ci-viz-1 .ci-viz-icon { color: var(--ci-ok); }
+.ci-viz-3 .ci-viz-icon { color: var(--ci-warn); }
+.ci-viz-2 .ci-viz-icon { color: var(--ci-text-3); }
+.ci-viz-item.now { border-color: var(--ci-err); box-shadow: inset 3px 0 0 var(--ci-err); }
+.ci-viz-now-badge {
+  display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px;
+  background: var(--ci-err); color: #fff; font-size: 9px; font-weight: 600; vertical-align: middle;
+  animation: ci-now-pulse 2s ease-in-out infinite;
+}
+@keyframes ci-now-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 
 /* ---- 课程快速选择面板 ---- */
 .ci-quick-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 2000; }

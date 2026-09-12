@@ -3,8 +3,11 @@
  *
  * - 文件为 ClassIsland 档案（TimeLayouts / ClassPlans / Subjects 关键结构）时进入结构化编辑；
  * - 否则回退为通用 JSON 编辑器。
- * - 编辑体验对齐 ClassIsland 2 档案设置窗口：课表（按课表群分组、Classes 与时间表上课点对应）、
- *   时间表（按类型插入时间点、复制、分割线查重）、科目（增删复制）。
+ * - 编辑体验对齐 ClassIsland 2 档案设置窗口：
+ *   · 科目：左表格 + 右详情，支持 ClassIsland 默认预设科目（与客户端同 GUID）；
+ *   · 课表：列表 / 周视图 / 月视图（月视图支持预定课表 OrderedSchedules）、临时层、课程快速选择面板、
+ *           设置区可收起（收起状态存于浏览器，每个列表视图独立配置）；
+ *   · 时间表：列表 / 可视化视图。
  * - 保存通过平台 Ribbon「保存」按钮（save 命令 / Ctrl+S），不设独立保存按钮；
  *   撤销/重做对接平台 Ribbon 的 undo/redo 命令。
  * - 视图与选择状态随文件持久化，刷新后回到刷新前页面。
@@ -14,11 +17,17 @@ var profile = null;            // 档案对象（保存时原样序列化，未�
 var isProfile = false;         // 是否识别为 ClassIsland 档案
 var profileFmt = '2x';         // 时间字段主格式：2x=StartTime / 1x=StartSecond
 var view = 'classplans';
+var classPlanSubView = 'list';     // 课表：list / week / month
+var timeLayoutSubView = 'list';    // 时间表：list / visual
+var monthCursor = null;            // 月视图当前月份 {y, m}（m: 0-11）
 var selectedTimeLayoutId = null;
 var selectedClassPlanId = null;
-var selectedItemIdx = -1;      // 时间表当前选中时间点
+var selectedItemIdx = -1;          // 时间表当前选中时间点
+var selectedSubjectId = null;      // 科目当前选中
+var uiState = { collapse: { classplans: false, timelayouts: false } }; // 收起状态（每个列表视图一个配置）
+var quickSelectCtx = null;         // 快速选择面板上下文 {type:'subject',planId,idx} / {type:'plan',dateKey}
 var dirty = false;
-var rawDirty = false;          // 源码视图手动改过、尚未载入
+var rawDirty = false;              // 源码视图手动改过、尚未载入
 var validationErrors = [];
 var validationWarnings = [];
 
@@ -28,6 +37,33 @@ var TIME_ANCHOR = '2000-01-01';
 var TIME_TYPES = { 0: '上课', 1: '课间', 2: '分割', 3: '行动' };
 // ClassIsland 2 的默认时间点时长（分钟）：上课 40 / 课间 10 / 分割与行动 0
 var DEFAULT_DURATION_MIN = { 0: 40, 1: 10, 2: 0, 3: 0 };
+var WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0]; // 周视图列顺序：周一…周日
+var WEEKDAY_NAMES = { 0: '周日', 1: '周一', 2: '周二', 3: '周三', 4: '周四', 5: '周五', 6: '周六' };
+
+// ClassIsland 客户端默认科目（与 Assets/default-subjects.json 同 GUID，保证档案在客户端识别一致）
+var PRESET_SUBJECTS = [
+  { id: '97d0bf3f-137f-4f8a-87d6-ff387063bbd3', name: '语文', initial: '语' },
+  { id: '1154d452-5ede-4194-b4dd-cb40c956c8ed', name: '数学', initial: '数' },
+  { id: '3bbed0c0-bcf3-4dfe-a78d-5da9b02cf8bd', name: '英语', initial: '英' },
+  { id: '44ec22d3-3dde-40e6-8eb7-a1f4cd378a04', name: '历史', initial: '历' },
+  { id: '9f0d71b7-b4da-4040-a3d5-64da7573c6dd', name: '政治', initial: '政' },
+  { id: 'a4a76e77-29d8-4103-882c-2f4c9d1e8077', name: '物理', initial: '物' },
+  { id: 'd18e9906-0210-4f00-9dd6-b919f0dd8287', name: '化学', initial: '化' },
+  { id: 'a41cc849-b4bc-4dfd-a464-7f4fa3e317ca', name: '生物', initial: '生' },
+  { id: '7b7aea95-30ad-4490-8d98-0c9179c47a10', name: '地理', initial: '地' },
+  { id: '66d1c380-d292-46e1-86d5-d403e2a4f200', name: '信息技术', initial: '信', outdoor: true },
+  { id: '0ed2307b-4d9b-48fa-97ed-94bd2213c84e', name: '体育', initial: '体', outdoor: true },
+  { id: '923f4a8b-51eb-468b-971d-bb02e7db0163', name: '自习', initial: '自' },
+  { id: '0d412099-dac6-4616-b6a7-c4fb76b12063', name: '通用技术', initial: '技' },
+  { id: '91a88ebb-8ecb-493e-b09c-e35718f01dce', name: '音乐', initial: '音' },
+  { id: '742b00dc-901b-496f-ae33-6714a13fa465', name: '美术', initial: '美' },
+  { id: '353c420e-c256-4e28-9f9c-283333ba6e62', name: '选修课', initial: '选' },
+  { id: 'cc826063-bdb7-492b-baf3-3c6877e8c4bf', name: '社团', initial: '社' },
+  { id: '31380edc-400d-46c2-b993-a5c4a43db126', name: '心理', initial: '心' },
+  { id: '9875b24c-470d-4195-8a6a-73925ea4808b', name: '早读', initial: '早' },
+  { id: 'cf251cd8-2aab-4aa1-8211-50f4e6919a3d', name: '班会', initial: '班' },
+  { id: '95dd61cd-5d2e-4f23-80e8-99be8aa97028', name: '周测', initial: '测' },
+];
 
 // ================= 工具 =================
 function escHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -46,6 +82,16 @@ function guid() {
 function isPlainObject(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
 
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+function subjectName(id) {
+  var s = profile && profile.Subjects ? profile.Subjects[id] : null;
+  return s ? (s.Name || id) : null;
+}
+function subjectInitial(id) {
+  var s = profile && profile.Subjects ? profile.Subjects[id] : null;
+  if (!s) return '';
+  return s.Initial || s.Name || '';
+}
 
 // ================= 关键格式识别 =================
 /**
@@ -207,6 +253,10 @@ function revalidateSelections() {
     var cpIds = Object.keys(profile.ClassPlans);
     selectedClassPlanId = cpIds.length ? cpIds[0] : null;
   }
+  if (selectedSubjectId && !(selectedSubjectId in profile.Subjects)) {
+    var sIds = Object.keys(profile.Subjects);
+    selectedSubjectId = sIds.length ? sIds[0] : null;
+  }
 }
 
 // ================= 视图状态持久化（刷新后回到刷新前页面） =================
@@ -218,10 +268,15 @@ function persistViewState() {
   try {
     localStorage.setItem(stateStorageKey(), JSON.stringify({
       view: view,
+      classPlanSubView: classPlanSubView,
+      timeLayoutSubView: timeLayoutSubView,
       selectedTimeLayoutId: selectedTimeLayoutId,
       selectedClassPlanId: selectedClassPlanId,
-      selectedItemIdx: selectedItemIdx,
-    }));
+      selectedSubjectId: selectedSubjectId,
+    selectedItemIdx: selectedItemIdx,
+    collapse: uiState.collapse,   // 收起/展开状态（每个列表视图一个配置）
+    autoNextLesson: !!uiState.autoNextLesson,
+  }));
   } catch (e) { /* ignore */ }
 }
 function restoreViewState() {
@@ -229,12 +284,21 @@ function restoreViewState() {
     var raw = localStorage.getItem(stateStorageKey());
     if (!raw) return;
     var st = JSON.parse(raw);
-    if (st && typeof st === 'object') {
-      if (['classplans', 'timelayouts', 'subjects', 'raw'].indexOf(st.view) >= 0) view = st.view;
-      if (st.selectedTimeLayoutId) selectedTimeLayoutId = st.selectedTimeLayoutId;
-      if (st.selectedClassPlanId) selectedClassPlanId = st.selectedClassPlanId;
-      if (typeof st.selectedItemIdx === 'number') selectedItemIdx = st.selectedItemIdx;
+    if (!st || typeof st !== 'object') return;
+    if (['classplans', 'timelayouts', 'subjects', 'raw'].indexOf(st.view) >= 0) view = st.view;
+    if (['list', 'week', 'month'].indexOf(st.classPlanSubView) >= 0) classPlanSubView = st.classPlanSubView;
+    if (['list', 'visual'].indexOf(st.timeLayoutSubView) >= 0) timeLayoutSubView = st.timeLayoutSubView;
+    if (st.selectedTimeLayoutId) selectedTimeLayoutId = st.selectedTimeLayoutId;
+    if (st.selectedClassPlanId) selectedClassPlanId = st.selectedClassPlanId;
+    if (st.selectedSubjectId) selectedSubjectId = st.selectedSubjectId;
+    if (typeof st.selectedItemIdx === 'number') selectedItemIdx = st.selectedItemIdx;
+    if (st.collapse && typeof st.collapse === 'object') {
+      uiState.collapse = {
+        classplans: !!st.collapse.classplans,
+        timelayouts: !!st.collapse.timelayouts,
+      };
     }
+    uiState.autoNextLesson = !!st.autoNextLesson;
   } catch (e) { /* ignore */ }
 }
 
@@ -355,6 +419,45 @@ function switchView(v) {
   var tabs = document.querySelectorAll('#ciViewTabs .ci-view-tab');
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-view') === v);
   if (v === 'raw' && !rawDirty && profile) $('ciRaw').value = JSON.stringify(profile, null, 4);
+  // 应用子视图（列表/周视图/月视图、列表/可视化）的持久化状态
+  if (v === 'classplans') applyClassPlanSubView();
+  if (v === 'timelayouts') applyTimeLayoutSubView();
+  persistViewState();
+  renderAll();
+}
+
+function switchClassPlanSubView(sub) {
+  classPlanSubView = sub;
+  persistViewState();
+  applyClassPlanSubView();
+  renderAll();
+}
+
+function applyClassPlanSubView() {
+  var tabs = document.querySelectorAll('#ciCpSubTabs .ci-subtab');
+  for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-sub') === classPlanSubView);
+  $('ciCpListWrap').style.display = classPlanSubView === 'list' ? '' : 'none';
+  $('ciCpWeekWrap').style.display = classPlanSubView === 'week' ? '' : 'none';
+  $('ciCpMonthWrap').style.display = classPlanSubView === 'month' ? '' : 'none';
+}
+
+function switchTimeLayoutSubView(sub) {
+  timeLayoutSubView = sub;
+  persistViewState();
+  applyTimeLayoutSubView();
+  renderAll();
+}
+
+function applyTimeLayoutSubView() {
+  var tabs = document.querySelectorAll('#ciTlSubTabs .ci-subtab');
+  for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-sub') === timeLayoutSubView);
+  $('ciTlListWrap').style.display = timeLayoutSubView === 'list' ? '' : 'none';
+  $('ciTlVisualWrap').style.display = timeLayoutSubView === 'visual' ? '' : 'none';
+}
+
+/** 收起/展开设置区（状态存于浏览器，每个列表视图一个配置） */
+function toggleCollapse(key) {
+  uiState.collapse[key] = !uiState.collapse[key];
   persistViewState();
   renderAll();
 }
@@ -364,14 +467,18 @@ function renderAll() {
   var nameInput = $('ciProfileName');
   if (nameInput && document.activeElement !== nameInput) nameInput.value = profile.Name || '';
   renderSubjects();
+  renderSubjectDetail();
   renderTimeLayoutList();
   renderTimeLayoutDetail();
+  renderTimeLayoutVisual();
   renderClassPlanList();
   renderClassPlanDetail();
+  renderWeekView();
+  renderMonthView();
   updateStats();
 }
 
-// ================= 科目 =================
+// ================= 科目（左表格 + 右详情，预设科目） =================
 function renderSubjects() {
   var body = $('ciSubjectsBody');
   var keys = Object.keys(profile.Subjects);
@@ -379,18 +486,37 @@ function renderSubjects() {
   var html = '';
   keys.forEach(function (id) {
     var sub = profile.Subjects[id] || {};
-    html += '<tr>' +
-      '<td><input class="ci-cell-input" value="' + escAttr(sub.Name || '') + '" placeholder="如：数学" oninput="onSubjectChange(\'' + id + '\',\'Name\',this.value)" /></td>' +
-      '<td><input class="ci-cell-input" value="' + escAttr(sub.Initial || '') + '" placeholder="如：数" oninput="onSubjectChange(\'' + id + '\',\'Initial\',this.value)" /></td>' +
-      '<td><input class="ci-cell-input" value="' + escAttr(sub.TeacherName || '') + '" placeholder="教师姓名" oninput="onSubjectChange(\'' + id + '\',\'TeacherName\',this.value)" /></td>' +
-      '<td><input class="ci-cell-check" type="checkbox" ' + (sub.IsOutDoor ? 'checked' : '') + ' onchange="onSubjectChange(\'' + id + '\',\'IsOutDoor\',this.checked)" /></td>' +
-      '<td style="white-space:nowrap">' +
-        '<button class="ci-btn small" onclick="duplicateSubject(\'' + id + '\')">复制</button> ' +
-        '<button class="ci-btn small danger" onclick="removeSubject(\'' + id + '\')">删除</button>' +
-      '</td>' +
+    html += '<tr class="ci-subject-row' + (id === selectedSubjectId ? ' selected' : '') + '" onclick="selectSubject(\'' + id + '\')">' +
+      '<td><input class="ci-cell-input" value="' + escAttr(sub.Name || '') + '" placeholder="如：数学" onclick="event.stopPropagation();selectSubject(\'' + id + '\')" oninput="onSubjectChange(\'' + id + '\',\'Name\',this.value)" /></td>' +
+      '<td><input class="ci-cell-input" value="' + escAttr(sub.Initial || '') + '" placeholder="如：数" onclick="event.stopPropagation()" oninput="onSubjectChange(\'' + id + '\',\'Initial\',this.value)" /></td>' +
+      '<td><input class="ci-cell-input" value="' + escAttr(sub.TeacherName || '') + '" placeholder="教师姓名" onclick="event.stopPropagation()" oninput="onSubjectChange(\'' + id + '\',\'TeacherName\',this.value)" /></td>' +
       '</tr>';
   });
   body.innerHTML = html;
+}
+
+function selectSubject(id) {
+  selectedSubjectId = id;
+  persistViewState();
+  renderSubjects(); renderSubjectDetail();
+}
+
+function renderSubjectDetail() {
+  var box = $('ciSubjectDetail');
+  if (!isProfile) { box.innerHTML = ''; return; }
+  var sub = selectedSubjectId ? profile.Subjects[selectedSubjectId] : null;
+  if (!sub) { box.innerHTML = '<div class="ci-empty">选择左侧科目以编辑详情</div>'; return; }
+  var html = '<h3 class="ci-detail-title">科目详情</h3>' +
+    '<div class="ci-form-grid">' +
+    '<div class="ci-field"><label>科目名称（Name）</label><input value="' + escAttr(sub.Name || '') + '" oninput="onSubjectChange(\'' + selectedSubjectId + '\',\'Name\',this.value)" /></div>' +
+    '<div class="ci-field"><label>简称（Initial，时间线上显示）</label><input value="' + escAttr(sub.Initial || '') + '" oninput="onSubjectChange(\'' + selectedSubjectId + '\',\'Initial\',this.value)" /></div>' +
+    '<div class="ci-field"><label>教师姓名（TeacherName）</label><input value="' + escAttr(sub.TeacherName || '') + '" oninput="onSubjectChange(\'' + selectedSubjectId + '\',\'TeacherName\',this.value)" /></div>' +
+    '<div class="ci-field"><label>户外课程（IsOutDoor）</label><label style="display:inline-flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" ' + (sub.IsOutDoor ? 'checked' : '') + ' onchange="onSubjectChange(\'' + selectedSubjectId + '\',\'IsOutDoor\',this.checked)" />在时间线上带户外标识</label></div>' +
+    '<div class="ci-field" style="grid-column:1/-1"><label>GUID</label><input class="ci-guid" value="' + escAttr(selectedSubjectId) + '" readonly /></div>' +
+    '</div>' +
+    '<div id="ciPresetWrap"></div>';
+  box.innerHTML = html;
+  renderPresetPanel();
 }
 
 function onSubjectChange(id, field, value) {
@@ -399,12 +525,17 @@ function onSubjectChange(id, field, value) {
   dirty = true;
   queueUndo();
   updateStats();
+  // 名称/简称变化时刷新引用它的视图
+  if (field === 'Name' || field === 'Initial') {
+    renderTimeLayoutDetail(); renderClassPlanDetail(); renderWeekView(); renderTimeLayoutVisual();
+  }
 }
 
 function addSubject() {
   ensureProfileMode();
   var id = guid();
   profile.Subjects[id] = { Name: '新科目', Initial: '', TeacherName: '', IsOutDoor: false, AttachedObjects: {} };
+  selectedSubjectId = id;
   dirty = true;
   commitUndo();
   switchView('subjects');
@@ -412,14 +543,23 @@ function addSubject() {
 }
 
 function duplicateSubject(id) {
-  if (!profile || !profile.Subjects[id]) return;
-  var src = profile.Subjects[id];
+  var target = id || selectedSubjectId;
+  if (!profile || !target || !profile.Subjects[target]) { alert('请先选择一个科目'); return; }
+  var src = profile.Subjects[target];
   var copy = JSON.parse(JSON.stringify(src));
   copy.Name = (src.Name || '科目') + ' 副本';
-  profile.Subjects[guid()] = copy;
+  var newId = guid();
+  profile.Subjects[newId] = copy;
+  selectedSubjectId = newId;
   dirty = true;
   commitUndo();
   renderAll(); runValidation();
+}
+
+function removeSelectedSubject(id) {
+  var target = id || selectedSubjectId;
+  if (!profile || !target || !profile.Subjects[target]) { alert('请先选择一个科目'); return; }
+  removeSubject(target);
 }
 
 function removeSubject(id) {
@@ -427,9 +567,58 @@ function removeSubject(id) {
   var name = profile.Subjects[id].Name || id;
   if (!confirm('确认删除科目「' + name + '」？时间表与课表中对该科目的引用将失效。')) return;
   delete profile.Subjects[id];
+  if (selectedSubjectId === id) selectedSubjectId = null;
   dirty = true;
   commitUndo();
   renderAll(); runValidation();
+}
+
+/** 预设科目面板（ClassIsland 默认科目，同 GUID） */
+var presetOpen = false;
+function showPresetPanel() {
+  presetOpen = !presetOpen;
+  renderPresetPanel();
+}
+function renderPresetPanel() {
+  var wrap = $('ciPresetWrap');
+  if (!wrap) return;
+  if (!presetOpen) { wrap.innerHTML = ''; return; }
+  var html = '<div class="ci-preset-wrap">' +
+    '<div class="ci-panel-title">ClassIsland 默认科目（与客户端相同的 GUID，已添加的科目会置灰）</div>' +
+    '<div class="ci-preset-grid">';
+  PRESET_SUBJECTS.forEach(function (p) {
+    var added = (p.id in profile.Subjects);
+    html += '<button class="ci-preset-chip' + (added ? ' added' : '') + '" ' + (added ? 'disabled' : 'onclick="addPresetSubject(\'' + p.id + '\')"') + '>' +
+      '<span class="p-init">' + escHtml(p.initial) + '</span>' +
+      '<span class="p-name">' + escHtml(p.name) + '</span>' +
+      (added ? '<span class="p-added">已添加</span>' : '') +
+      '</button>';
+  });
+  html += '</div>' +
+    '<div style="margin-top:8px"><button class="ci-btn small primary" onclick="addAllPresetSubjects()">添加全部未添加科目</button></div>' +
+    '</div>';
+  wrap.innerHTML = html;
+}
+function addPresetSubject(presetId) {
+  var p = null;
+  PRESET_SUBJECTS.forEach(function (x) { if (x.id === presetId) p = x; });
+  if (!p || (p.id in profile.Subjects)) return;
+  profile.Subjects[p.id] = { Name: p.name, Initial: p.initial, TeacherName: '', IsOutDoor: !!p.outdoor, AttachedObjects: {} };
+  selectedSubjectId = p.id;
+  dirty = true;
+  commitUndo();
+  renderAll(); runValidation();
+}
+function addAllPresetSubjects() {
+  var added = 0;
+  PRESET_SUBJECTS.forEach(function (p) {
+    if (!(p.id in profile.Subjects)) {
+      profile.Subjects[p.id] = { Name: p.name, Initial: p.initial, TeacherName: '', IsOutDoor: !!p.outdoor, AttachedObjects: {} };
+      added++;
+    }
+  });
+  if (added > 0) { dirty = true; commitUndo(); renderAll(); runValidation(); }
+  alert(added > 0 ? ('已添加 ' + added + ' 个预设科目') : '全部预设科目均已添加');
 }
 
 function subjectOptionsHtml(selectedId, includeEmpty) {
@@ -461,7 +650,7 @@ function selectTimeLayout(id) {
   selectedTimeLayoutId = id;
   selectedItemIdx = -1;
   persistViewState();
-  renderTimeLayoutList(); renderTimeLayoutDetail();
+  renderTimeLayoutList(); renderTimeLayoutDetail(); renderTimeLayoutVisual();
 }
 
 function renderTimeLayoutDetail() {
@@ -469,11 +658,17 @@ function renderTimeLayoutDetail() {
   var tl = selectedTimeLayoutId ? profile.TimeLayouts[selectedTimeLayoutId] : null;
   if (!tl) { box.innerHTML = '<div class="ci-empty">选择左侧时间表以编辑时间点</div>'; return; }
   var items = Array.isArray(tl.Layouts) ? tl.Layouts : [];
+  var collapsed = !!uiState.collapse.timelayouts;
   var html = '<h3 class="ci-detail-title">时间表设置</h3>' +
-    '<div class="ci-form-grid">' +
+    // 可收起设置区（状态存于浏览器）
+    '<div class="ci-collapse' + (collapsed ? ' ci-collapsed' : '') + '">' +
+    '<div class="ci-collapse-head" onclick="toggleCollapse(\'timelayouts\')">' +
+    '<span class="ci-collapse-title">时间表信息</span><span class="ci-collapse-chevron">&#9662;</span>' +
+    '</div>' +
+    '<div class="ci-collapse-body"><div class="ci-form-grid">' +
     '<div class="ci-field"><label>时间表名称</label><input value="' + escAttr(tl.Name || '') + '" oninput="onTimeLayoutField(\'Name\',this.value)" /></div>' +
     '<div class="ci-field"><label>GUID</label><input class="ci-guid" value="' + escAttr(selectedTimeLayoutId) + '" readonly /></div>' +
-    '</div>' +
+    '</div></div></div>' +
     // 对齐 ClassIsland 2：按类型插入时间点 + 复制当前时间点
     '<div class="ci-items-head"><span class="ci-panel-title">时间点（' + items.length + '）</span>' +
     '<div class="ci-items-actions">' +
@@ -489,9 +684,9 @@ function renderTimeLayoutDetail() {
     var t = itemTimes(item);
     var type = typeof item.TimeType === 'number' ? item.TimeType : 0;
     var thirdCol = type === 0
-      ? '<select onchange="onTimeItemChange(' + i + ',\'DefaultClassId\',this.value)">' + subjectOptionsHtml(item.DefaultClassId, true) + '</select>'
+      ? '<select onchange="onTimeItemChange(' + i + ',\'DefaultClassId\',this.value)" onclick="selectTimeItem(' + i + ')">' + subjectOptionsHtml(item.DefaultClassId, true) + '</select>'
       : (type === 1
-        ? '<input value="' + escAttr(item.BreakName || '') + '" placeholder="课间名称（可选）" oninput="onTimeItemChange(' + i + ',\'BreakName\',this.value)" />'
+        ? '<input value="' + escAttr(item.BreakName || '') + '" placeholder="课间名称（可选）" onclick="selectTimeItem(' + i + ')" oninput="onTimeItemChange(' + i + ',\'BreakName\',this.value)" />'
         : '<span class="ci-tt-badge ci-tt-' + type + '">' + (TIME_TYPES[type] || '?') + '</span>');
     html += '<div class="ci-time-row' + (i === selectedItemIdx ? ' selected' : '') + '">' +
       '<span class="ci-idx" title="点击选中此时间点" onclick="selectTimeItem(' + i + ')">' + (i + 1) + '</span>' +
@@ -500,7 +695,11 @@ function renderTimeLayoutDetail() {
       '<select onchange="onTimeItemType(' + i + ',this.value)" onclick="selectTimeItem(' + i + ')">' + timeTypeOptions(type) + '</select>' +
       thirdCol +
       '<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--ci-text-3)"><input type="checkbox" ' + (item.IsHideDefault ? 'checked' : '') + ' onchange="onTimeItemChange(' + i + ',\'IsHideDefault\',this.checked)" />隐藏</label>' +
-      '<button class="ci-row-del" title="删除" onclick="removeTimeItem(' + i + ')">×</button>' +
+      '<span style="display:inline-flex;gap:2px">' +
+        '<button class="ci-row-del" title="上移" onclick="moveTimeItem(' + i + ',-1)">&#8593;</button>' +
+        '<button class="ci-row-del" title="下移" onclick="moveTimeItem(' + i + ',1)">&#8595;</button>' +
+        '<button class="ci-row-del" title="删除" onclick="removeTimeItem(' + i + ')">×</button>' +
+      '</span>' +
       '</div>';
   });
   box.innerHTML = html;
@@ -517,6 +716,7 @@ function timeTypeOptions(selected) {
 function selectTimeItem(i) {
   selectedItemIdx = i;
   renderTimeLayoutDetail();
+  renderTimeLayoutVisual();
   persistViewState();
 }
 
@@ -527,6 +727,7 @@ function onTimeLayoutField(field, value) {
   dirty = true;
   queueUndo();
   renderTimeLayoutList();
+  renderTimeLayoutVisual();
 }
 
 function onTimeItemChange(idx, field, value) {
@@ -535,6 +736,7 @@ function onTimeItemChange(idx, field, value) {
   tl.Layouts[idx][field] = value;
   dirty = true;
   queueUndo();
+  if (field === 'DefaultClassId' || field === 'BreakName') renderTimeLayoutVisual();
 }
 
 function onTimeItemType(idx, value) {
@@ -548,7 +750,7 @@ function onTimeItemType(idx, value) {
   }
   dirty = true;
   commitUndo();
-  renderTimeLayoutDetail(); runValidation();
+  renderTimeLayoutDetail(); renderTimeLayoutVisual(); runValidation();
 }
 
 function onTimeItemTime(idx, which, value) {
@@ -561,6 +763,7 @@ function onTimeItemTime(idx, which, value) {
   setItemTimes(item, t.start, t.end);
   dirty = true;
   queueUndo();
+  renderTimeLayoutVisual();
   runValidation();
 }
 
@@ -590,7 +793,7 @@ function insertTimeItem(type) {
   selectedItemIdx = at;
   dirty = true;
   commitUndo();
-  renderTimeLayoutDetail(); runValidation();
+  renderTimeLayoutDetail(); renderTimeLayoutVisual(); runValidation();
   persistViewState();
 }
 
@@ -604,7 +807,22 @@ function duplicateTimeItem(idx) {
   selectedItemIdx = i + 1;
   dirty = true;
   commitUndo();
-  renderTimeLayoutDetail(); runValidation();
+  renderTimeLayoutDetail(); renderTimeLayoutVisual(); runValidation();
+}
+
+function moveTimeItem(idx, delta) {
+  var tl = selectedTimeLayoutId ? profile.TimeLayouts[selectedTimeLayoutId] : null;
+  if (!tl || !Array.isArray(tl.Layouts)) return;
+  var j = idx + delta;
+  if (j < 0 || j >= tl.Layouts.length) return;
+  var items = tl.Layouts;
+  var tmp = items[idx];
+  items[idx] = items[j];
+  items[j] = tmp;
+  selectedItemIdx = j;
+  dirty = true;
+  commitUndo();
+  renderTimeLayoutDetail(); renderTimeLayoutVisual(); runValidation();
 }
 
 function removeTimeItem(idx) {
@@ -616,7 +834,7 @@ function removeTimeItem(idx) {
   if (selectedItemIdx >= tl.Layouts.length) selectedItemIdx = tl.Layouts.length - 1;
   dirty = true;
   commitUndo();
-  renderTimeLayoutDetail(); runValidation();
+  renderTimeLayoutDetail(); renderTimeLayoutVisual(); runValidation();
 }
 
 function addTimeLayout() {
@@ -665,13 +883,78 @@ function fillBreaks() {
   }
   dirty = true;
   commitUndo();
-  renderTimeLayoutDetail();
+  renderTimeLayoutDetail(); renderTimeLayoutVisual();
   alert(added > 0 ? ('已添加 ' + added + ' 个课间') : '没有可插入课间的相邻课程段');
+}
+
+// ================= 时间表可视化视图（对齐客户端时间线：类型图标 / 时长 / 当前时刻指示） =================
+var VIZ_ICONS = {
+  0: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+  1: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>',
+  2: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="12" x2="20" y2="12"/></svg>',
+  3: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>',
+};
+
+function renderTimeLayoutVisual() {
+  var box = $('ciTlVisualWrap');
+  if (!box) return;
+  var tl = selectedTimeLayoutId ? profile.TimeLayouts[selectedTimeLayoutId] : null;
+  if (!tl) { box.innerHTML = '<div class="ci-empty">选择左侧时间表后可查看可视化时间线</div>'; return; }
+  var items = Array.isArray(tl.Layouts) ? tl.Layouts : [];
+  if (items.length === 0) { box.innerHTML = '<div class="ci-empty">该时间表暂无时间点</div>'; return; }
+
+  // 当前时刻指示：定位包含当前时间的时间点（对齐客户端时间线的“现在”概念）
+  var now = new Date();
+  var nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+  var nowIdx = -1;
+  items.forEach(function (item, i) {
+    var t = itemTimes(item);
+    var s = toSec(t.start), e = toSec(t.end);
+    if (nowIdx < 0 && s <= nowSec && nowSec < e) nowIdx = i;
+  });
+
+  // 以最长时长为基准计算各块高度（分割线固定窄条）
+  var maxMin = 1;
+  items.forEach(function (it) {
+    var t = itemTimes(it);
+    var m = diffMinutes(t.start, t.end);
+    if (m > maxMin) maxMin = m;
+  });
+  var html = '<div class="ci-tl-visual-wrap">';
+  items.forEach(function (item, i) {
+    var t = itemTimes(item);
+    var type = typeof item.TimeType === 'number' ? item.TimeType : 0;
+    var dur = Math.max(0, diffMinutes(t.start, t.end));
+    var minH = type === 2 ? 0 : 34;
+    var height = type === 2 ? 0 : Math.round(minH + (dur / maxMin) * 56);
+    var name = type === 0 ? (subjectName(item.DefaultClassId) || '未设置科目')
+      : (type === 1 ? (item.BreakName || '课间休息')
+        : (type === 2 ? '分割线' : '行动'));
+    var sub = type === 2 ? t.start : (dur + ' 分钟' + (item.IsHideDefault ? ' · 默认隐藏' : ''));
+    var isNow = i === nowIdx;
+    html += '<div class="ci-viz-item ci-viz-' + type + (i === selectedItemIdx ? ' selected' : '') + (isNow ? ' now' : '') + '"' +
+      ' style="' + (type !== 2 ? ('min-height:' + minH + 'px;height:' + height + 'px') : '') + '"' +
+      ' onclick="selectTimeItem(' + i + ')" title="' + escAttr(name + ' ' + t.start + '-' + t.end) + '">' +
+      '<span class="ci-viz-icon">' + (VIZ_ICONS[type] || '') + '</span>' +
+      '<span class="ci-viz-time">' + escHtml(shortTime(t.start)) + '<br>' + escHtml(shortTime(t.end)) + '</span>' +
+      '<span class="ci-viz-main"><span class="ci-viz-name">' + escHtml(name) +
+      (isNow ? '<span class="ci-viz-now-badge">现在</span>' : '') +
+      '</span><span class="ci-viz-sub">' + escHtml(sub) + '</span></span>' +
+      '</div>';
+  });
+  html += '</div>';
+  box.innerHTML = html;
+}
+
+function toSec(hhmmss) {
+  var p = String(hhmmss || '00:00:00').split(':');
+  return (parseInt(p[0], 10) || 0) * 3600 + (parseInt(p[1], 10) || 0) * 60 + (parseInt(p[2], 10) || 0);
 }
 
 // ================= 课表（按课表群分组，Classes 与时间表上课点对应） =================
 function renderClassPlanList() {
   var list = $('ciClassPlanList');
+  if (!list) return;
   var html = '';
   var seen = {};
   var groupIds = Object.keys(profile.ClassPlanGroups);
@@ -729,10 +1012,9 @@ function selectClassPlan(id) {
   renderClassPlanList(); renderClassPlanDetail();
 }
 
-var WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-
 function renderClassPlanDetail() {
   var box = $('ciClassPlanDetail');
+  if (!box) return;
   var cp = selectedClassPlanId ? profile.ClassPlans[selectedClassPlanId] : null;
   if (!cp) { box.innerHTML = '<div class="ci-empty">选择左侧课表以编辑</div>'; return; }
   if (!isPlainObject(cp.TimeRule)) cp.TimeRule = { WeekDay: 1, WeekCountDiv: 0, WeekCountDivTotal: 0 };
@@ -740,6 +1022,12 @@ function renderClassPlanDetail() {
   if (!Array.isArray(cp.Classes)) cp.Classes = [];
   var tl = profile.TimeLayouts[cp.TimeLayoutId];
   var classPoints = tl && Array.isArray(tl.Layouts) ? tl.Layouts.filter(function (i) { return i.TimeType === 0; }) : [];
+  var collapsed = !!uiState.collapse.classplans;
+
+  // 临时层状态
+  var tempEnabled = typeof profile.TempClassPlanId === 'string' && profile.TempClassPlanId && profile.TempClassPlanId !== EMPTY_GUID;
+  var tempPlanName = tempEnabled ? (subjectName(profile.TempClassPlanId) || (profile.ClassPlans[profile.TempClassPlanId] || {}).Name || profile.TempClassPlanId.slice(0, 8)) : '';
+  var tempSetup = typeof profile.TempClassPlanSetupTime === 'string' ? profile.TempClassPlanSetupTime.slice(0, 10) : '';
 
   var classesHtml = '';
   var rowCount = Math.max(cp.Classes.length, classPoints.length);
@@ -756,12 +1044,20 @@ function renderClassPlanDetail() {
     } else {
       timeCol = '<span class="ci-class-extra" title="时间表中没有对应的上课点，此课程不会显示">多余课程</span>';
     }
+    var chip = '';
+    if (cls) {
+      var sid = cls.SubjectId;
+      var subj = sid && profile.Subjects[sid] ? profile.Subjects[sid] : null;
+      chip = '<button class="ci-quick-chip' + (!subj ? ' ci-quick-missing' : '') + '" title="点击打开课程快速选择面板" onclick="openQuickSelect(\'subject\',' + i + ')">' +
+        (subj ? escHtml(subj.Initial || subj.Name || '?') + ' ' + escHtml(subj.Name || '') : '未设置') +
+        '</button>';
+    } else {
+      chip = '<span class="ci-class-extra">—</span>';
+    }
     classesHtml += '<div class="ci-class-row">' +
       '<span class="ci-idx">' + (i + 1) + '</span>' +
       timeCol +
-      (cls
-        ? '<select onchange="onClassChange(' + i + ',\'SubjectId\',this.value)">' + subjectOptionsHtml(cls.SubjectId, false) + '</select>'
-        : '<span class="ci-class-extra">—</span>') +
+      chip +
       (cls
         ? '<button class="ci-row-del" title="删除此课程" onclick="removeClass(' + i + ')">×</button>'
         : '<span></span>') +
@@ -769,7 +1065,23 @@ function renderClassPlanDetail() {
   }
 
   var html = '<h3 class="ci-detail-title">课表设置</h3>' +
-    '<div class="ci-form-grid">' +
+    // 临时层（TempClassPlanId / TempClassPlanSetupTime）
+    '<div class="ci-temp-card">' +
+    '<div class="ci-temp-head"><span class="ci-temp-title"><span class="ci-temp-dot"></span>临时层（当日临时替换）</span>' +
+    (tempEnabled ? '<span class="ci-temp-active">' + escHtml(tempPlanName) + (tempSetup ? ' · ' + escHtml(tempSetup) : '') + '</span>' : '<span style="font-size:11px;color:var(--ci-text-3)">未启用</span>') +
+    '</div>' +
+    '<div class="ci-temp-body">' +
+    '<select id="ciTempPlanSel">' + classPlanOptionsHtml('') + '</select>' +
+    '<input type="date" id="ciTempDate" value="' + escAttr(tempSetup || todayStr()) + '" />' +
+    '<button class="ci-btn small primary" onclick="applyTempPlan()">应用临时层</button>' +
+    (tempEnabled ? '<button class="ci-btn small danger" onclick="clearTempPlan()">清除</button>' : '') +
+    '</div></div>' +
+    // 可收起的课表设置（收起/展开状态存于浏览器）
+    '<div class="ci-collapse' + (collapsed ? ' ci-collapsed' : '') + '">' +
+    '<div class="ci-collapse-head" onclick="toggleCollapse(\'classplans\')">' +
+    '<span class="ci-collapse-title">课表设置</span><span class="ci-collapse-chevron">&#9662;</span>' +
+    '</div>' +
+    '<div class="ci-collapse-body"><div class="ci-form-grid">' +
     '<div class="ci-field"><label>课表名称</label><input value="' + escAttr(cp.Name || '') + '" oninput="onClassPlanField(\'Name\',this.value)" /></div>' +
     '<div class="ci-field"><label>关联时间表（TimeLayoutId）</label><select onchange="onClassPlanField(\'TimeLayoutId\',this.value)">' + timeLayoutOptions(cp.TimeLayoutId) + '</select></div>' +
     '<div class="ci-field"><label>启用星期（WeekDay）</label><select onchange="onRuleChange(\'WeekDay\',parseInt(this.value)||0)">' + weekdayOptions(rule.WeekDay) + '</select></div>' +
@@ -778,14 +1090,45 @@ function renderClassPlanDetail() {
     '<div class="ci-field"><label>所属课表群（AssociatedGroup）</label><select onchange="onClassPlanField(\'AssociatedGroup\',this.value)">' + groupOptions(cp.AssociatedGroup) + '</select></div>' +
     '<div class="ci-field"><label>启用（IsEnabled）</label><label style="display:inline-flex;align-items:center;gap:6px;font-size:12px"><input type="checkbox" ' + (cp.IsEnabled !== false ? 'checked' : '') + ' onchange="onClassPlanField(\'IsEnabled\',this.checked)" />在时间线上显示</label></div>' +
     '<div class="ci-field"><label>GUID</label><input class="ci-guid" value="' + escAttr(selectedClassPlanId) + '" readonly /></div>' +
-    '</div>' +
-    '<div class="ci-items-head"><span class="ci-panel-title">课程（Classes，与时间表上课点按顺序对应）</span>' +
+    '</div></div></div>' +
+    '<div class="ci-items-head"><span class="ci-panel-title">课程（Classes，与时间表上课点按顺序对应，点击科目块可快速选择）</span>' +
     '<div class="ci-items-actions">' +
     '<button class="ci-btn small" onclick="syncClassesToLayout()" title="按时间表上课点数量补齐/保留课程行">对齐时间表</button>' +
     '<button class="ci-btn small" onclick="addClass()">+ 添加课程</button>' +
     '</div></div>' +
     classesHtml;
   box.innerHTML = html;
+  // 恢复临时层下拉选择
+  if (tempEnabled && $('ciTempPlanSel')) $('ciTempPlanSel').value = profile.TempClassPlanId;
+}
+
+function classPlanOptionsHtml(selected) {
+  var html = '<option value="">（选择课表）</option>';
+  Object.keys(profile.ClassPlans).forEach(function (id) {
+    html += '<option value="' + id + '"' + (id === selected ? ' selected' : '') + '>' + escHtml(profile.ClassPlans[id].Name || id) + '</option>';
+  });
+  return html;
+}
+
+/** 临时层：写入 TempClassPlanId + TempClassPlanSetupTime（ClassIsland 当日生效） */
+function applyTempPlan() {
+  var planId = $('ciTempPlanSel').value;
+  var date = $('ciTempDate').value;
+  if (!planId) { alert('请先选择要临时应用的课表'); return; }
+  if (!date) { alert('请选择临时层生效日期'); return; }
+  profile.TempClassPlanId = planId;
+  profile.TempClassPlanSetupTime = date + 'T00:00:00';
+  dirty = true;
+  commitUndo();
+  renderClassPlanDetail();
+  alert('临时层已设置：' + (profile.ClassPlans[planId].Name || '课表') + ' 将在 ' + date + ' 当日临时替换正常课表。');
+}
+
+function clearTempPlan() {
+  profile.TempClassPlanId = null;
+  dirty = true;
+  commitUndo();
+  renderClassPlanDetail();
 }
 
 function indexOfClassPoint(tl, item) {
@@ -804,6 +1147,287 @@ function shortTime(hhmmss) {
   return p.length >= 2 ? (p[0] + ':' + p[1]) : hhmmss;
 }
 
+// ================= 课程快速选择面板 =================
+function openQuickSelect(type, idx, planId) {
+  if (type === 'subject') {
+    var pid = planId || selectedClassPlanId;
+    var cp = profile.ClassPlans[pid];
+    if (!cp || !cp.Classes || !cp.Classes[idx]) return;
+    quickSelectCtx = { type: 'subject', planId: pid, idx: idx };
+    var fromWeek = planId ? ' · 周视图' : '';
+    $('ciQuickTitle').textContent = '快速选择科目（第 ' + (idx + 1) + ' 节' + fromWeek + '）';
+  } else if (type === 'plan') {
+    quickSelectCtx = { type: 'plan', dateKey: idx }; // idx 传日期 key
+    $('ciQuickTitle').textContent = '选择该日课表（' + idx.slice(0, 10) + '）';
+  }
+  $('ciQuickSelect').style.display = '';
+  $('ciQuickSearch').value = '';
+  renderQuickSelect();
+  renderWeekView(); // 高亮当前正在编辑的课程
+  $('ciQuickSearch').focus();
+}
+
+function closeQuickSelect() {
+  $('ciQuickSelect').style.display = 'none';
+  quickSelectCtx = null;
+  renderWeekView();
+}
+
+function renderQuickSelect() {
+  var grid = $('ciQuickGrid');
+  if (!grid || !quickSelectCtx) return;
+  var kw = ($('ciQuickSearch').value || '').trim().toLowerCase();
+  var html = '';
+  if (quickSelectCtx.type === 'subject') {
+    var cp = profile.ClassPlans[quickSelectCtx.planId];
+    var current = cp && cp.Classes ? cp.Classes[quickSelectCtx.idx] : null;
+    var currentId = current ? current.SubjectId : null;
+    var any = false;
+    Object.keys(profile.Subjects).forEach(function (id) {
+      var s = profile.Subjects[id];
+      var name = s.Name || id;
+      if (kw && (name + (s.Initial || '')).toLowerCase().indexOf(kw) < 0) return;
+      any = true;
+      html += '<button class="ci-quick-item' + (id === currentId ? ' current' : '') + '" onclick="quickPickSubject(\'' + id + '\')">' +
+        '<span class="q-init">' + escHtml(s.Initial || (name.slice(0, 1))) + '</span>' +
+        '<span class="q-name">' + escHtml(name) + '</span>' +
+        (s.IsOutDoor ? '<span class="q-outdoor">户外</span>' : '') +
+        '</button>';
+    });
+    if (!any) html = '<div class="ci-empty">没有匹配的科目</div>';
+    // 对齐 ClassIsland 2：选完自动跳到下一节（状态存于浏览器）
+    html += '<label class="ci-quick-autonext"><input type="checkbox" ' + (uiState.autoNextLesson ? 'checked' : '') + ' onchange="onAutoNextChange(this.checked)" />选完自动跳到下一节</label>';
+  } else if (quickSelectCtx.type === 'plan') {
+    Object.keys(profile.ClassPlans).forEach(function (id) {
+      var cp = profile.ClassPlans[id];
+      var name = cp.Name || id;
+      if (kw && name.toLowerCase().indexOf(kw) < 0) return;
+      html += '<button class="ci-quick-item" onclick="quickPickPlan(\'' + id + '\')">' +
+        '<span class="q-init">' + escHtml((name.slice(0, 1))) + '</span>' +
+        '<span class="q-name">' + escHtml(name) + '</span>' +
+        '</button>';
+    });
+    html += '<button class="ci-quick-item" onclick="quickClearPlan()" title="移除该日的预定课表，恢复按星期轮换">' +
+      '<span class="q-init" style="color:var(--ci-err)">×</span><span class="q-name">清除预定</span></button>';
+  }
+  grid.innerHTML = html;
+}
+
+function onAutoNextChange(v) {
+  uiState.autoNextLesson = !!v;
+  persistViewState();
+}
+
+function quickPickSubject(id) {
+  if (!quickSelectCtx || quickSelectCtx.type !== 'subject') return;
+  var cp = profile.ClassPlans[quickSelectCtx.planId];
+  if (cp && cp.Classes && cp.Classes[quickSelectCtx.idx]) {
+    cp.Classes[quickSelectCtx.idx].SubjectId = id;
+    dirty = true;
+    commitUndo();
+    runValidation();
+    // 对齐 ClassIsland 2：选完自动跳到下一节
+    if (uiState.autoNextLesson && cp.Classes[quickSelectCtx.idx + 1]) {
+      quickSelectCtx.idx += 1;
+      $('ciQuickTitle').textContent = '快速选择科目（第 ' + (quickSelectCtx.idx + 1) + '）';
+      $('ciQuickSearch').value = '';
+      renderQuickSelect();
+      renderClassPlanDetail();
+      renderWeekView();
+      return;
+    }
+  }
+  closeQuickSelect();
+  renderClassPlanDetail();
+  renderWeekView();
+}
+
+function quickPickPlan(id) {
+  if (!quickSelectCtx || quickSelectCtx.type !== 'plan') return;
+  if (!isPlainObject(profile.OrderedSchedules)) profile.OrderedSchedules = {};
+  profile.OrderedSchedules[quickSelectCtx.dateKey] = { ClassPlanId: id };
+  dirty = true;
+  commitUndo();
+  closeQuickSelect();
+  renderMonthView();
+}
+
+function quickClearPlan() {
+  if (!quickSelectCtx || quickSelectCtx.type !== 'plan') return;
+  if (isPlainObject(profile.OrderedSchedules)) delete profile.OrderedSchedules[quickSelectCtx.dateKey];
+  dirty = true;
+  commitUndo();
+  closeQuickSelect();
+  renderMonthView();
+}
+
+// ================= 周视图 =================
+function planForWeekday(weekday) {
+  // 返回该星期启用的课表数组（考虑轮换的课表标注轮换信息）
+  var result = [];
+  Object.keys(profile.ClassPlans).forEach(function (pid) {
+    var cp = profile.ClassPlans[pid];
+    if (!cp || cp.IsEnabled === false) return;
+    var rule = isPlainObject(cp.TimeRule) ? cp.TimeRule : {};
+    if ((rule.WeekDay === undefined ? 1 : rule.WeekDay) !== weekday) return;
+    result.push({ id: pid, plan: cp });
+  });
+  return result;
+}
+
+function renderWeekView() {
+  var box = $('ciCpWeekWrap');
+  if (!box) return;
+  var total = 0;
+  // 轮换周选择：取所有课表的最大轮换周数
+  Object.keys(profile.ClassPlans).forEach(function (pid) {
+    var r = profile.ClassPlans[pid].TimeRule;
+    if (isPlainObject(r) && (r.WeekCountDivTotal || 0) > total) total = r.WeekCountDivTotal;
+  });
+  var rot = typeof renderWeekView._rot === 'number' ? renderWeekView._rot : 0;
+  if (rot >= total) rot = 0;
+
+  var html = '<div class="ci-week-toolbar">' +
+    '<span>按星期展示各课表的课程安排' + (total > 0 ? '，当前轮换：' : '') + '</span>';
+  if (total > 0) {
+    html += '<select onchange="renderWeekView._rot = parseInt(this.value)||0; renderWeekView()" style="height:26px;padding:0 8px;font-size:11px;background:var(--ci-card);color:var(--ci-text);border:1px solid var(--ci-border);border-radius:6px;outline:none">';
+    html += '<option value="0"' + (rot === 0 ? ' selected' : '') + '>不轮换</option>';
+    for (var w = 1; w < total; w++) {
+      html += '<option value="' + w + '"' + (rot === w ? ' selected' : '') + '>第 ' + (w + 1) + ' 周</option>';
+    }
+    html += '</select>';
+  }
+  html += '<span>点击课表名可跳转编辑</span></div>';
+
+  var todayDow = new Date().getDay();
+  html += '<div class="ci-week-toolbar">' +
+    '<span>按星期展示各课表的课程安排' + (total > 0 ? '，当前轮换：' : '') + '</span>';
+  if (total > 0) {
+    html += '<select onchange="renderWeekView._rot = parseInt(this.value)||0; renderWeekView()" style="height:26px;padding:0 8px;font-size:11px;background:var(--ci-card);color:var(--ci-text);border:1px solid var(--ci-border);border-radius:6px;outline:none">';
+    html += '<option value="0"' + (rot === 0 ? ' selected' : '') + '>不轮换</option>';
+    for (var w = 1; w < total; w++) {
+      html += '<option value="' + w + '"' + (rot === w ? ' selected' : '') + '>第 ' + (w + 1) + ' 周</option>';
+    }
+    html += '</select>';
+  }
+  // 对齐 ClassIsland 2 周视图编辑体验：点击课程直接选科目，支持“选完自动跳到下一节”
+  html += '<label class="ci-week-autonext"><input type="checkbox" ' + (uiState.autoNextLesson ? 'checked' : '') + ' onchange="onAutoNextChange(this.checked)" />选完自动跳到下一节</label>';
+  html += '</div>';
+
+  var todayDow2 = todayDow;
+  html += '<div class="ci-week-grid">';
+  WEEKDAY_ORDER.forEach(function (dow) {
+    var plans = planForWeekday(dow);
+    var isToday = dow === todayDow2;
+    html += '<div class="ci-week-col">' +
+      '<div class="ci-week-col-head' + (isToday ? ' today' : '') + '"><span>' + WEEKDAY_NAMES[dow] + '</span>' +
+      (isToday ? '<span>今天</span>' : '') + '</div>' +
+      '<div class="ci-week-col-body">';
+    if (plans.length === 0) {
+      html += '<div class="ci-week-empty">无课表</div>';
+    }
+    plans.forEach(function (entry) {
+      var cp = entry.plan;
+      var rule = isPlainObject(cp.TimeRule) ? cp.TimeRule : {};
+      var planTotal = rule.WeekCountDivTotal || 0;
+      var planDiv = rule.WeekCountDiv || 0;
+      var rotLabel = planTotal > 0 ? ('轮换第' + (planDiv + 1) + '周') : '';
+      var dim = planTotal > 0 && rot > 0 && planDiv !== rot - 1;
+      html += '<div class="ci-week-plan' + (dim ? ' dim' : '') + '" onclick="selectClassPlan(\'' + entry.id + '\'); switchClassPlanSubView(\'list\')" title="点击课表名进入列表编辑">';
+      html += '<div class="ci-week-plan-name"><span>' + escHtml(cp.Name || '未命名课表') + '</span><span class="ci-week-rot">' + escHtml(rotLabel) + '</span></div>';
+      var tl = profile.TimeLayouts[cp.TimeLayoutId];
+      var classPoints = tl && Array.isArray(tl.Layouts) ? tl.Layouts.filter(function (x) { return x.TimeType === 0; }) : [];
+      if (classPoints.length === 0) {
+        html += '<div class="ci-week-empty">（无上课点）</div>';
+      } else {
+        classPoints.forEach(function (point, i) {
+          var pt = itemTimes(point);
+          var cls = (cp.Classes || [])[i];
+          var sName = cls && cls.SubjectId ? (subjectInitial(cls.SubjectId) || '—') : '—';
+          var isEditing = quickSelectCtx && quickSelectCtx.type === 'subject' &&
+            quickSelectCtx.planId === entry.id && quickSelectCtx.idx === i;
+          html += '<button class="ci-week-lesson' + (isEditing ? ' editing' : '') + '"' +
+            ' title="点击选择该节次的科目"' +
+            ' onclick="event.stopPropagation(); openQuickSelect(\'subject\', ' + i + ', \'' + entry.id + '\')">' +
+            '<span class="ci-lesson-time">' + escHtml(shortTime(pt.start)) + '</span>' +
+            '<span class="ci-lesson-name">' + escHtml(sName) + '</span>' +
+            '</button>';
+        });
+      }
+      html += '</div>';
+    });
+    html += '</div></div>';
+  });
+  html += '</div>';
+  box.innerHTML = html;
+}
+
+// ================= 月视图（含预定课表 OrderedSchedules） =================
+function dateKeyOf(y, m, d) {
+  return y + '-' + pad2(m + 1) + '-' + pad2(d) + 'T00:00:00';
+}
+function planNameForDate(y, m, d) {
+  var key = dateKeyOf(y, m, d);
+  var ordered = isPlainObject(profile.OrderedSchedules) ? profile.OrderedSchedules[key] : null;
+  if (ordered && ordered.ClassPlanId && profile.ClassPlans[ordered.ClassPlanId]) {
+    return { name: profile.ClassPlans[ordered.ClassPlanId].Name || '未命名课表', ordered: true };
+  }
+  var dow = new Date(y, m, d).getDay();
+  var plans = planForWeekday(dow);
+  if (plans.length === 0) return { name: '', ordered: false };
+  return { name: plans[0].plan.Name || '未命名课表', ordered: false };
+}
+
+function renderMonthView() {
+  var box = $('ciCpMonthWrap');
+  if (!box) return;
+  if (!monthCursor) {
+    var now = new Date();
+    monthCursor = { y: now.getFullYear(), m: now.getMonth() };
+  }
+  var y = monthCursor.y, m = monthCursor.m;
+  var first = new Date(y, m, 1);
+  var startDow = first.getDay(); // 0=周日
+  var startOffset = (startDow + 6) % 7; // 周一为第一列
+  var daysInMonth = new Date(y, m + 1, 0).getDate();
+  var today = new Date();
+
+  var html = '<div class="ci-month-toolbar">' +
+    '<button class="ci-btn small" onclick="monthCursor = prevMonth(monthCursor); renderMonthView()">上月</button>' +
+    '<span class="ci-month-title">' + y + ' 年 ' + (m + 1) + ' 月</span>' +
+    '<button class="ci-btn small" onclick="monthCursor = nextMonth(monthCursor); renderMonthView()">下月</button>' +
+    '<button class="ci-btn small" onclick="var n=new Date(); monthCursor={y:n.getFullYear(),m:n.getMonth()}; renderMonthView()">今天</button>' +
+    '<span style="font-size:11px;color:var(--ci-text-3)">点击日期可预定课表（写入 OrderedSchedules，优先于星期轮换）</span>' +
+    '</div>';
+
+  html += '<div class="ci-month-grid">';
+  ['一', '二', '三', '四', '五', '六', '日'].forEach(function (d) {
+    html += '<div class="ci-month-head">' + d + '</div>';
+  });
+  for (var i = 0; i < startOffset; i++) {
+    html += '<div class="ci-month-cell dim" style="cursor:default"></div>';
+  }
+  for (var day = 1; day <= daysInMonth; day++) {
+    var isToday = y === today.getFullYear() && m === today.getMonth() && day === today.getDate();
+    var pn = planNameForDate(y, m, day);
+    var key = dateKeyOf(y, m, day);
+    html += '<div class="ci-month-cell' + (isToday ? ' today' : '') + (pn.ordered ? ' ordered' : '') + '"' +
+      ' onclick="openQuickSelect(\'plan\', \'' + key + '\')" title="点击预定该日课表">' +
+      '<div class="ci-month-day">' + day + '</div>' +
+      (pn.name ? '<div class="ci-month-plan' + (pn.ordered ? ' ordered-tag' : '') + '">' + escHtml(pn.name) + (pn.ordered ? ' ·预定' : '') + '</div>' : '') +
+      '</div>';
+  }
+  html += '</div>';
+  box.innerHTML = html;
+}
+
+function prevMonth(c) { return c.m === 0 ? { y: c.y - 1, m: 11 } : { y: c.y, m: c.m - 1 }; }
+function nextMonth(c) { return c.m === 11 ? { y: c.y + 1, m: 0 } : { y: c.y, m: c.m + 1 }; }
+function todayStr() {
+  var d = new Date();
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+
 function timeLayoutOptions(selected) {
   var html = '<option value="' + EMPTY_GUID + '"' + (!selected || selected === EMPTY_GUID ? ' selected' : '') + '>（未选择）</option>';
   Object.keys(profile.TimeLayouts).forEach(function (id) {
@@ -815,7 +1439,7 @@ function timeLayoutOptions(selected) {
 function weekdayOptions(selected) {
   var html = '';
   for (var d = 0; d <= 6; d++) {
-    html += '<option value="' + d + '"' + (d === selected ? ' selected' : '') + '>' + WEEKDAYS[d] + '</option>';
+    html += '<option value="' + d + '"' + (d === selected ? ' selected' : '') + '>' + WEEKDAY_NAMES[d] + '</option>';
   }
   return html;
 }
@@ -931,6 +1555,7 @@ function addClassPlan() {
   dirty = true;
   commitUndo();
   switchView('classplans');
+  switchClassPlanSubView('list');
   renderAll();
 }
 
@@ -954,6 +1579,7 @@ function addGroup() {
   dirty = true;
   commitUndo();
   switchView('classplans');
+  switchClassPlanSubView('list');
   renderAll();
 }
 
@@ -1120,6 +1746,9 @@ document.addEventListener('keydown', function (e) {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
     e.preventDefault();
     saveConfig();
+  }
+  if (e.key === 'Escape' && quickSelectCtx) {
+    closeQuickSelect();
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
     if (isProfile && document.activeElement && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {

@@ -93,37 +93,41 @@
 .cia-section { background: var(--card-bg); border: 1px solid var(--card-stroke); border-radius: var(--radius-md); margin-bottom: var(--spacer-3); overflow: hidden; }
 .cia-section-title { padding: var(--spacer-2) var(--spacer-4); font-size: var(--font-size-xs); font-weight: 600; color: var(--text-tertiary); background: var(--subtle-tertiary); border-bottom: 1px solid var(--divider-stroke); letter-spacing: 0.02em; }
 
-.cia-device-list, .cia-enrollment-list { padding: 0; }
-.cia-device-item, .cia-enrollment-item { display: flex; align-items: center; padding: var(--spacer-3) var(--spacer-4); border-bottom: 1px solid var(--divider-stroke); gap: var(--spacer-3); transition: background var(--fast-duration); }
-.cia-device-item:last-child, .cia-enrollment-item:last-child { border-bottom: none; }
-.cia-device-item:hover, .cia-enrollment-item:hover { background: var(--subtle-tertiary); }
-.cia-device-status { width: 8px; height: 8px; border-radius: var(--radius-full); flex-shrink: 0; }
-.cia-device-status.online { background: var(--status-success); }
-.cia-device-status.offline { background: var(--text-disabled); }
-.cia-device-info { flex: 1; min-width: 0; }
-.cia-device-name { font-size: var(--font-size-sm); font-weight: 500; color: var(--text-primary); }
-.cia-device-meta { font-size: var(--font-size-xs); color: var(--text-tertiary); margin-top: 2px; }
-.cia-device-notes { font-size: var(--font-size-xs); color: var(--accent-base); margin-top: 2px; font-style: italic; }
-.cia-protocol-select {
-  padding: 3px var(--spacer-2); background: var(--ctrl-fill-default); color: var(--text-primary);
-  border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs); font-family: inherit; cursor: pointer;
-  transition: border-color var(--fast-duration);
-}
-.cia-protocol-select:focus { border-color: var(--accent-base); outline: none; }
-.cia-config-device-sel { padding: var(--spacer-2) var(--spacer-3); border-bottom: 1px solid var(--divider-stroke); }
-.cia-config-device-sel select {
-  width: 100%; padding: 5px var(--spacer-2); background: var(--ctrl-fill-default); color: var(--text-primary);
-  border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs); font-family: inherit; cursor: pointer; outline: none;
-}
-.cia-config-device-sel select:focus { border-color: var(--accent-base); }
-.cia-device-actions { display: flex; gap: var(--spacer-1); align-items: center; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
-.cia-device-profile { font-size: var(--font-size-xs); color: var(--status-info); margin-top: var(--spacer-1); }
+.cia-enrollment-list { padding: 0; }
+.cia-enrollment-item { display: flex; align-items: center; padding: var(--spacer-3) var(--spacer-4); border-bottom: 1px solid var(--divider-stroke); gap: var(--spacer-3); transition: background var(--fast-duration); }
+.cia-enrollment-item:last-child { border-bottom: none; }
+.cia-enrollment-item:hover { background: var(--subtle-tertiary); }
 .cia-enrollment-code { font-family: var(--font-family-mono); font-size: var(--font-size-sm); color: var(--accent-base); flex: 1; word-break: break-all; }
 .cia-enrollment-meta { font-size: var(--font-size-xs); color: var(--text-tertiary); white-space: nowrap; }
+
+/* ===== 设备卡片（非 100% 宽排列） ===== */
+.cia-device-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(236px, 1fr)); gap: var(--spacer-3); }
+.cia-device-grid>.cia-empty { grid-column: 1 / -1; }
+.cia-device-card { position: relative; background: var(--card-bg); border: 1px solid var(--card-stroke); border-radius: var(--radius-md); padding: var(--spacer-3) var(--spacer-4); cursor: default; transition: border-color var(--fast-duration), background var(--fast-duration); }
+.cia-device-card:hover { border-color: var(--ctrl-border-accent); background: var(--card-bg-secondary); }
+.cia-device-card.selected { border-color: var(--accent-base); background: rgba(0, 103, 192, 0.06); }
+.cia-device-card-head { display: flex; align-items: center; gap: var(--spacer-2); }
+.cia-device-status { width: 8px; height: 8px; border-radius: var(--radius-full); flex-shrink: 0; background: var(--text-disabled); }
+.cia-device-status.online { background: var(--status-success); }
+.cia-device-name { font-size: var(--font-size-sm); font-weight: 600; color: var(--text-primary); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cia-device-card-menu-btn { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: var(--radius-sm); color: var(--text-tertiary); font-size: 15px; cursor: pointer; letter-spacing: 1px; }
+.cia-device-card-menu-btn:hover { background: var(--subtle-secondary); color: var(--text-primary); }
+.cia-device-card-meta { font-size: var(--font-size-xs); color: var(--text-tertiary); margin-top: var(--spacer-1); line-height: 1.6; }
+.cia-device-card-profile { font-size: var(--font-size-xs); color: var(--status-info); margin-top: var(--spacer-2); display: flex; align-items: center; gap: var(--spacer-1); min-height: 16px; }
+.cia-device-card-notes { font-size: var(--font-size-xs); color: var(--accent-base); margin-top: 2px; font-style: italic; }
+.cia-device-card-check { position: absolute; top: 10px; left: 10px; }
+.cia-device-card-check input { accent-color: var(--accent-base); width: 15px; height: 15px; cursor: pointer; }
+.cia-device-card.with-check { padding-left: calc(var(--spacer-4) + 18px); }
+.cia-device-menu { position: absolute; top: 34px; right: 10px; min-width: 150px; background: var(--flyout-bg); backdrop-filter: var(--flyout-backdrop); -webkit-backdrop-filter: var(--flyout-backdrop); border: 1px solid var(--flyout-border); border-radius: var(--radius-md); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18); padding: 4px; z-index: 100; }
+.cia-device-menu-item { display: flex; align-items: center; gap: var(--spacer-2); width: 100%; padding: 7px var(--spacer-3); background: none; border: none; border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--font-size-xs); cursor: pointer; text-align: left; font-family: inherit; }
+.cia-device-menu-item:hover { background: var(--subtle-secondary); }
+.cia-device-menu-item.danger { color: var(--status-error); }
+.cia-device-menu-item.danger:hover { background: rgba(196, 43, 28, 0.08); }
 .cia-dot { display: inline-block; width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--status-success); margin-right: var(--spacer-1); animation: cia-pulse 2s ease-in-out infinite; }
 @keyframes cia-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.cia-multi-select-bar { display: flex; align-items: center; gap: var(--spacer-2); padding: var(--spacer-2) var(--spacer-3); margin-bottom: var(--spacer-3); background: rgba(0, 103, 192, 0.06); border: 1px solid rgba(0, 103, 192, 0.12); border-radius: var(--radius-md); font-size: var(--font-size-sm); color: var(--text-primary); }
+.cia-multi-select-bar span:first-child { font-weight: 500; margin-right: auto; }
 
 .cia-cmd-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
 .cia-cmd-table th, .cia-cmd-table td { padding: var(--spacer-2) var(--spacer-3); text-align: left; border-bottom: 1px solid var(--divider-stroke); vertical-align: top; }
@@ -145,11 +149,12 @@
 .cia-profile-playing { font-size: var(--font-size-xs); color: var(--status-warning); margin-top: var(--spacer-2); }
 .cia-group-tag { display: inline-flex; align-items: center; font-size: var(--font-size-xs); color: var(--accent-base); padding: 1px var(--spacer-2); background: rgba(0, 103, 192, 0.08); border-radius: var(--radius-full); }
 
-.cia-multi-select-bar { display: flex; align-items: center; gap: var(--spacer-2); padding: var(--spacer-2) var(--spacer-3); margin-bottom: var(--spacer-3); background: rgba(0, 103, 192, 0.06); border: 1px solid rgba(0, 103, 192, 0.12); border-radius: var(--radius-md); font-size: var(--font-size-sm); color: var(--text-primary); }
-.cia-multi-select-bar span:first-child { font-weight: 500; margin-right: auto; }
-
 .cia-config-shell { display: flex; height: 100%; overflow: hidden; }
-.cia-config-sidebar { width: 190px; background: var(--card-bg-secondary); border-right: 1px solid var(--divider-stroke); flex-shrink: 0; overflow-y: auto; }
+.cia-config-sidebar { width: 200px; background: var(--card-bg-secondary); border-right: 1px solid var(--divider-stroke); flex-shrink: 0; overflow-y: auto; }
+.cia-config-device-sel { padding: var(--spacer-2) var(--spacer-3); border-bottom: 1px solid var(--divider-stroke); }
+.cia-config-device-sel select { width: 100%; padding: 5px var(--spacer-2); background: var(--ctrl-fill-default); color: var(--text-primary); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); font-size: var(--font-size-xs); font-family: inherit; cursor: pointer; outline: none; }
+.cia-config-device-sel select:focus { border-color: var(--accent-base); }
+.cia-config-device-count { padding: var(--spacer-1) var(--spacer-3); font-size: 10px; color: var(--text-tertiary); }
 .cia-config-nav { padding: var(--spacer-2) 0; }
 .cia-config-nav-item { display: block; width: 100%; padding: var(--spacer-2) var(--spacer-4); text-align: left; background: none; border: none; color: var(--text-secondary); font-size: var(--font-size-sm); cursor: pointer; font-family: inherit; transition: background var(--fast-duration), color var(--fast-duration); border-left: 3px solid transparent; }
 .cia-config-nav-item:hover { background: var(--subtle-tertiary); color: var(--text-primary); }
@@ -169,7 +174,7 @@
 
 .cia-modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
 .cia-modal { background: var(--flyout-bg); backdrop-filter: var(--flyout-backdrop); -webkit-backdrop-filter: var(--flyout-backdrop); border: 1px solid var(--flyout-border); border-radius: var(--radius-lg); width: 440px; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18); }
-.cia-modal-lg { width: 640px; }
+.cia-modal-lg { width: 680px; }
 .cia-modal-header { display: flex; align-items: center; justify-content: space-between; padding: var(--spacer-4) var(--spacer-5); border-bottom: 1px solid var(--divider-stroke); flex-shrink: 0; }
 .cia-modal-header h3 { margin: 0; font-size: var(--font-size-lg); font-weight: 600; color: var(--text-primary); }
 .cia-modal-close { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: none; border: none; border-radius: var(--radius-sm); color: var(--text-tertiary); font-size: var(--font-size-lg); cursor: pointer; }
@@ -178,32 +183,67 @@
 .cia-modal-footer { display: flex; justify-content: flex-end; gap: var(--spacer-2); padding: var(--spacer-4) var(--spacer-5); border-top: 1px solid var(--divider-stroke); flex-shrink: 0; }
 .cia-field { margin-bottom: var(--spacer-3); }
 .cia-field label { display: block; font-size: var(--font-size-sm); font-weight: 500; color: var(--text-secondary); margin-bottom: var(--spacer-1); }
-.cia-field input, .cia-field select { width: 100%; height: 34px; padding: 0 var(--spacer-3); background: var(--ctrl-fill-default); color: var(--text-primary); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); font-size: var(--font-size-sm); font-family: inherit; outline: none; box-sizing: border-box; }
-.cia-field input:focus, .cia-field select:focus { border-color: var(--accent-base); }
+.cia-field input, .cia-field select, .cia-field textarea { width: 100%; height: 34px; padding: 0 var(--spacer-3); background: var(--ctrl-fill-default); color: var(--text-primary); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); font-size: var(--font-size-sm); font-family: inherit; outline: none; box-sizing: border-box; }
+.cia-field textarea { height: auto; padding: var(--spacer-2) var(--spacer-3); resize: vertical; }
+.cia-field input:focus, .cia-field select:focus, .cia-field textarea:focus { border-color: var(--accent-base); }
 .cia-enroll-result { margin-top: var(--spacer-3); padding: var(--spacer-3); background: var(--subtle-secondary); border-radius: var(--radius-md); text-align: center; }
 .cia-enroll-code-label { font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: var(--spacer-1); }
 .cia-enroll-code { font-family: var(--font-family-mono); font-size: var(--font-size-lg); font-weight: 600; color: var(--accent-base); padding: var(--spacer-2); background: var(--ctrl-solid-fill); border: 1px solid var(--card-stroke); border-radius: var(--radius-sm); word-break: break-all; margin-bottom: var(--spacer-2); user-select: all; }
 
-.cia-profile-info-table { width: 100%; border-collapse: collapse; }
-.cia-profile-info-table th, .cia-profile-info-table td { padding: var(--spacer-2) var(--spacer-3); text-align: left; border-bottom: 1px solid var(--divider-stroke); font-size: var(--font-size-sm); }
-.cia-profile-info-table th { color: var(--text-tertiary); font-weight: 500; width: 110px; }
+/* ===== 设备模态框顶部页签 ===== */
+.cia-modal-tabs { display: flex; gap: 2px; padding: 0 var(--spacer-5); border-bottom: 1px solid var(--divider-stroke); flex-shrink: 0; background: var(--subtle-tertiary); }
+.cia-modal-tab { display: inline-flex; align-items: center; gap: 4px; padding: var(--spacer-2) var(--spacer-4); background: transparent; border: none; border-bottom: 2px solid transparent; font-size: var(--font-size-xs); color: var(--text-tertiary); cursor: pointer; font-family: inherit; white-space: nowrap; }
+.cia-modal-tab:hover { color: var(--text-primary); }
+.cia-modal-tab.active { color: var(--accent-base); border-bottom-color: var(--accent-base); font-weight: 600; }
+.cia-device-info-table { width: 100%; border-collapse: collapse; }
+.cia-device-info-table th, .cia-device-info-table td { padding: var(--spacer-2) var(--spacer-3); text-align: left; border-bottom: 1px solid var(--divider-stroke); font-size: var(--font-size-sm); }
+.cia-device-info-table th { color: var(--text-tertiary); font-weight: 500; width: 110px; }
+.cia-modal-section-title { font-size: var(--font-size-xs); font-weight: 600; color: var(--text-tertiary); letter-spacing: 0.02em; margin: var(--spacer-4) 0 var(--spacer-2); }
+.cia-modal-section-title:first-child { margin-top: 0; }
+.cia-inline-row { display: flex; gap: var(--spacer-2); align-items: center; }
+.cia-inline-row select, .cia-inline-row input { flex: 1; }
+.cia-danger-zone { border: 1px solid rgba(196, 43, 28, 0.2); background: rgba(196, 43, 28, 0.04); border-radius: var(--radius-md); padding: var(--spacer-3) var(--spacer-4); margin-top: var(--spacer-5); }
+.cia-danger-zone .cia-config-item-title { color: var(--status-error); }
 .cia-device-checkboxes { max-height: 200px; overflow-y: auto; margin-top: var(--spacer-2); }
 .cia-device-checkbox { display: flex; align-items: center; gap: var(--spacer-2); padding: var(--spacer-1) 0; font-size: var(--font-size-sm); }
 .cia-device-checkbox input { accent-color: var(--accent-base); }
 .cia-tip-box { padding: var(--spacer-3) var(--spacer-4); background: rgba(0, 103, 192, 0.06); border: 1px solid rgba(0, 103, 192, 0.12); border-radius: var(--radius-md); font-size: var(--font-size-xs); color: var(--text-secondary); line-height: 1.7; }
+
+/* ===== 设备模态框：并列入口卡片 / 广播卡片 ===== */
+.cia-jump-cards { display: grid; grid-template-columns: 1fr 1fr; gap: var(--spacer-3); margin-bottom: var(--spacer-4); }
+.cia-jump-card { display: flex; flex-direction: column; gap: var(--spacer-1); background: var(--card-bg); border: 1px solid var(--card-stroke); border-radius: var(--radius-md); padding: var(--spacer-3) var(--spacer-4); }
+.cia-jump-title { font-size: var(--font-size-xs); font-weight: 600; color: var(--text-tertiary); letter-spacing: 0.02em; }
+.cia-jump-value { font-size: var(--font-size-sm); font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: var(--spacer-2); }
+.cia-jump-btn { display: flex; align-items: center; justify-content: center; gap: var(--spacer-2); width: 100%; padding: 7px var(--spacer-3); background: var(--subtle-secondary); color: var(--accent-base); border: 1px solid var(--divider-stroke); border-radius: var(--radius-sm); font-size: var(--font-size-xs); font-weight: 500; cursor: pointer; font-family: inherit; transition: background var(--fast-duration), border-color var(--fast-duration); }
+.cia-jump-btn:hover { background: rgba(0, 103, 192, 0.08); border-color: var(--accent-base); }
+.cia-jump-btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+.cia-broadcast-card { background: var(--card-bg); border: 1px solid var(--card-stroke); border-radius: var(--radius-md); padding: var(--spacer-3) var(--spacer-4) var(--spacer-4); margin-top: var(--spacer-4); }
+.cia-broadcast-card .cia-modal-section-title { margin-top: 0; }
+.cia-picker-list { display: flex; flex-direction: column; gap: var(--spacer-2); }
+.cia-picker-item { display: flex; align-items: center; gap: var(--spacer-3); padding: var(--spacer-3) var(--spacer-4); background: var(--card-bg); border: 1px solid var(--card-stroke); border-radius: var(--radius-md); cursor: pointer; transition: border-color var(--fast-duration), background var(--fast-duration); }
+.cia-picker-item:hover { border-color: var(--ctrl-border-accent); }
+.cia-picker-item.selected { border-color: var(--accent-base); background: rgba(0, 103, 192, 0.06); }
+.cia-picker-item input { accent-color: var(--accent-base); }
+.cia-picker-main { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.cia-picker-main b { font-size: var(--font-size-sm); color: var(--text-primary); }
+.cia-picker-main small { font-size: var(--font-size-xs); color: var(--text-tertiary); }
+.cia-picker-current { font-size: var(--font-size-xs); color: var(--accent-base); font-weight: 500; }
+.cia-protocol-select { padding: 3px var(--spacer-2); background: var(--ctrl-fill-default); color: var(--text-primary); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); font-size: var(--font-size-xs); font-family: inherit; cursor: pointer; transition: border-color var(--fast-duration); }
+.cia-protocol-select:focus { border-color: var(--accent-base); outline: none; }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--subtle-secondary); border-radius: var(--radius-full); }
 ::-webkit-scrollbar-thumb:hover { background: var(--subtle-pressed); }
 </style><div class="cia-app">
-  <!-- ===== 连接应用页面 ===== -->
+  <!-- ===== 设备列表页面 ===== -->
   <div class="cia-page" id="ciaPageConnect">
     <div class="cia-page-header">
-      <h2>设备连接</h2>
+      <h2>设备列表</h2>
       <div class="cia-page-actions">
         <button class="cia-btn primary" onclick="showEnrollmentDialog()">+ 生成注册码</button>
         <button class="cia-btn" onclick="showBroadcastDialog()">广播</button>
+        <button class="cia-btn" onclick="toggleDeviceMultiSelect()">多选</button>
         <button class="cia-btn" onclick="refreshDevices()">刷新</button>
       </div>
     </div>
@@ -213,13 +253,17 @@
         <div class="cia-stat-card"><span class="cia-stat-value c-success" id="ciaStatOnline">0</span><span class="cia-stat-label">在线</span></div>
         <div class="cia-stat-card"><span class="cia-stat-value" id="ciaStatProfiles">0</span><span class="cia-stat-label">档案数</span></div>
       </div>
-      <div class="cia-section">
-        <div class="cia-section-title">设备列表（ClassIsland · CSES Cloud 适配器）</div>
-        <div class="cia-device-list" id="ciaDeviceList">
-          <div class="cia-empty">暂无设备连接，请生成注册码并在 ClassIsland 适配器中填入</div>
-        </div>
+      <div class="cia-multi-select-bar" id="ciaDeviceMultiBar" style="display:none">
+        <span id="ciaDeviceMultiCount">已选 0 台设备</span>
+        <button class="cia-btn small primary" onclick="batchBroadcastDevices()">批量广播</button>
+        <button class="cia-btn small" onclick="batchNotesDevices()">批量备注</button>
+        <button class="cia-btn small danger" onclick="batchDeleteDevices()">批量删除</button>
+        <button class="cia-btn small" onclick="toggleDeviceMultiSelect()">取消选择</button>
       </div>
-      <div class="cia-section">
+      <div class="cia-device-grid" id="ciaDeviceGrid">
+        <div class="cia-empty">暂无设备连接，请生成注册码并在 ClassIsland 客户端的「CSES Cloud 适配器」中导入凭据或填入服务器地址与注册码</div>
+      </div>
+      <div class="cia-section" style="margin-top: var(--spacer-4)">
         <div class="cia-section-title">注册码</div>
         <div class="cia-enrollment-list" id="ciaEnrollmentList">
           <div class="cia-empty">暂无有效注册码</div>
@@ -250,7 +294,7 @@
     </div>
   </div>
 
-  <!-- ===== 应用配置页面 ===== -->
+  <!-- ===== 应用配置页面（左侧栏含全部设备） ===== -->
   <div class="cia-page" id="ciaPageConfig" style="display:none">
     <div class="cia-config-shell">
       <div class="cia-config-sidebar">
@@ -259,14 +303,58 @@
             <option value="__global__">全局配置（所有设备）</option>
           </select>
         </div>
+        <div class="cia-config-device-count" id="ciaConfigDeviceCount"></div>
         <div class="cia-config-nav">
           <button class="cia-config-nav-item active" data-cfg="sync" onclick="switchConfigTab('sync')">同步</button>
           <button class="cia-config-nav-item" data-cfg="notification" onclick="switchConfigTab('notification')">通知</button>
+          <button class="cia-config-nav-item" data-cfg="client" onclick="switchConfigTab('client')">客户端设置</button>
           <button class="cia-config-nav-item" data-cfg="connect" onclick="switchConfigTab('connect')">客户端接入</button>
           <button class="cia-config-nav-item" data-cfg="advanced" onclick="switchConfigTab('advanced')">高级</button>
         </div>
       </div>
       <div class="cia-config-content" id="ciaConfigContent"></div>
+    </div>
+  </div>
+
+  <!-- ===== 设备管理模态框（查看/编辑设备） ===== -->
+  <div class="cia-modal-overlay" id="ciaDeviceModal" style="display:none" onclick="if(event.target===this)closeDeviceModal()">
+    <div class="cia-modal cia-modal-lg">
+      <div class="cia-modal-header">
+        <h3 id="ciaDeviceModalTitle">设备</h3>
+        <button class="cia-modal-close" onclick="closeDeviceModal()">&times;</button>
+      </div>
+      <div class="cia-modal-tabs">
+        <button class="cia-modal-tab active" data-tab="basic" onclick="switchDeviceTab('basic')">基本</button>
+        <button class="cia-modal-tab" data-tab="network" onclick="switchDeviceTab('network')">网络</button>
+        <button class="cia-modal-tab" data-tab="broadcast" onclick="switchDeviceTab('broadcast')">广播</button>
+        <button class="cia-modal-tab" data-tab="commands" onclick="switchDeviceTab('commands')">历史命令</button>
+      </div>
+      <div class="cia-modal-body" id="ciaDeviceTabBody">
+        <div class="cia-empty cia-empty-compact">加载中...</div>
+      </div>
+      <div class="cia-modal-footer" style="justify-content:space-between">
+        <button class="cia-btn danger" id="ciaDeviceDeleteBtn" onclick="deleteDeviceFromModal()">删除设备</button>
+        <button class="cia-btn" onclick="closeDeviceModal()">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 档案选择弹框（为设备选择并应用档案） ===== -->
+  <div class="cia-modal-overlay" id="ciaProfilePickerModal" style="display:none" onclick="if(event.target===this)closeProfilePicker()">
+    <div class="cia-modal">
+      <div class="cia-modal-header">
+        <h3>选择要应用的档案</h3>
+        <button class="cia-modal-close" onclick="closeProfilePicker()">&times;</button>
+      </div>
+      <div class="cia-modal-body">
+        <div class="cia-picker-list" id="ciaProfilePickerList">
+          <div class="cia-empty cia-empty-compact">加载中...</div>
+        </div>
+      </div>
+      <div class="cia-modal-footer">
+        <button class="cia-btn" onclick="closeProfilePicker()">取消</button>
+        <button class="cia-btn primary" onclick="confirmApplyProfile()">应用到设备</button>
+      </div>
     </div>
   </div>
 
@@ -312,6 +400,47 @@
     </div>
   </div>
 
+  <!-- ===== 广播弹窗 ===== -->
+  <div class="cia-modal-overlay" id="ciaBroadcastModal" style="display:none" onclick="if(event.target===this)closeBroadcastDialog()">
+    <div class="cia-modal">
+      <div class="cia-modal-header">
+        <h3>发送广播</h3>
+        <button class="cia-modal-close" onclick="closeBroadcastDialog()">&times;</button>
+      </div>
+      <div class="cia-modal-body">
+        <div class="cia-field">
+          <label>目标</label>
+          <div><code class="cia-code-chip" id="ciaBroadcastTarget">所有设备</code></div>
+        </div>
+        <div class="cia-field">
+          <label>标题</label>
+          <input type="text" id="ciaBroadcastTitle" placeholder="通知标题" />
+        </div>
+        <div class="cia-field">
+          <label>内容</label>
+          <textarea id="ciaBroadcastBody" rows="3" placeholder="广播正文（可选）"></textarea>
+        </div>
+        <div class="cia-field">
+          <label>级别</label>
+          <select id="ciaBroadcastSeverity">
+            <option value="info">信息</option>
+            <option value="success">成功</option>
+            <option value="warning">警告</option>
+            <option value="error">错误</option>
+          </select>
+        </div>
+        <div class="cia-field">
+          <label>显示时长（秒，3-120，客户端遮罩停留时间）</label>
+          <input type="number" id="ciaBroadcastDuration" value="10" min="3" max="120" />
+        </div>
+      </div>
+      <div class="cia-modal-footer">
+        <button class="cia-btn" onclick="closeBroadcastDialog()">取消</button>
+        <button class="cia-btn primary" onclick="sendBroadcast()">发送</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== 档案详情弹窗 ===== -->
   <div class="cia-modal-overlay" id="ciaProfileDetailModal" style="display:none" onclick="if(event.target===this)closeProfileDetail()">
     <div class="cia-modal cia-modal-lg">
@@ -345,43 +474,6 @@
       <div class="cia-modal-footer">
         <button class="cia-btn" onclick="closeDeployDialog()">取消</button>
         <button class="cia-btn primary" onclick="confirmDeploy()">确认部署</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===== 广播弹窗 ===== -->
-  <div class="cia-modal-overlay" id="ciaBroadcastModal" style="display:none" onclick="if(event.target===this)closeBroadcastDialog()">
-    <div class="cia-modal">
-      <div class="cia-modal-header">
-        <h3>发送广播</h3>
-        <button class="cia-modal-close" onclick="closeBroadcastDialog()">&times;</button>
-      </div>
-      <div class="cia-modal-body">
-        <div class="cia-field">
-          <label>目标</label>
-          <div><code class="cia-code-chip" id="ciaBroadcastTarget">所有设备</code></div>
-        </div>
-        <div class="cia-field">
-          <label>标题</label>
-          <input type="text" id="ciaBroadcastTitle" placeholder="通知标题" />
-        </div>
-        <div class="cia-field">
-          <label>内容</label>
-          <input type="text" id="ciaBroadcastBody" placeholder="广播正文（可选）" />
-        </div>
-        <div class="cia-field">
-          <label>级别</label>
-          <select id="ciaBroadcastSeverity">
-            <option value="info">信息</option>
-            <option value="success">成功</option>
-            <option value="warning">警告</option>
-            <option value="error">错误</option>
-          </select>
-        </div>
-      </div>
-      <div class="cia-modal-footer">
-        <button class="cia-btn" onclick="closeBroadcastDialog()">取消</button>
-        <button class="cia-btn primary" onclick="sendBroadcast()">发送</button>
       </div>
     </div>
   </div>

@@ -110,7 +110,7 @@
           <div class="exam-editor-topbar">
             <button class="exam-editor-back" @click="closeExamEditor">
               <Icon icon="ri-arrow-left-s-line" :size="16" />
-              <span>返回考试列表</span>
+              <span>{{ examEditorBackLabel }}</span>
             </button>
             <span class="exam-editor-title">{{ examEditorFile?.name || '考试档案' }}</span>
           </div>
@@ -1018,13 +1018,20 @@ async function openExamInEditor(payload: any) {
   }
 }
 
+/** 插件编辑器返回按钮标签：按实例应用区分（ClassIsland → 返回设备列表，EA2 → 返回考试列表） */
+const examEditorBackLabel = computed(() =>
+  instance.value?.app_key === 'classisland' ? '返回设备列表' : '返回考试列表'
+);
+
 function closeExamEditor() {
   examEditorMode.value = false;
   examEditorFile.value = null;
   examEditorPlugin.value = null;
   rememberExamEditor();
   if (iframeReady.value && editorFrame.value) {
-    editorFrame.value.contentWindow?.postMessage({ __ceseCommand: 'page_exams' }, '*');
+    // 返回发起编辑的列表页：ClassIsland 回设备列表，EA2 回考试列表
+    const backCommand = instance.value?.app_key === 'classisland' ? 'page_connect' : 'page_exams';
+    editorFrame.value.contentWindow?.postMessage({ __ceseCommand: backCommand }, '*');
   }
 }
 
