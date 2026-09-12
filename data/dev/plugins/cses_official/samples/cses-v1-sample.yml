@@ -1,0 +1,39 @@
+version: 1
+subjects:
+  - name: 数学
+    simplified_name: 数
+    teacher: 张三
+    room: 101
+  - name: 语文
+    simplified_name: 语
+    teacher: 李四
+    room: 102
+  - name: 英语
+    simplified_name: 英
+    teacher: 王五
+    room: 103
+schedules:
+  - name: all-mon
+    enable_day: 1
+    weeks: all
+    classes:
+      - subject: 数学
+        start_time: "08:00:00"
+        end_time: "08:40:00"
+      - subject: 语文
+        start_time: "08:50:00"
+        end_time: "09:30:00"
+  - name: odd-tue
+    enable_day: 2
+    weeks: odd
+    classes:
+      - subject: 英语
+        start_time: "08:00:00"
+        end_time: "08:40:00"
+  - name: even-tue
+    enable_day: 2
+    weeks: even
+    classes:
+      - subject: 数学
+        start_time: "08:00:00"
+        end_time: "08:40:00"

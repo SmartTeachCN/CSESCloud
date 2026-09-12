@@ -133,6 +133,10 @@ export const pluginApi = {
     const result = await api.get<any>(`/dev/plugins?action=resolver&ext=${encodeURIComponent(ext)}`);
     return result?._id || result?.id ? normalizeItem(result) : null;
   },
+  // 插件示例文件（samples/ 目录，供轻编辑器「从模板新建」）
+  samples: async (pluginKey: string) => {
+    return await api.get<any>(`/dev/plugins?action=samples&plugin_key=${encodeURIComponent(pluginKey)}`);
+  },
   create: async (body: any) => { const r = await api.post('/dev/plugins?action=create', body); return normalizeItem(r); },
   update: (id: number, body: any) => api.post('/dev/plugins?action=update', { id, ...body }),
   publish: (id: number) => api.post('/dev/plugins?action=publish', { id }),

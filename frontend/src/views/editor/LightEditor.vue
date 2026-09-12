@@ -36,6 +36,10 @@
                   <Icon icon="ri-upload-2-line" :size="14" />
                   <span>上传文件</span>
                 </button>
+                <button class="plus-item" @click="openTplDialog(); showCloudPlusMenu = false">
+                  <Icon icon="ri-magic-line" :size="14" />
+                  <span>从模板新建</span>
+                </button>
                 <div class="plus-divider"></div>
                 <button class="plus-item" @click="refreshCloudFiles(); showCloudPlusMenu = false">
                   <Icon icon="ri-refresh-line" :size="14" />
@@ -456,6 +460,38 @@
     </div>
   </Teleport>
 
+  <!-- 从模板新建对话框（选择插件后释放其示例文件） -->
+  <Teleport to="body">
+    <div v-if="showTplDialog" class="dialog-overlay" @click.self="showTplDialog = false">
+      <div class="dialog-card">
+        <h3>从模板新建</h3>
+        <div class="tpl-tip">选择一个提供示例文件的编辑器插件，其示例文件将释放到你的云文件。</div>
+        <div v-if="tplLoading" class="tpl-state">加载中...</div>
+        <div v-else-if="tplPlugins.length === 0" class="tpl-state">暂无提供示例文件的编辑器插件</div>
+        <div v-else class="tpl-plugin-list">
+          <button
+            v-for="p in tplPlugins"
+            :key="p.plugin_key"
+            class="tpl-plugin-item"
+            :disabled="tplReleasing"
+            @click="releasePluginSamples(p)"
+          >
+            <AppIcon :icon="p.icon" :plugin-key="p.plugin_key" :size="28" fallback="ri-plug-line" />
+            <span class="tpl-plugin-info">
+              <span class="tpl-plugin-name">{{ p.name }}</span>
+              <span class="tpl-plugin-desc">{{ p.description }}</span>
+            </span>
+            <span v-if="tplReleasingKey === p.plugin_key" class="tpl-releasing">释放中…</span>
+            <Icon v-else icon="ri-arrow-right-s-line" :size="16" />
+          </button>
+        </div>
+        <div class="dialog-actions">
+          <button class="secondary-btn" @click="showTplDialog = false">取消</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <!-- 重命名对话框 -->
   <Teleport to="body">
     <div v-if="showRenameDialog" class="dialog-overlay" @click.self="showRenameDialog = false">
@@ -843,6 +879,83 @@ async function createCloudDir() {
     await loadCloudFiles();
   } catch (e: any) {
     console.error('创建目录失败', e);
+  }
+}
+
+// ===== 从模板新建（选择插件后释放其示例文件到云文件） =====
+const showTplDialog = ref(false);
+const tplLoading = ref(false);
+const tplReleasing = ref(false);
+const tplReleasingKey = ref('');
+const tplPlugins = ref<any[]>([]);
+
+async function openTplDialog() {
+  if (!isLoggedIn.value) {
+    alert('请先登录后再使用「从模板新建」');
+    return;
+  }
+  showTplDialog.value = true;
+  tplLoading.value = true;
+  try {
+    const published = await pluginApi.published();
+    tplPlugins.value = (published || []).filter(p => p.has_samples);
+  } catch (e) {
+    console.error('加载插件列表失败', e);
+    tplPlugins.value = [];
+  } finally {
+    tplLoading.value = false;
+  }
+}
+
+/** 云文件名仅允许字母/数字/下划线/连字符/点，且不能与已有文件重名 */
+function uniqueCloudName(rawName: string, existing: Set<string>): string {
+  const raw = (rawName || 'sample.txt').trim().replace(/^\/+/, '');
+  const dot = raw.lastIndexOf('.');
+  const ext = (dot > 0 ? raw.slice(dot + 1) : '').replace(/[^a-zA-Z0-9]/g, '') || 'txt';
+  let base = dot > 0 ? raw.slice(0, dot) : raw;
+  if (!/^[a-zA-Z0-9_\-\.]+$/.test(base)) base = 'sample-' + base.replace(/[^a-zA-Z0-9_\-]/g, '');
+  if (!base) base = 'sample';
+  let candidate = `${base}.${ext}`;
+  let i = 1;
+  while (existing.has(candidate)) {
+    candidate = `${base}-${i}.${ext}`;
+    i++;
+  }
+  return candidate;
+}
+
+async function releasePluginSamples(plugin: any) {
+  if (tplReleasing.value) return;
+  tplReleasing.value = true;
+  tplReleasingKey.value = plugin.plugin_key;
+  try {
+    const data = await pluginApi.samples(plugin.plugin_key);
+    const files = (data && data.files) || [];
+    if (files.length === 0) {
+      alert(`插件「${plugin.name}」没有可用的示例文件`);
+      return;
+    }
+    const existing = new Set(cloudFiles.value.map(f => f.name));
+    const created: string[] = [];
+    for (const f of files) {
+      const name = uniqueCloudName(f.name, existing);
+      existing.add(name);
+      const ext = name.includes('.') ? name.split('.').pop()! : 'txt';
+      await cloudApi.create({ name, content: f.content || '', file_type: ext });
+      created.push(name);
+    }
+    showTplDialog.value = false;
+    await loadCloudFiles();
+    // 释放后打开第一个示例文件
+    const first = cloudFiles.value.find(f => f.name === created[0]);
+    if (first) await openCloudFile(first);
+    alert(`已从「${plugin.name}」释放 ${created.length} 个示例文件：\n${created.join('\n')}`);
+  } catch (e: any) {
+    console.error('释放示例文件失败', e);
+    alert('释放示例文件失败：' + (e?.message || '未知错误'));
+  } finally {
+    tplReleasing.value = false;
+    tplReleasingKey.value = '';
   }
 }
 
@@ -1684,6 +1797,26 @@ onMounted(() => {
 }
 .plus-item:hover { background: var(--subtle-secondary); }
 .plus-divider { height: 1px; background: var(--divider-stroke); margin: var(--spacer-1) 0; }
+
+/* ===== 从模板新建对话框 ===== */
+.tpl-tip { font-size: var(--font-size-xs); color: var(--text-secondary); line-height: 1.6; margin-bottom: var(--spacer-3); }
+.tpl-state { padding: var(--spacer-5) 0; text-align: center; font-size: var(--font-size-sm); color: var(--text-tertiary); }
+.tpl-plugin-list { display: flex; flex-direction: column; gap: var(--spacer-2); max-height: 320px; overflow-y: auto; margin-bottom: var(--spacer-2); }
+.tpl-plugin-item {
+  display: flex; align-items: center; gap: var(--spacer-3); padding: var(--spacer-3);
+  text-align: left; font-family: inherit;
+  background: var(--subtle-secondary); border: 1px solid var(--divider-stroke); border-radius: var(--radius-md);
+  cursor: pointer; color: var(--text-primary); transition: border-color 0.15s, background 0.15s;
+}
+.tpl-plugin-item:hover { border-color: var(--accent-base); background: var(--accent-tint, rgba(0, 103, 192, 0.06)); }
+.tpl-plugin-item:disabled { opacity: 0.6; cursor: default; }
+.tpl-plugin-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tpl-plugin-name { font-size: var(--font-size-sm); font-weight: 600; }
+.tpl-plugin-desc {
+  font-size: var(--font-size-xs); color: var(--text-tertiary);
+  overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.tpl-releasing { font-size: var(--font-size-xs); color: var(--accent-base); flex-shrink: 0; }
 
 .cloud-loading { text-align: center; padding: var(--spacer-4); font-size: var(--font-size-xs); color: var(--text-tertiary); }
 

@@ -1,49 +1,104 @@
 // ============================================================
-// CSES 编辑器 - 官方版（移植自旧版 CSESCloud 平台 CsesWebEditor）
-// 支持：课程表可视化编辑、科目管理、表格视图、文件预览
-// 输出格式：YAML / JSON / ClassIsland / ExamSchedule
-// 通过 window.CSEditor 与平台通信
+// CSES 编辑器 - 官方版（UI 样板：ClassIsland 档案编辑器）
+// - 注册 .yml 后缀：按 CSES 模板自动识别格式（V1.0 / V2.0），
+//   匹配成功进入结构化编辑；否则回退为通用 YAML 编辑器。
+// - 编辑体验对齐 ClassIsland 2 档案设置窗口：
+//   · 课程表：列表 / 周视图、课程快速选择面板（常驻 Dock + 弹窗）；
+//   · 科目：左表格 + 右详情，预设常用科目；
+//   · 配置（V2.0）：description + 周期 cycle（work/rest 计数与 spans 分配）。
+// - 保存通过平台 Ribbon「保存」按钮（save 命令 / Ctrl+S），统一输出 YAML，
+//   不再提供多格式导出；撤销/重做对接平台 Ribbon 的 undo/redo 命令。
+// - 视图与选择状态随文件持久化，刷新后回到刷新前页面；未知字段原样回写。
 // ============================================================
 
-var currentData = null;          // 归一化后的 CSES 数据
-var sourceFormat = 'yaml';       // 载入时的原始格式
-var currentScheduleIndex = -1;   // 当前选中的课程表
-var currentClassIndex = -1;      // 当前选中的课程
-var currentSubjectIndex = -1;    // 当前选中的科目
-var currentView = 'schedule';    // 当前视图
-var changeMode = 'odd';          // 表格视图周类型
+var cses = null;               // CSES 数据对象（保存时原样序列化，未知字段不丢）
+var isCses = false;            // 是否识别为 CSES 课表
+var csesVersion = 2;           // 识别到的模板版本：1 / 2
+var view = 'schedules';
+var scheduleSubView = 'list';  // 课程表：list / week
+var weekMode = '';             // V1 周视图周类型：'' 全部 / all / odd / even
+var selectedScheduleIdx = -1;  // 当前选中的课程表
+var selectedClassIdx = -1;     // 当前选中的课程
+var selectedSubjectIdx = -1;   // 当前选中的科目
+var uiState = { collapse: { schedules: false, config: false }, durClass: 40, autoNextLesson: false };
+var quickSelectCtx = null;     // 快速选择面板上下文 {schedIdx, clsIdx}
+var quickDockTarget = null;    // 常驻快速选择菜单的当前目标 {schedIdx, clsIdx}
 var dirty = false;
+var rawDirty = false;          // 源码视图手动改过、尚未载入
+var validationErrors = [];
+var validationWarnings = [];
+var presetOpen = false;
 
-// ---------------- 小工具 ----------------
+var WEEK_MAP = { all: '通用', odd: '单周', even: '双周' };
+var DAY_NAMES = { 1: '周一', 2: '周二', 3: '周三', 4: '周四', 5: '周五', 6: '周六', 7: '周日' };
+var TIME_RE = /^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/;
+
+// 常用预设科目（写入 subjects；V1.0 用 room，V2.0 用 location）
+var PRESET_SUBJECTS = [
+  { name: '语文', simplified: '语' }, { name: '数学', simplified: '数' },
+  { name: '英语', simplified: '英' }, { name: '物理', simplified: '物' },
+  { name: '化学', simplified: '化' }, { name: '生物', simplified: '生' },
+  { name: '历史', simplified: '历' }, { name: '地理', simplified: '地' },
+  { name: '政治', simplified: '政' }, { name: '体育', simplified: '体' },
+  { name: '早读', simplified: '早' }, { name: '晚读', simplified: '晚' },
+  { name: '自习', simplified: '自' }, { name: '班会', simplified: '班' },
+  { name: '音乐', simplified: '音' }, { name: '美术', simplified: '美' },
+  { name: '信息技术', simplified: '信' }, { name: '通用技术', simplified: '通' }
+];
+
+// ================= 工具 =================
 function $(id) { return document.getElementById(id); }
+function escHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function escAttr(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function isPlainObject(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
-function escHtml(s) {
-  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+function dayName(d) { return DAY_NAMES[d] || ('第' + d + '日'); }
+function shortTime(hhmmss) {
+  var p = String(hhmmss || '').split(':');
+  return p.length >= 2 ? (p[0] + ':' + p[1]) : hhmmss;
 }
-function escAttr(s) {
-  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function toSec(hhmmss) {
+  var p = String(hhmmss || '00:00:00').split(':');
+  return (parseInt(p[0], 10) || 0) * 3600 + (parseInt(p[1], 10) || 0) * 60 + (parseInt(p[2], 10) || 0);
 }
-function setStatus(msg, type, hold) {
-  var el = $('csesStatus');
-  el.textContent = msg;
-  el.className = 'cses-status-msg' + (type ? ' ' + type : '');
-  if (type === 'success' && !hold) {
-    clearTimeout(setStatus._t);
-    setStatus._t = setTimeout(function () { el.textContent = '就绪'; el.className = 'cses-status-msg'; }, 3000);
+function addSeconds(hhmmss, seconds) {
+  var p = String(hhmmss || '00:00:00').split(':');
+  var total = (parseInt(p[0], 10) || 0) * 3600 + (parseInt(p[1], 10) || 0) * 60 + (parseInt(p[2], 10) || 0) + seconds;
+  if (total < 0) total = 0;
+  var h = Math.floor(total / 3600) % 24, m = Math.floor((total % 3600) / 60), s = total % 60;
+  return pad2(h) + ':' + pad2(m) + ':' + pad2(s);
+}
+function addMinutes(hhmmss, minutes) { return addSeconds(hhmmss, minutes * 60); }
+function normalizeTime(t) {
+  var s = String(t == null ? '' : t).trim();
+  if (/^\d{2}:\d{2}$/.test(s)) s += ':00';
+  return s;
+}
+
+/** 读取课程表启用日数组（V1: enable_day 整数；V2: enable_day 整数数组） */
+function daysOf(s) {
+  if (!isPlainObject(s)) return [];
+  if (csesVersion === 1) {
+    var d = parseInt(s.enable_day, 10);
+    return isNaN(d) ? [] : [d];
   }
-}
-function markDirty() {
-  dirty = true;
-  setStatus('有未保存的更改', 'warn', true);
-  updateStats();
-}
-function nowStr() {
-  var d = new Date();
-  var p = function (n) { return (n < 10 ? '0' : '') + n; };
-  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  return Array.isArray(s.enable_day) ? s.enable_day.map(function (x) { return parseInt(x, 10); }).filter(function (x) { return !isNaN(x); }) : [];
 }
 
-// ---------------- YAML 引擎（精简实现） ----------------
+/** 课程表摘要（列表 meta / 周视图标题） */
+function scheduleMeta(s) {
+  var days = daysOf(s).map(dayName).join('、');
+  if (csesVersion === 1) {
+    return (WEEK_MAP[s.weeks] || '通用') + ' · ' + (days || '未启用');
+  }
+  return days || '未启用';
+}
+function scheduleTitle(s, idx) {
+  return (s && s.name) ? s.name : ('未命名课程表 ' + (idx + 1));
+}
+
+// ================= YAML 引擎（精简实现） =================
 function parseYaml(text) {
   var lines = String(text || '').split(/\r?\n/);
   var nodes = [];
@@ -260,819 +315,1314 @@ function yamlDump(obj) {
   return emit(obj, 0);
 }
 
-// ---------------- 数据模型 ----------------
-var DEFAULT_SUBJECTS = [
-  { name: '语文', simplified_name: '语', teacher: '', room: '' },
-  { name: '数学', simplified_name: '数', teacher: '', room: '' },
-  { name: '英语', simplified_name: '英', teacher: '', room: '' },
-  { name: '物理', simplified_name: '物', teacher: '', room: '' },
-  { name: '化学', simplified_name: '化', teacher: '', room: '' },
-  { name: '生物', simplified_name: '生', teacher: '', room: '' },
-  { name: '历史', simplified_name: '历', teacher: '', room: '' },
-  { name: '地理', simplified_name: '地', teacher: '', room: '' },
-  { name: '政治', simplified_name: '政', teacher: '', room: '' },
-  { name: '体育', simplified_name: '体', teacher: '', room: '' },
-  { name: '早读', simplified_name: '早', teacher: '', room: '' },
-  { name: '晚读', simplified_name: '晚', teacher: '', room: '' },
-  { name: '听力', simplified_name: '听', teacher: '', room: '' },
-  { name: '美术', simplified_name: '美', teacher: '', room: '' },
-  { name: '音乐', simplified_name: '音', teacher: '', room: '' },
-  { name: '信息技术', simplified_name: '信', teacher: '', room: '' },
-  { name: '通用技术', simplified_name: '通', teacher: '', room: '' },
-  { name: '班会', simplified_name: '班', teacher: '', room: '' }
-];
-var WEEK_MAP = { odd: '单周', even: '双周', all: '通用' };
-var DAY_MAP = { 1: '星期一', 2: '星期二', 3: '星期三', 4: '星期四', 5: '星期五', 6: '星期六', 7: '星期日' };
+// ================= CSES 模板识别 =================
+/**
+ * 按 CSES 模板识别格式：
+ * - V1.0：version === 1，且 subjects / schedules 为数组；
+ * - V2.0：version === 2，且 configuration 为对象、subjects / schedules 为数组。
+ */
+function detectCses(obj) {
+  if (!isPlainObject(obj)) return { ok: false, reason: '文件为空或根节点不是对象' };
+  var version = typeof obj.version === 'number' ? obj.version : parseInt(obj.version, 10);
+  if (version !== 1 && version !== 2) return { ok: false, reason: '缺少 version 字段（应为 1 或 2）' };
+  if (!Array.isArray(obj.subjects)) return { ok: false, reason: 'V' + version + '.0 缺少 subjects 数组' };
+  if (!Array.isArray(obj.schedules)) return { ok: false, reason: 'V' + version + '.0 缺少 schedules 数组' };
+  if (version === 2 && !isPlainObject(obj.configuration)) return { ok: false, reason: 'V2.0 缺少 configuration 对象' };
+  return { ok: true, version: version };
+}
 
-function normalizeData(obj) {
-  if (!obj || typeof obj !== 'object') obj = {};
+/** 确保结构完整（容器缺失补齐，必需字段按模板补默认值，未知字段原样保留） */
+function normalizeCses(obj, version) {
+  if (!isPlainObject(obj)) obj = {};
+  obj.version = version;
   if (!Array.isArray(obj.subjects)) obj.subjects = [];
   if (!Array.isArray(obj.schedules)) obj.schedules = [];
-  if (obj.version == null) obj.version = 1;
-  // 保证每个课程表有 classes
+  if (version === 2) {
+    if (!isPlainObject(obj.configuration)) obj.configuration = {};
+    var cfg = obj.configuration;
+    if (typeof cfg.name !== 'string') cfg.name = '';
+    if (typeof cfg.description !== 'string') cfg.description = '';
+    if (!isPlainObject(cfg.cycle)) cfg.cycle = {};
+    var cyc = cfg.cycle;
+    if (typeof cyc.work_count !== 'number') cyc.work_count = 5;
+    if (typeof cyc.rest_count !== 'number') cyc.rest_count = 2;
+    if (!Array.isArray(cyc.spans)) {
+      cyc.spans = (typeof cyc.work_count === 'number')
+        ? [{ activity: 'work', count: cyc.work_count }]
+        : [{ activity: 'work', count: 5 }, { activity: 'rest', count: 2 }];
+    }
+  }
   obj.schedules.forEach(function (s) {
+    if (!isPlainObject(s)) return;
+    if (typeof s.name !== 'string') s.name = '';
     if (!Array.isArray(s.classes)) s.classes = [];
+    if (version === 1) {
+      if (typeof s.enable_day !== 'number') s.enable_day = parseInt(s.enable_day, 10) || 1;
+      if (s.weeks !== 'odd' && s.weeks !== 'even') s.weeks = 'all';
+    } else {
+      if (!Array.isArray(s.enable_day)) s.enable_day = [1];
+    }
   });
   return obj;
 }
 
-// 载入文件内容
-function initData() {
-  var content = (window.CSEditor && window.CSEditor.file && window.CSEditor.file.content) || '';
-  var obj = null;
-  var fmt = 'yaml';
-  if (content && content.trim()) {
-    var trimmed = content.trim();
-    if (trimmed.charAt(0) === '{' || trimmed.charAt(0) === '[') {
-      try { obj = JSON.parse(content); fmt = 'json'; } catch (e) { obj = null; }
-    } else {
-      try { obj = parseYaml(content); fmt = 'yaml'; } catch (e) { obj = null; }
-    }
-    if (obj === null) {
-      try { obj = JSON.parse(content); fmt = 'json'; } catch (e2) { obj = null; }
-    }
-    if (obj === null) {
-      setStatus('文件解析失败，已初始化为空档案', 'error');
-    }
-  }
-  // ClassIsland 格式 → CSES（参照旧版 CiToCsesFromat）
-  if (obj && isCiFormat(obj)) {
-    obj = CiToCsesFromat(obj);
-    fmt = 'json';
-  }
-  currentData = normalizeData(obj);
-  if (currentData.subjects.length === 0 && currentData.schedules.length === 0) {
-    // 空档案：填充默认科目
-    currentData.subjects = JSON.parse(JSON.stringify(DEFAULT_SUBJECTS));
-  }
-  sourceFormat = fmt;
-  // 初始化输出模式
-  var out = fmt === 'json' ? 'cj' : 'cy';
-  if ($('csesOutputMode')) $('csesOutputMode').value = out;
-}
-
-// ---------------- 视图切换 ----------------
-function switchView(view) {
-  currentView = view;
-  document.querySelectorAll('.cses-view-tab').forEach(function (b) {
-    b.classList.toggle('active', b.getAttribute('data-view') === view);
-  });
-  ['schedule', 'subject', 'change', 'source'].forEach(function (v) {
-    var el = $('cses-' + v + '-view');
-    if (el) el.style.display = v === view ? 'block' : 'none';
-  });
-  var actions = $('csesExplorerActions');
-  var titles = { schedule: '课程表', subject: '科目', change: '课程表预览', source: '文件预览' };
-  $('csesExplorerTitle').textContent = titles[view];
-  if (view === 'schedule') {
-    actions.style.display = '';
-    actions.innerHTML = '<button class="cses-btn small" onclick="addSchedule()">+ 新建</button>';
-    renderScheduleList();
-    renderScheduleEditor();
-  } else if (view === 'subject') {
-    actions.style.display = '';
-    actions.innerHTML = '<button class="cses-btn small" onclick="addSubject()">+ 新增</button>';
-    renderSubjectList();
-    renderSubjectEditor();
-  } else if (view === 'change') {
-    actions.style.display = 'none';
-    renderChangeTable(changeMode);
-  } else {
-    actions.style.display = 'none';
-    renderSource();
-  }
-}
-
-// ---------------- 课程表编辑器 ----------------
-function renderScheduleList() {
-  var list = $('csesExplorerList');
-  list.innerHTML = '';
-  if (!currentData.schedules.length) {
-    list.innerHTML = '<div class="cses-empty-hint">暂无课程表，点击右上角「+ 新建」</div>';
-    return;
-  }
-  currentData.schedules.forEach(function (s, idx) {
-    var item = document.createElement('div');
-    item.className = 'cses-explorer-item' + (idx === currentScheduleIndex ? ' selected' : '');
-    var label = scheduleLabel(s, idx);
-    item.innerHTML = '<i class="ri-calendar-line"></i><span class="cses-item-label">' + escHtml(label) + '</span>' +
-      '<span class="cses-item-sub">' + escHtml(s.classes.length + ' 课时') + '</span>';
-    item.onclick = function () { loadSchedule(idx); };
-    item.oncontextmenu = function (e) {
-      e.preventDefault();
-      if (confirm('确定要删除课程表「' + label + '」吗？')) {
-        currentData.schedules.splice(idx, 1);
-        if (currentScheduleIndex >= currentData.schedules.length) currentScheduleIndex = currentData.schedules.length - 1;
-        if (currentScheduleIndex === idx) currentScheduleIndex = -1;
-        currentClassIndex = -1;
-        markDirty();
-        renderScheduleList();
-        renderScheduleEditor();
-      }
-    };
-    list.appendChild(item);
+/** CSES 空白模板（新建 / 非识别文件初始化时使用） */
+function presetSubjects(roomKey) {
+  return PRESET_SUBJECTS.map(function (p) {
+    var sub = { name: p.name, simplified_name: p.simplified, teacher: '' };
+    sub[roomKey] = '';
+    return sub;
   });
 }
-
-function scheduleLabel(s, idx) {
-  if (s.date) return s.date;
-  if (WEEK_MAP[s.weeks] && DAY_MAP[s.enable_day]) return WEEK_MAP[s.weeks] + '_' + DAY_MAP[s.enable_day];
-  return '无规则计划 ' + (idx + 1);
-}
-
-function loadSchedule(idx) {
-  currentScheduleIndex = idx;
-  currentClassIndex = -1;
-  document.querySelectorAll('.cses-explorer-item').forEach(function (el) { el.classList.remove('selected'); });
-  renderScheduleList();
-  renderScheduleEditor();
-}
-
-function renderScheduleEditor() {
-  var s = currentData.schedules[currentScheduleIndex];
-  if (!s) {
-    $('csesWeekMode').value = 'all';
-    $('csesDayMode').value = '1';
-    $('csesScheduleDate').value = '';
-    $('csesScheduleName').value = '';
-    $('csesClassList').innerHTML = '<div class="cses-empty-hint">请先选择或新建课程表</div>';
-    $('csesCurrentSubject').innerHTML = '';
-    $('csesTimeStart').value = '';
-    $('csesTimeEnd').value = '';
-    return;
+function blankCses(version) {
+  if (version === 1) {
+    return { version: 1, subjects: presetSubjects('room'), schedules: [] };
   }
-  $('csesWeekMode').value = s.weeks || 'all';
-  $('csesDayMode').value = String(s.enable_day || 1);
-  $('csesScheduleDate').value = s.date || '';
-  $('csesScheduleName').value = s.name || '';
-  // es 模式显示日期，其它显示周/天
-  var esMode = $('csesOutputMode').value === 'es';
-  $('csesDateFieldWrap').style.display = esMode ? '' : 'none';
-  $('csesWeekMode').closest('.cses-field').style.display = esMode ? 'none' : '';
-  $('csesDayMode').closest('.cses-field').style.display = esMode ? 'none' : '';
-  fillSubjectSelect();
-  renderClassList();
-  loadClassIntoEditor(-1);
-}
-
-function fillSubjectSelect() {
-  var sel = $('csesCurrentSubject');
-  sel.innerHTML = '';
-  currentData.subjects.forEach(function (sub) {
-    var opt = document.createElement('option');
-    opt.value = sub.name;
-    opt.textContent = sub.name;
-    sel.appendChild(opt);
-  });
-  if (!currentData.subjects.length) {
-    var o = document.createElement('option');
-    o.value = '';
-    o.textContent = '（请先在科目中添加）';
-    sel.appendChild(o);
-  }
-}
-
-function renderClassList() {
-  var list = $('csesClassList');
-  var s = currentData.schedules[currentScheduleIndex];
-  list.innerHTML = '';
-  if (!s) return;
-  if (!s.classes.length) {
-    list.innerHTML = '<div class="cses-empty-hint">暂无课时，点击「+ 添加课程」</div>';
-    return;
-  }
-  s.classes.forEach(function (cls, idx) {
-    var item = document.createElement('div');
-    item.className = 'cses-class-item' + (idx === currentClassIndex ? ' selected' : '');
-    item.innerHTML = '<span class="cses-class-idx">' + (idx + 1) + '</span>' +
-      '<span class="cses-class-subject">' + escHtml(cls.subject || '未命名') + '</span>' +
-      '<span class="cses-class-time">' + escHtml(cls.start_time || '--:--') + ' - ' + escHtml(cls.end_time || '--:--') + '</span>';
-    item.onclick = function () { loadClassIntoEditor(idx); };
-    list.appendChild(item);
-  });
-}
-
-function loadClassIntoEditor(idx) {
-  currentClassIndex = idx;
-  var s = currentData.schedules[currentScheduleIndex];
-  document.querySelectorAll('.cses-class-item').forEach(function (el, i) {
-    el.classList.toggle('selected', i === idx);
-  });
-  if (!s || idx < 0 || !s.classes[idx]) {
-    $('csesCurrentSubject').value = s && s.classes.length ? s.classes[0].subject : '';
-    $('csesTimeStart').value = '';
-    $('csesTimeEnd').value = '';
-    return;
-  }
-  var cls = s.classes[idx];
-  $('csesCurrentSubject').value = cls.subject || '';
-  $('csesTimeStart').value = cls.start_time || '';
-  $('csesTimeEnd').value = cls.end_time || '';
-}
-
-function addClass() {
-  var s = currentData.schedules[currentScheduleIndex];
-  if (!s) { setStatus('请先选择或新建课程表', 'error'); return; }
-  var subject = currentData.subjects.length ? currentData.subjects[0].name : '';
-  s.classes.push({ subject: subject, start_time: '', end_time: '' });
-  currentClassIndex = s.classes.length - 1;
-  markDirty();
-  renderClassList();
-  loadClassIntoEditor(currentClassIndex);
-}
-
-function delClass() {
-  var s = currentData.schedules[currentScheduleIndex];
-  if (!s || currentClassIndex < 0 || !s.classes[currentClassIndex]) { setStatus('请先选中要删除的课程', 'error'); return; }
-  s.classes.splice(currentClassIndex, 1);
-  currentClassIndex = -1;
-  markDirty();
-  renderClassList();
-  loadClassIntoEditor(-1);
-}
-
-function moveClass(dir) {
-  var s = currentData.schedules[currentScheduleIndex];
-  if (!s || currentClassIndex < 0) return;
-  var target = currentClassIndex + dir;
-  if (target < 0 || target >= s.classes.length) return;
-  var tmp = s.classes[currentClassIndex];
-  s.classes[currentClassIndex] = s.classes[target];
-  s.classes[target] = tmp;
-  currentClassIndex = target;
-  markDirty();
-  renderClassList();
-  loadClassIntoEditor(currentClassIndex);
-}
-
-function onClassField(field, value) {
-  var s = currentData.schedules[currentScheduleIndex];
-  if (!s || currentClassIndex < 0 || !s.classes[currentClassIndex]) return;
-  s.classes[currentClassIndex][field] = value;
-  markDirty();
-  renderClassList();
-}
-
-function onScheduleMetaChange(field, value) {
-  var s = currentData.schedules[currentScheduleIndex];
-  if (!s) return;
-  s[field] = value;
-  markDirty();
-  renderScheduleList();
-  if (field === 'weeks' || field === 'enable_day') renderChangeTable(changeMode);
-}
-
-function addSchedule() {
-  var esMode = $('csesOutputMode').value === 'es';
-  var ns = esMode
-    ? { name: '新课程表', date: '', classes: [] }
-    : { name: '新课程表', enable_day: 1, weeks: 'all', classes: [] };
-  currentData.schedules.push(ns);
-  currentScheduleIndex = currentData.schedules.length - 1;
-  currentClassIndex = -1;
-  markDirty();
-  renderScheduleList();
-  renderScheduleEditor();
-}
-
-function delSchedule() {
-  if (currentScheduleIndex < 0) { setStatus('请先选择课程表', 'error'); return; }
-  var label = scheduleLabel(currentData.schedules[currentScheduleIndex], currentScheduleIndex);
-  if (!confirm('确定要删除课程表「' + label + '」吗？')) return;
-  currentData.schedules.splice(currentScheduleIndex, 1);
-  currentScheduleIndex = currentData.schedules.length - 1;
-  currentClassIndex = -1;
-  markDirty();
-  renderScheduleList();
-  renderScheduleEditor();
-}
-
-function cloneSchedule() {
-  if (currentScheduleIndex < 0) { setStatus('请先选择课程表', 'error'); return; }
-  var copy = JSON.parse(JSON.stringify(currentData.schedules[currentScheduleIndex]));
-  copy.name = (copy.name || '课程表') + ' 副本';
-  currentData.schedules.push(copy);
-  currentScheduleIndex = currentData.schedules.length - 1;
-  currentClassIndex = -1;
-  markDirty();
-  renderScheduleList();
-  renderScheduleEditor();
-}
-
-// ---------------- 科目编辑器 ----------------
-function renderSubjectList() {
-  var list = $('csesExplorerList');
-  list.innerHTML = '';
-  if (!currentData.subjects.length) {
-    list.innerHTML = '<div class="cses-empty-hint">暂无科目</div>';
-    return;
-  }
-  currentData.subjects.forEach(function (sub, idx) {
-    var item = document.createElement('div');
-    item.className = 'cses-explorer-item' + (idx === currentSubjectIndex ? ' selected' : '');
-    item.innerHTML = '<i class="ri-bookmark-line"></i><span class="cses-item-label">' + escHtml(sub.name || '未命名') + '</span>' +
-      (sub.simplified_name ? '<span class="cses-item-tag">' + escHtml(sub.simplified_name) + '</span>' : '');
-    item.onclick = function () { loadSubject(idx); };
-    item.oncontextmenu = function (e) {
-      e.preventDefault();
-      if (confirm('确定要删除科目「' + sub.name + '」吗？')) {
-        currentData.subjects.splice(idx, 1);
-        if (currentSubjectIndex >= currentData.subjects.length) currentSubjectIndex = -1;
-        markDirty();
-        renderSubjectList();
-        renderSubjectEditor();
-      }
-    };
-    list.appendChild(item);
-  });
-}
-
-function loadSubject(idx) {
-  currentSubjectIndex = idx;
-  document.querySelectorAll('.cses-explorer-item').forEach(function (el) { el.classList.remove('selected'); });
-  renderSubjectList();
-  renderSubjectEditor();
-}
-
-function renderSubjectEditor() {
-  var sub = currentData.subjects[currentSubjectIndex];
-  $('csesSubjectName').value = sub ? (sub.name || '') : '';
-  $('csesSubjectSimple').value = sub ? (sub.simplified_name || '') : '';
-  $('csesSubjectTeacher').value = sub ? (sub.teacher || '') : '';
-  $('csesSubjectRoom').value = sub ? (sub.room || '') : '';
-}
-
-function saveSubject() {
-  var name = $('csesSubjectName').value.trim();
-  if (!name) { setStatus('请填写科目名称', 'error'); return; }
-  var simple = $('csesSubjectSimple').value.trim();
-  var teacher = $('csesSubjectTeacher').value.trim();
-  var room = $('csesSubjectRoom').value.trim();
-  var idx = currentData.subjects.findIndex(function (s) { return s.name === name; });
-  if (idx !== -1) {
-    // 更新现有科目；重命名时同步课程表中的引用
-    var oldName = currentData.subjects[idx].name;
-    if (oldName !== name) {
-      currentData.schedules.forEach(function (sc) {
-        sc.classes.forEach(function (c) { if (c.subject === oldName) c.subject = name; });
-      });
-    }
-    currentData.subjects[idx].simplified_name = simple;
-    currentData.subjects[idx].teacher = teacher;
-    currentData.subjects[idx].room = room;
-    currentSubjectIndex = idx;
-  } else {
-    currentData.subjects.push({ name: name, simplified_name: simple, teacher: teacher, room: room });
-    currentSubjectIndex = currentData.subjects.length - 1;
-  }
-  markDirty();
-  renderSubjectList();
-  renderSubjectEditor();
-  fillSubjectSelect();
-  setStatus('科目「' + name + '」已保存', 'success');
-}
-
-function addSubject() {
-  var name = prompt('请输入科目名称');
-  if (!name || !name.trim()) return;
-  name = name.trim();
-  if (currentData.subjects.some(function (s) { return s.name === name; })) {
-    setStatus('科目「' + name + '」已存在', 'error');
-    return;
-  }
-  currentData.subjects.push({ name: name, simplified_name: '', teacher: '', room: '' });
-  currentSubjectIndex = currentData.subjects.length - 1;
-  markDirty();
-  renderSubjectList();
-  renderSubjectEditor();
-  fillSubjectSelect();
-}
-
-function delSubject() {
-  if (currentSubjectIndex < 0) { setStatus('请先选中要删除的科目', 'error'); return; }
-  var sub = currentData.subjects[currentSubjectIndex];
-  if (!confirm('确定要删除科目「' + sub.name + '」吗？')) return;
-  currentData.subjects.splice(currentSubjectIndex, 1);
-  currentSubjectIndex = -1;
-  markDirty();
-  renderSubjectList();
-  renderSubjectEditor();
-  fillSubjectSelect();
-}
-
-function fillDefaultSubjects() {
-  if (currentData.subjects.length > 0 && !confirm('将使用默认科目列表替换当前科目列表（共 ' + currentData.subjects.length + ' 个），是否继续？')) return;
-  currentData.subjects = JSON.parse(JSON.stringify(DEFAULT_SUBJECTS));
-  currentSubjectIndex = -1;
-  markDirty();
-  renderSubjectList();
-  renderSubjectEditor();
-  fillSubjectSelect();
-}
-
-// ---------------- 表格视图 ----------------
-function renderChangeTable(mode) {
-  changeMode = mode || 'odd';
-  document.querySelectorAll('.change-mode-btn').forEach(function (b) {
-    b.classList.toggle('active', b.getAttribute('data-mode') === changeMode);
-  });
-  var body = $('csesChangeBody');
-  body.innerHTML = '';
-  var days = [1, 2, 3, 4, 5, 6, 7];
-  var dayClasses = days.map(function (day) {
-    var matches = currentData.schedules.filter(function (s) {
-      if (s.enable_day !== day) return false;
-      if (changeMode === 'odd' && s.weeks === 'odd') return true;
-      if (changeMode === 'even' && s.weeks === 'even') return true;
-      if (s.weeks === 'all') return true;
-      return false;
-    });
-    var last = matches[matches.length - 1];
-    return {
-      classes: last ? last.classes.slice().sort(function (a, b) { return String(a.start_time).localeCompare(String(b.start_time)); }) : [],
-      scheduleIndex: last ? currentData.schedules.indexOf(last) : -1
-    };
-  });
-  var maxRows = Math.max.apply(null, dayClasses.map(function (d) { return d.classes.length; }));
-  if (maxRows === 0) {
-    body.innerHTML = '<tr><td colspan="8" class="cses-change-empty">当前周类型下暂无课程，请先在课程表中添加</td></tr>';
-    return;
-  }
-  for (var r = 0; r < maxRows; r++) {
-    var tr = document.createElement('tr');
-    var th = document.createElement('th');
-    th.textContent = '第 ' + (r + 1) + ' 节';
-    tr.appendChild(th);
-    dayClasses.forEach(function (dayData, di) {
-      var td = document.createElement('td');
-      var cls = dayData.classes[r];
-      td.textContent = cls ? cls.subject : '';
-      if (cls && dayData.scheduleIndex >= 0) {
-        td.classList.add('clickable');
-        var sIdx = dayData.scheduleIndex;
-        var cIdx = currentData.schedules[sIdx].classes.indexOf(cls);
-        td.onclick = function (ev) { openCellSubjectPicker(ev, sIdx, cIdx, td); };
-      }
-      tr.appendChild(td);
-    });
-    body.appendChild(tr);
-  }
-}
-
-function openCellSubjectPicker(ev, sIdx, cIdx, td) {
-  // 关闭已有
-  var old = document.getElementById('csesCellPicker');
-  if (old) old.remove();
-  var picker = document.createElement('div');
-  picker.id = 'csesCellPicker';
-  picker.className = 'cses-cell-picker';
-  currentData.subjects.forEach(function (sub) {
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'cses-btn small';
-    btn.textContent = sub.name;
-    btn.onclick = function () {
-      currentData.schedules[sIdx].classes[cIdx].subject = sub.name;
-      markDirty();
-      picker.remove();
-      renderChangeTable(changeMode);
-      if (currentView === 'schedule') renderClassList();
-    };
-    picker.appendChild(btn);
-  });
-  if (!currentData.subjects.length) {
-    picker.innerHTML = '<div class="cses-empty-hint">请先在「科目」中添加科目</div>';
-  }
-  document.body.appendChild(picker);
-  var rect = td.getBoundingClientRect();
-  var x = rect.left;
-  var y = rect.bottom + 4;
-  if (x + 200 > window.innerWidth) x = window.innerWidth - 200;
-  if (y + picker.offsetHeight > window.innerHeight) y = Math.max(4, rect.top - picker.offsetHeight - 4);
-  picker.style.left = Math.max(4, x) + 'px';
-  picker.style.top = y + 'px';
-  picker.style.display = 'flex';
-  // 点击外部关闭
-  setTimeout(function () {
-    document.addEventListener('click', function handler(ev2) {
-      if (!picker.contains(ev2.target)) { picker.remove(); document.removeEventListener('click', handler); }
-    });
-  }, 0);
-}
-
-// ---------------- 文件预览 / 输出 ----------------
-function onOutputModeChange() {
-  var esMode = $('csesOutputMode').value === 'es';
-  var s = currentData.schedules[currentScheduleIndex];
-  $('csesDateFieldWrap').style.display = esMode ? '' : 'none';
-  $('csesWeekMode').closest('.cses-field').style.display = esMode ? 'none' : '';
-  $('csesDayMode').closest('.cses-field').style.display = esMode ? 'none' : '';
-  if (currentView === 'source') renderSource();
-  else if (currentView === 'change') renderChangeTable(changeMode);
-}
-
-function buildOutput() {
-  var mode = $('csesOutputMode').value || 'cy';
-  var data = currentData;
-  if (mode === 'cy') return yamlDump(data);
-  if (mode === 'cj') return JSON.stringify(data, null, 2);
-  if (mode === 'ci') return JSON.stringify(toCi(data), null, 2);
-  if (mode === 'es') return JSON.stringify(toEs(data), null, 2);
-  return JSON.stringify(data, null, 2);
-}
-
-function renderSource() {
-  try {
-    $('csesSourceOutput').value = buildOutput();
-  } catch (e) {
-    $('csesSourceOutput').value = '生成预览失败: ' + e.message;
-  }
-}
-
-function exportFile() {
-  var content = buildOutput();
-  var mode = $('csesOutputMode').value;
-  var ext = mode === 'cy' ? 'yaml' : 'json';
-  var blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement('a');
-  a.href = url;
-  a.download = 'cses-config.' + ext;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-function copySource() {
-  var content = $('csesSourceOutput').value;
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(content).then(function () { setStatus('已复制到剪贴板', 'success'); }, function () { fallbackCopy(content); });
-  } else {
-    fallbackCopy(content);
-  }
-}
-function fallbackCopy(text) {
-  var ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.position = 'fixed';
-  ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.select();
-  try { document.execCommand('copy'); setStatus('已复制到剪贴板', 'success'); }
-  catch (e) { setStatus('复制失败', 'error'); }
-  document.body.removeChild(ta);
-}
-
-// ---------------- 输出格式转换 ----------------
-function guid() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-    var r = (Math.random() * 16) | 0;
-    var v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
-// CSES → ClassIsland
-function toCi(target) {
-  var extraKey = target.extraKey || {};
-  var output = { TimeLayouts: {}, ClassPlans: {}, Subjects: {}, extraKey: extraKey };
-  var subjectMap = {};
-  (target.subjects || []).forEach(function (sub) {
-    var sid = sub.uuid || guid();
-    subjectMap[sub.name] = sid;
-    output.Subjects[sid] = {
-      Name: sub.name || '',
-      Initial: sub.simplified_name || '',
-      TeacherName: sub.teacher || '',
-      IsOutDoor: false
-    };
-  });
-  (target.schedules || []).forEach(function (schedule) {
-    var tlId = schedule.time_layout_uuid || guid();
-    var cpId = schedule.uuid || guid();
-    var timeLayout = { Name: schedule.name || '', Layouts: [] };
-    var classPlan = {
-      TimeLayoutId: tlId,
-      TimeRule: {
-        WeekDay: schedule.enable_day == 7 ? 0 : (schedule.enable_day || 1),
-        WeekCountDiv: schedule.weeks === 'even' ? 2 : (schedule.weeks === 'odd' ? 1 : 0),
-        WeekCountDivTotal: (schedule.weeks === 'even' || schedule.weeks === 'odd') ? 2 : 0,
-        IsActive: false
-      },
-      Classes: [],
-      Name: schedule.name || '',
-      IsOverlay: false,
-      IsEnabled: true
-    };
-    var lastEnd = '';
-    (schedule.classes || []).forEach(function (cls) {
-      var subjectId = subjectMap[cls.subject] || guid();
-      if (lastEnd) {
-        timeLayout.Layouts.push({ StartSecond: lastEnd, EndSecond: '2025-01-01T' + cls.start_time, TimeType: 1, DefaultClassId: subjectId });
-      }
-      lastEnd = '2025-01-01T' + cls.end_time;
-      timeLayout.Layouts.push({ StartSecond: '2025-01-01T' + cls.start_time, EndSecond: lastEnd, TimeType: 0, DefaultClassId: subjectId });
-      classPlan.Classes.push({ SubjectId: subjectId });
-    });
-    output.TimeLayouts[tlId] = timeLayout;
-    output.ClassPlans[cpId] = classPlan;
-  });
-  return output;
-}
-
-// CSES → ExamSchedule
-function toEs(target) {
-  var examInfos = [];
-  (target.schedules || []).forEach(function (element) {
-    var day = element.date || new Date().toISOString().slice(0, 10);
-    (element.classes || []).forEach(function (c) {
-      examInfos.push({ name: c.subject, start: day + 'T' + c.start_time, end: day + 'T' + c.end_time });
-    });
-  });
-  var timetableInfo = (target.schedules || []).map(function (s) {
-    return { scheduleName: s.name, timetableName: s.timetable_name || null };
-  });
   return {
-    subjects: target.subjects || [],
-    schedules: target.schedules || [],
-    examInfos: examInfos,
-    examName: target.examName,
-    message: target.message,
-    room: target.room,
-    timetableInfo: timetableInfo
+    version: 2,
+    configuration: {
+      name: '新配置',
+      description: '',
+      cycle: { work_count: 5, rest_count: 2, spans: [{ activity: 'work', count: 5 }, { activity: 'rest', count: 2 }] }
+    },
+    subjects: presetSubjects('location'),
+    schedules: []
   };
 }
 
-// ---------------- 校验 ----------------
-function validateData() {
-  var errors = [], warnings = [];
-  if (!currentData.subjects.length) warnings.push('尚未添加任何科目');
-  // 科目重名
-  var seen = {};
-  currentData.subjects.forEach(function (s) {
-    if (s.name && seen[s.name]) errors.push('存在重复科目：' + s.name);
-    seen[s.name] = true;
-  });
-  if (!currentData.schedules.length) warnings.push('尚未添加任何课程表');
-  var keySet = {};
-  currentData.schedules.forEach(function (s, si) {
-    if (!s.name) errors.push('第 ' + (si + 1) + ' 个课程表缺少名称');
-    var key = s.enable_day + '-' + s.weeks;
-    if (keySet[key]) warnings.push('多个课程表使用相同的星期/周类型组合');
-    keySet[key] = true;
-    s.classes.forEach(function (c, ci) {
-      if (!c.subject) errors.push('课程表「' + (s.name || si + 1) + '」第 ' + (ci + 1) + ' 节课缺少科目');
-      if (c.start_time && c.end_time && c.end_time <= c.start_time) {
-        errors.push('课程表「' + (s.name || si + 1) + '」第 ' + (ci + 1) + ' 节课结束时间早于开始时间');
-      }
-    });
-  });
-  return { errors: errors, warnings: warnings };
+// ================= 撤销 / 重做（对接平台 Ribbon undo/redo 命令） =================
+var undoStack = [];
+var redoStack = [];
+var lastSnapshot = null;
+var undoTimer = null;
+
+function snapshot() { return isCses && cses ? JSON.stringify(cses) : ''; }
+
+function commitUndo() {
+  if (!isCses || !cses) return;
+  var now = snapshot();
+  if (lastSnapshot !== null && lastSnapshot !== now) {
+    undoStack.push(lastSnapshot);
+    if (undoStack.length > 50) undoStack.shift();
+    redoStack = [];
+  }
+  lastSnapshot = now;
 }
 
-// ---------------- ClassIsland 格式检测与转换 ----------------
-function isCiFormat(obj) {
+/** 输入类变更用去抖提交，避免逐字符压栈 */
+function queueUndo() {
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(commitUndo, 600);
+}
+
+function undo() {
+  if (!isCses || undoStack.length === 0) return;
+  redoStack.push(snapshot());
+  cses = JSON.parse(undoStack.pop());
+  csesVersion = cses.version === 1 ? 1 : 2;
+  lastSnapshot = snapshot();
+  revalidateSelections();
+  dirty = true;
+  renderAll(); runValidation();
+}
+
+function redo() {
+  if (!isCses || redoStack.length === 0) return;
+  undoStack.push(snapshot());
+  cses = JSON.parse(redoStack.pop());
+  csesVersion = cses.version === 1 ? 1 : 2;
+  lastSnapshot = snapshot();
+  revalidateSelections();
+  dirty = true;
+  renderAll(); runValidation();
+}
+
+function revalidateSelections() {
+  if (!cses) return;
+  if (selectedScheduleIdx >= cses.schedules.length) selectedScheduleIdx = cses.schedules.length - 1;
+  var s = cses.schedules[selectedScheduleIdx];
+  if (s && selectedClassIdx >= s.classes.length) selectedClassIdx = s.classes.length - 1;
+  if (selectedSubjectIdx >= cses.subjects.length) selectedSubjectIdx = cses.subjects.length - 1;
+  if (quickDockTarget) {
+    var ts = cses.schedules[quickDockTarget.schedIdx];
+    if (!ts || !ts.classes[quickDockTarget.clsIdx]) quickDockTarget = null;
+  }
+}
+
+// ================= 视图状态持久化（刷新后回到刷新前页面） =================
+function stateStorageKey() {
+  var name = (window.CSEditor && window.CSEditor.file && window.CSEditor.file.name) || '';
+  return 'csesEditorState:' + name;
+}
+function persistViewState() {
   try {
-    if (typeof obj !== 'object' || obj === null) return false;
-    if (typeof obj.TimeLayouts !== 'object' || obj.TimeLayouts === null) return false;
-    for (var tlId in obj.TimeLayouts) {
-      var tl = obj.TimeLayouts[tlId];
-      if (typeof tl !== 'object' || tl === null) return false;
-      if (typeof tl.Name !== 'string') return false;
-      if (!Array.isArray(tl.Layouts)) return false;
-      for (var i = 0; i < tl.Layouts.length; i++) {
-        var layout = tl.Layouts[i];
-        if (typeof layout !== 'object' || layout === null) return false;
-        if (typeof layout.StartSecond !== 'string') return false;
-        if (typeof layout.EndSecond !== 'string') return false;
-        if (typeof layout.TimeType !== 'number') return false;
-      }
+    localStorage.setItem(stateStorageKey(), JSON.stringify({
+      view: view,
+      scheduleSubView: scheduleSubView,
+      selectedScheduleIdx: selectedScheduleIdx,
+      selectedClassIdx: selectedClassIdx,
+      selectedSubjectIdx: selectedSubjectIdx,
+      collapse: uiState.collapse,
+      durClass: uiState.durClass,
+      autoNextLesson: !!uiState.autoNextLesson
+    }));
+  } catch (e) { /* ignore */ }
+}
+function restoreViewState() {
+  try {
+    var raw = localStorage.getItem(stateStorageKey());
+    if (!raw) return;
+    var st = JSON.parse(raw);
+    if (!st || typeof st !== 'object') return;
+    if (['schedules', 'subjects', 'config', 'raw'].indexOf(st.view) >= 0) view = st.view;
+    if (['list', 'week'].indexOf(st.scheduleSubView) >= 0) scheduleSubView = st.scheduleSubView;
+    if (typeof st.selectedScheduleIdx === 'number') selectedScheduleIdx = st.selectedScheduleIdx;
+    if (typeof st.selectedClassIdx === 'number') selectedClassIdx = st.selectedClassIdx;
+    if (typeof st.selectedSubjectIdx === 'number') selectedSubjectIdx = st.selectedSubjectIdx;
+    if (st.collapse && typeof st.collapse === 'object') {
+      uiState.collapse = { schedules: !!st.collapse.schedules, config: !!st.collapse.config };
     }
-    if (typeof obj.ClassPlans !== 'object' || obj.ClassPlans === null) return false;
-    for (var cpId in obj.ClassPlans) {
-      var cp = obj.ClassPlans[cpId];
-      if (typeof cp !== 'object' || cp === null) return false;
-      if (typeof cp.TimeLayoutId !== 'string') return false;
-      if (typeof cp.TimeRule !== 'object' || cp.TimeRule === null) return false;
-      if (typeof cp.TimeRule.WeekCountDiv !== 'number') return false;
-      if (!Array.isArray(cp.Classes)) return false;
+    uiState.autoNextLesson = !!st.autoNextLesson;
+    if (typeof st.durClass === 'number' && st.durClass > 0) uiState.durClass = st.durClass;
+  } catch (e) { /* ignore */ }
+}
+
+// ================= 载入 / 保存 =================
+function loadFromContent(content) {
+  var parsed = null;
+  var text = String(content || '');
+  if (text.trim()) {
+    var trimmed = text.trim();
+    var looksJson = trimmed.charAt(0) === '{' || trimmed.charAt(0) === '[';
+    if (looksJson) {
+      // 明确是 JSON：解析失败直接回退通用模式，避免精简 YAML 解析器误读 JSON 结构
+      try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+    } else {
+      try { parsed = parseYaml(text); } catch (e) { parsed = null; }
     }
-    if (typeof obj.Subjects !== 'object' || obj.Subjects === null) return false;
-    for (var sId in obj.Subjects) {
-      var subject = obj.Subjects[sId];
-      if (typeof subject !== 'object' || subject === null) return false;
-      if (typeof subject.Name !== 'string') return false;
+  }
+  var det = detectCses(parsed);
+  if (det.ok) {
+    isCses = true;
+    csesVersion = det.version;
+    cses = normalizeCses(parsed, det.version);
+    enterCsesMode();
+  } else {
+    isCses = false;
+    cses = null;
+    enterGenericMode(det.reason);
+  }
+  return true;
+}
+
+/** 保存统一输出 YAML；非 CSES 文件原样保存文本（避免精简解析器破坏未知结构） */
+function buildOutput() {
+  if (isCses) return yamlDump(cses);
+  var el = $('csGeneric');
+  return el ? el.value : ((window.CSEditor && window.CSEditor.file && window.CSEditor.file.content) || '');
+}
+
+function saveConfig() {
+  if (isCses) {
+    runValidation();
+    if (validationErrors.length > 0) {
+      var msg = validationErrors.slice(0, 5).join('\n');
+      if (!confirm('存在 ' + validationErrors.length + ' 个验证错误，仍要保存吗？\n\n' + msg)) return;
+    }
+    persistViewState();
+  }
+  var text = buildOutput();
+  if (window.CSEditor) {
+    if (window.CSEditor.emitSave) window.CSEditor.emitSave(text);
+    else if (window.CSEditor.saveContent) window.CSEditor.saveContent(text);
+  }
+  dirty = false;
+  rawDirty = false;
+  lastSnapshot = snapshot();
+  updateStats();
+}
+
+/** 平台 Ctrl+S / Ribbon 保存与编辑器内 Ctrl+S 可能同时触发，去抖合并 */
+var saveTimer = null;
+function requestSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveConfig, 50);
+}
+
+// ================= 模式切换 =================
+function enterCsesMode() {
+  var badge = $('csFormatBadge');
+  badge.className = 'cs-badge cs-is-cses';
+  $('csFormatText').textContent = 'CSES 模板 V' + csesVersion + '.0';
+  $('csViewTabs').style.display = '';
+  $('csGenericView').style.display = 'none';
+  $('csConfigTab').style.display = csesVersion === 2 ? '' : 'none';
+  $('csConfigName').style.display = csesVersion === 2 ? '' : 'none';
+  $('csUpgradeBtn').style.display = csesVersion === 1 ? '' : 'none';
+  var tabs = document.querySelectorAll('#csViewTabs .cs-view-tab');
+  for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('disabled');
+  revalidateSelections();
+  lastSnapshot = snapshot();
+  switchView(view === 'raw' ? 'raw' : view);
+  renderAll();
+  runValidation();
+}
+
+function enterGenericMode(reason) {
+  var badge = $('csFormatBadge');
+  badge.className = 'cs-badge cs-not-cses';
+  $('csFormatText').textContent = '通用 YAML（未识别为 CSES）';
+  $('csViewTabs').style.display = 'none';
+  $('csGenericView').style.display = '';
+  var views = document.querySelectorAll('.cs-view:not(#csGenericView)');
+  for (var i = 0; i < views.length; i++) views[i].style.display = 'none';
+  var el = $('csGeneric');
+  if (el && !el.value) el.value = window.CSEditor && window.CSEditor.file ? (window.CSEditor.file.content || '') : '';
+  $('csConfigName').style.display = 'none';
+  $('csUpgradeBtn').style.display = 'none';
+  updateStats('原因：' + reason);
+  validationErrors = []; validationWarnings = []; renderIssues();
+}
+
+function redetect() {
+  var text = (window.CSEditor && window.CSEditor.file ? (window.CSEditor.file.content || '') : '');
+  var rawEl = $('csRaw');
+  if (isCses && rawEl && rawEl.value && (rawDirty || view === 'raw')) text = rawEl.value;
+  var genericEl = $('csGeneric');
+  if (!isCses && genericEl && genericEl.value) text = genericEl.value;
+  if (!loadFromContent(text)) return;
+}
+
+/** 非识别文件初始化为 CSES V2.0 空白模板（Ribbon 新建课程表/科目等命令入口） */
+function ensureCsesMode() {
+  if (!isCses) {
+    if (!confirm('当前文件未识别为 CSES 课表，继续将把文件初始化为 CSES V2.0 空白模板（原内容将被覆盖）。是否继续？')) {
+      throw new Error('cancelled');
+    }
+    cses = blankCses(2);
+    csesVersion = 2;
+    isCses = true;
+    dirty = true;
+    enterCsesMode();
+  }
+}
+
+/** V1.0 → V2.0 模板升级：新增 configuration，room 映射为 location，enable_day 转数组 */
+function upgradeToV2() {
+  if (!isCses || csesVersion !== 1) return;
+  if (!confirm('将当前 V1.0 课表升级为 V2.0 模板：\n\n· 新增 configuration（名称 / 描述 / 周期）\n· 科目的 room 映射为 location（room 作为未知字段保留）\n· 课程表 enable_day 转为数组，weeks 单双周信息保留为未知字段\n\n是否继续？')) return;
+  commitUndo();
+  cses.version = 2;
+  if (!isPlainObject(cses.configuration)) {
+    cses.configuration = {
+      name: '',
+      description: '',
+      cycle: { work_count: 5, rest_count: 2, spans: [{ activity: 'work', count: 5 }, { activity: 'rest', count: 2 }] }
+    };
+  }
+  cses.subjects.forEach(function (sub) {
+    if (isPlainObject(sub) && sub.location == null && sub.room != null) sub.location = String(sub.room);
+  });
+  cses.schedules.forEach(function (s) {
+    if (isPlainObject(s) && !Array.isArray(s.enable_day)) {
+      var d = parseInt(s.enable_day, 10);
+      s.enable_day = [isNaN(d) ? 1 : d];
+    }
+  });
+  csesVersion = 2;
+  cses = normalizeCses(cses, 2);
+  dirty = true;
+  commitUndo();
+  enterCsesMode();
+}
+
+function updateStats(extra) {
+  var s = '';
+  if (isCses && cses) {
+    var classCount = 0;
+    cses.schedules.forEach(function (sc) { classCount += (sc.classes || []).length; });
+    s = '科目 ' + cses.subjects.length + ' · 课程表 ' + cses.schedules.length + ' · 课时 ' + classCount + (dirty ? ' · 未保存' : '');
+  }
+  if (extra) s += (s ? ' · ' : '') + extra;
+  $('csStats').textContent = s;
+}
+
+function switchView(v) {
+  if (v === 'config' && csesVersion !== 2) v = 'schedules';
+  view = v;
+  var map = { schedules: 'csViewSchedules', subjects: 'csViewSubjects', config: 'csViewConfig', raw: 'csViewRaw' };
+  for (var key in map) { $(map[key]).style.display = key === v ? '' : 'none'; }
+  var tabs = document.querySelectorAll('#csViewTabs .cs-view-tab');
+  for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-view') === v);
+  if (v === 'raw' && !rawDirty && cses) $('csRaw').value = yamlDump(cses);
+  if (v === 'schedules') applyScheduleSubView();
+  persistViewState();
+  renderAll();
+}
+
+function switchScheduleSubView(sub) {
+  scheduleSubView = sub;
+  persistViewState();
+  applyScheduleSubView();
+  renderAll();
+}
+
+function applyScheduleSubView() {
+  var tabs = document.querySelectorAll('#csSchedSubTabs .cs-subtab');
+  for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-sub') === scheduleSubView);
+  $('csSchedListWrap').style.display = scheduleSubView === 'list' ? '' : 'none';
+  $('csWeekWrap').style.display = scheduleSubView === 'week' ? '' : 'none';
+}
+
+/** 收起/展开设置区（状态存于浏览器） */
+function toggleCollapse(key) {
+  uiState.collapse[key] = !uiState.collapse[key];
+  persistViewState();
+  renderAll();
+}
+
+function renderAll() {
+  if (!isCses || !cses) return;
+  var nameInput = $('csConfigName');
+  if (nameInput && document.activeElement !== nameInput && csesVersion === 2) nameInput.value = cses.configuration.name || '';
+  renderScheduleList();
+  renderScheduleDetail();
+  renderWeekView();
+  renderSubjects();
+  renderSubjectDetail();
+  if (csesVersion === 2) renderConfig();
+  updateQuickDock();
+  updateStats();
+}
+
+// ================= 课程表（列表视图） =================
+function renderScheduleList() {
+  var list = $('csScheduleList');
+  if (!list) return;
+  if (!cses.schedules.length) {
+    list.innerHTML = '<div class="cs-empty" style="padding:12px">暂无课程表，点击「+ 课程表」创建</div>';
+    return;
+  }
+  var html = '';
+  cses.schedules.forEach(function (s, idx) {
+    var classCount = (s.classes || []).length;
+    html += '<div class="cs-list-item' + (idx === selectedScheduleIdx ? ' selected' : '') + '" onclick="selectSchedule(' + idx + ')" title="' + escAttr(scheduleTitle(s, idx) + '（' + scheduleMeta(s) + '）') + '">' +
+      '<span class="cs-item-name">' + escHtml(scheduleTitle(s, idx)) + '</span>' +
+      '<span class="cs-li-meta">' + escHtml(scheduleMeta(s)) + ' · ' + classCount + ' 课时</span>' +
+      '<button class="cs-li-del" title="删除课程表" onclick="event.stopPropagation();removeSchedule(' + idx + ')">×</button>' +
+      '</div>';
+  });
+  list.innerHTML = html;
+}
+
+function selectSchedule(idx) {
+  selectedScheduleIdx = idx;
+  selectedClassIdx = -1;
+  quickDockTarget = null;
+  persistViewState();
+  renderScheduleList();
+  renderScheduleDetail();
+  renderQuickDock();
+}
+
+function renderScheduleDetail() {
+  var box = $('csScheduleDetail');
+  if (!box) return;
+  var s = selectedScheduleIdx >= 0 ? cses.schedules[selectedScheduleIdx] : null;
+  if (!s) { box.innerHTML = '<div class="cs-empty">选择左侧课程表以编辑</div>'; return; }
+  if (!Array.isArray(s.classes)) s.classes = [];
+  var collapsed = !!uiState.collapse.schedules;
+
+  var metaHtml = '';
+  if (csesVersion === 1) {
+    var dayOpts = '';
+    for (var d = 1; d <= 7; d++) dayOpts += '<option value="' + d + '"' + (parseInt(s.enable_day, 10) === d ? ' selected' : '') + '>' + DAY_NAMES[d] + '</option>';
+    var weekOpts = '';
+    ['all', 'odd', 'even'].forEach(function (w) {
+      weekOpts += '<option value="' + w + '"' + (s.weeks === w ? ' selected' : '') + '>' + WEEK_MAP[w] + '</option>';
+    });
+    metaHtml =
+      '<div class="cs-field"><label>启用星期（enable_day）</label><select onchange="onScheduleField(\'enable_day\', parseInt(this.value))">' + dayOpts + '</select></div>' +
+      '<div class="cs-field"><label>周模式（weeks）</label><select onchange="onScheduleField(\'weeks\', this.value)">' + weekOpts + '</select></div>';
+  } else {
+    metaHtml =
+      '<div class="cs-field" style="grid-column:1/-1"><label>启用日（enable_day，可多选）</label><div class="cs-day-chips">' + dayChipsHtml(s) + '</div></div>';
+  }
+
+  var classesHtml = '';
+  if (s.classes.length === 0) {
+    classesHtml = '<div class="cs-empty" style="padding:8px">暂无课程，点击「+ 添加课程」从 08:00 开始排一天的时间。</div>';
+  }
+  s.classes.forEach(function (cls, i) {
+    var subjectOptions = subjectOptionsHtml(cls.subject);
+    classesHtml += '<div class="cs-class-row' + (isDockRow(i) ? ' selected' : '') + '" onclick="selectLessonRow(' + i + ')" title="点击选中此课程，在右侧快速选择菜单中选择科目">' +
+      '<span class="cs-idx" title="点击选中此课程" onclick="selectLessonRow(' + i + ')">' + (i + 1) + '</span>' +
+      '<input type="time" step="1" value="' + escAttr(shortTime(normalizeTime(cls.start_time))) + '" onchange="onClassTime(' + i + ',\'start_time\',this.value)" onclick="selectLessonRow(' + i + ')" />' +
+      '<input type="time" step="1" value="' + escAttr(shortTime(normalizeTime(cls.end_time))) + '" onchange="onClassTime(' + i + ',\'end_time\',this.value)" onclick="selectLessonRow(' + i + ')" />' +
+      '<select onchange="onClassChange(' + i + ',\'subject\',this.value)" onclick="selectLessonRow(' + i + ')' + '" class="' + (cls.subject && !findSubject(cls.subject) ? 'cs-missing-subject' : '') + '">' + subjectOptions + '</select>' +
+      '<span style="display:inline-flex;gap:2px">' +
+        '<button class="cs-row-del" title="上移" onclick="event.stopPropagation();moveClass(' + i + ',-1)">&#8593;</button>' +
+        '<button class="cs-row-del" title="下移" onclick="event.stopPropagation();moveClass(' + i + ',1)">&#8595;</button>' +
+        '<button class="cs-row-del" title="删除" onclick="event.stopPropagation();removeClass(' + i + ')">×</button>' +
+      '</span>' +
+      '</div>';
+  });
+
+  var html = '<h3 class="cs-detail-title">课程表设置</h3>' +
+    '<div class="cs-collapse' + (collapsed ? ' cs-collapsed' : '') + '">' +
+    '<div class="cs-collapse-head" onclick="toggleCollapse(\'schedules\')">' +
+    '<span class="cs-collapse-title">课程表信息（' + escHtml(scheduleMeta(s)) + '）</span><span class="cs-collapse-chevron">&#9662;</span>' +
+    '</div>' +
+    '<div class="cs-collapse-body"><div class="cs-form-grid">' +
+    '<div class="cs-field" style="grid-column:1/-1"><label>名称（name）</label><input value="' + escAttr(s.name || '') + '" placeholder="课程表名称" oninput="onScheduleField(\'name\', this.value)" /></div>' +
+    metaHtml +
+    '</div></div></div>' +
+    '<div class="cs-items-head"><span class="cs-panel-title">课程（classes，按时间顺序排列）</span>' +
+    '<div class="cs-items-actions">' +
+    '<span class="cs-dur-field" title="添加课程时使用的默认时长">时长<input type="number" min="1" max="600" value="' + escAttr(uiState.durClass) + '" onchange="onDurChange(this.value)" />分</span>' +
+    '<button class="cs-btn small" onclick="addClass()">+ 添加课程</button>' +
+    '</div></div>' +
+    classesHtml;
+  box.innerHTML = html;
+}
+
+/** V2 启用日多选 chips（已有超出 7 的启用日也会展示） */
+function dayChipsHtml(s) {
+  var days = daysOf(s);
+  var pool = [1, 2, 3, 4, 5, 6, 7];
+  days.forEach(function (d) { if (pool.indexOf(d) < 0) pool.push(d); });
+  var html = '';
+  pool.forEach(function (d) {
+    var on = days.indexOf(d) >= 0;
+    html += '<label class="cs-day-chip' + (on ? ' on' : '') + '" onclick="toggleScheduleDay(' + d + ')">' + escHtml(dayName(d)) + '</label>';
+  });
+  return html;
+}
+
+function toggleScheduleDay(day) {
+  var s = cses.schedules[selectedScheduleIdx];
+  if (!s) return;
+  var days = daysOf(s);
+  var pos = days.indexOf(day);
+  if (pos >= 0) days.splice(pos, 1); else days.push(day);
+  days.sort(function (a, b) { return a - b; });
+  if (csesVersion === 1) {
+    s.enable_day = days.length ? days[0] : 1;
+  } else {
+    s.enable_day = days;
+  }
+  dirty = true;
+  queueUndo();
+  renderScheduleList();
+  renderScheduleDetail();
+  renderWeekView();
+  runValidation();
+}
+
+function isDockRow(i) {
+  return !!(quickDockTarget && quickDockTarget.schedIdx === selectedScheduleIdx && quickDockTarget.clsIdx === i);
+}
+
+function onScheduleField(field, value) {
+  var s = cses.schedules[selectedScheduleIdx];
+  if (!s) return;
+  s[field] = value;
+  dirty = true;
+  queueUndo();
+  if (field === 'name') renderScheduleList();
+  if (field === 'enable_day' || field === 'weeks') renderWeekView();
+}
+
+function onDurChange(value) {
+  var v = parseInt(value, 10);
+  if (isNaN(v) || v < 0) v = 40;
+  uiState.durClass = Math.min(v, 600);
+  persistViewState();
+}
+
+function subjectOptionsHtml(selected) {
+  var html = '';
+  var found = false;
+  cses.subjects.forEach(function (sub, i) {
+    if (!isPlainObject(sub)) return;
+    var name = sub.name || '';
+    if (name === selected) found = true;
+    html += '<option value="' + escAttr(name) + '"' + (name === selected ? ' selected' : '') + '>' + escHtml(name || ('科目 ' + (i + 1))) + '</option>';
+  });
+  if (selected && !found) {
+    html = '<option value="' + escAttr(selected) + '" selected>' + escHtml(selected) + '（未知科目）</option>' + html;
+  }
+  if (!html) html = '<option value="">（请先在「科目」中添加）</option>';
+  return html;
+}
+
+function findSubject(name) {
+  for (var i = 0; i < cses.subjects.length; i++) {
+    var sub = cses.subjects[i];
+    if (isPlainObject(sub) && sub.name === name) return sub;
+  }
+  return null;
+}
+
+function addClass() {
+  var s = cses.schedules[selectedScheduleIdx];
+  if (!s) { alert('请先创建/选择一个课程表'); return; }
+  if (!Array.isArray(s.classes)) s.classes = [];
+  var prev = s.classes.length ? s.classes[s.classes.length - 1] : null;
+  var start = prev && normalizeTime(prev.end_time) ? normalizeTime(prev.end_time) : '08:00:00';
+  var firstSubject = '';
+  for (var i = 0; i < cses.subjects.length; i++) {
+    if (isPlainObject(cses.subjects[i]) && cses.subjects[i].name) { firstSubject = cses.subjects[i].name; break; }
+  }
+  s.classes.push({ subject: firstSubject, start_time: start, end_time: addMinutes(start, parseInt(uiState.durClass, 10) || 40) });
+  selectedClassIdx = s.classes.length - 1;
+  dirty = true;
+  commitUndo();
+  renderScheduleDetail(); runValidation();
+}
+
+function removeClass(idx) {
+  var s = cses.schedules[selectedScheduleIdx];
+  if (!s || !s.classes || !s.classes[idx]) return;
+  s.classes.splice(idx, 1);
+  if (quickDockTarget && quickDockTarget.schedIdx === selectedScheduleIdx && quickDockTarget.clsIdx === idx) quickDockTarget = null;
+  selectedClassIdx = -1;
+  dirty = true;
+  commitUndo();
+  renderScheduleDetail(); renderWeekView(); runValidation();
+}
+
+function moveClass(idx, delta) {
+  var s = cses.schedules[selectedScheduleIdx];
+  if (!s || !Array.isArray(s.classes)) return;
+  var j = idx + delta;
+  if (j < 0 || j >= s.classes.length) return;
+  var items = s.classes;
+  var tmp = items[idx];
+  items[idx] = items[j];
+  items[j] = tmp;
+  selectedClassIdx = j;
+  dirty = true;
+  commitUndo();
+  renderScheduleDetail(); renderWeekView(); runValidation();
+}
+
+function onClassChange(idx, field, value) {
+  var s = cses.schedules[selectedScheduleIdx];
+  if (!s || !s.classes || !s.classes[idx]) return;
+  s.classes[idx][field] = value;
+  dirty = true;
+  queueUndo();
+  renderWeekView();
+  runValidation();
+}
+
+function onClassTime(idx, field, value) {
+  var s = cses.schedules[selectedScheduleIdx];
+  if (!s || !s.classes || !s.classes[idx]) return;
+  s.classes[idx][field] = normalizeTime(value) || '00:00:00';
+  dirty = true;
+  queueUndo();
+  renderWeekView();
+  runValidation();
+}
+
+function addSchedule() {
+  ensureCsesMode();
+  var ns = csesVersion === 1
+    ? { name: '新课程表', enable_day: 1, weeks: 'all', classes: [] }
+    : { name: '新课程表', enable_day: [1], classes: [] };
+  cses.schedules.push(ns);
+  selectedScheduleIdx = cses.schedules.length - 1;
+  selectedClassIdx = -1;
+  dirty = true;
+  commitUndo();
+  switchView('schedules');
+  switchScheduleSubView('list');
+  renderAll(); runValidation();
+}
+
+function duplicateSchedule() {
+  var src = selectedScheduleIdx >= 0 ? cses.schedules[selectedScheduleIdx] : null;
+  if (!src) { alert('请先选择一个课程表'); return; }
+  var copy = JSON.parse(JSON.stringify(src));
+  copy.name = (src.name || '课程表') + ' 副本';
+  cses.schedules.push(copy);
+  selectedScheduleIdx = cses.schedules.length - 1;
+  selectedClassIdx = -1;
+  dirty = true;
+  commitUndo();
+  renderAll(); runValidation();
+}
+
+function removeSchedule(idx) {
+  var s = cses.schedules[idx];
+  if (!s) return;
+  if (!confirm('确认删除课程表「' + scheduleTitle(s, idx) + '」？')) return;
+  cses.schedules.splice(idx, 1);
+  if (selectedScheduleIdx === idx) { selectedScheduleIdx = cses.schedules.length - 1; selectedClassIdx = -1; quickDockTarget = null; }
+  dirty = true;
+  commitUndo();
+  revalidateSelections();
+  renderAll(); runValidation();
+}
+
+// ================= 周视图 =================
+function schedulesForDay(day) {
+  return cses.schedules.map(function (s, idx) { return { s: s, idx: idx }; }).filter(function (entry) {
+    var s = entry.s;
+    if (!isPlainObject(s)) return false;
+    var days = daysOf(s);
+    if (days.indexOf(day) < 0) return false;
+    if (csesVersion === 1 && weekMode) {
+      if (weekMode === 'odd' && s.weeks !== 'odd' && s.weeks !== 'all') return false;
+      if (weekMode === 'even' && s.weeks !== 'even' && s.weeks !== 'all') return false;
+      if (weekMode === 'all' && s.weeks !== 'all') return false;
     }
     return true;
-  } catch (e) {
-    return false;
-  }
+  });
 }
 
-// ClassIsland 格式 → CSES（参照旧版 CiToCsesFromat）
-function CiToCsesFromat(target) {
-  var extraKey = target.extraKey || {};
-  var output = { subjects: [], schedules: [], extraKey: extraKey };
-  var subjectMap = {};
-  for (var subjectId in target.Subjects) {
-    var subject = target.Subjects[subjectId];
-    subjectMap[subjectId] = subject.Name;
-    output.subjects.push({ uuid: subjectId, name: subject.Name, simplified_name: subject.Initial, teacher: subject.TeacherName });
+function renderWeekView() {
+  var box = $('csWeekWrap');
+  if (!box) return;
+  if (!isCses || !cses) { box.innerHTML = ''; return; }
+
+  var html = '<div class="cs-week-toolbar">';
+  if (csesVersion === 1) {
+    html += '<span>周类型</span><select onchange="weekMode=this.value; renderWeekView()">';
+    html += '<option value=""' + (weekMode === '' ? ' selected' : '') + '>全部</option>';
+    ['all', 'odd', 'even'].forEach(function (w) {
+      html += '<option value="' + w + '"' + (weekMode === w ? ' selected' : '') + '>' + WEEK_MAP[w] + '</option>';
+    });
+    html += '</select>';
+    html += '<span>按星期展示各课程表的课程安排（单周 / 双周模式额外包含通用课表）</span>';
+  } else {
+    html += '<span>按启用日（enable_day）展示各课程表的课程安排</span>';
   }
-  for (var classPlanId in target.ClassPlans) {
-    var classPlan = target.ClassPlans[classPlanId];
-    var timeLayout = target.TimeLayouts[classPlan.TimeLayoutId] || { Name: '', Layouts: [] };
-    var schedule = {
-      uuid: classPlanId,
-      time_layout_uuid: classPlan.TimeLayoutId,
-      name: timeLayout.Name,
-      enable_day: classPlan.TimeRule.WeekDay == 0 ? 7 : classPlan.TimeRule.WeekDay,
-      weeks: classPlan.TimeRule.WeekCountDiv === 2 ? 'even' : (classPlan.TimeRule.WeekCountDiv === 1 ? 'odd' : 'all'),
-      classes: []
-    };
-    (timeLayout.Layouts || []).forEach(function (layout) {
-      var subjectName = subjectMap[layout.DefaultClassId];
-      if (subjectName && layout.TimeType === 0) {
-        schedule.classes.push({
-          subject: subjectName,
-          start_time: String(layout.StartSecond).split('T')[1] || '',
-          end_time: String(layout.EndSecond).split('T')[1] || ''
+  html += '<label class="cs-week-autonext"><input type="checkbox" ' + (uiState.autoNextLesson ? 'checked' : '') + ' onchange="onAutoNextChange(this.checked)" />选完自动跳到下一节</label>';
+  html += '<span>点击课程选中，再点打开科目面板</span></div>';
+
+  var todayDow = new Date().getDay();
+  var todayDay = todayDow === 0 ? 7 : todayDow;
+  html += '<div class="cs-week-grid">';
+  [1, 2, 3, 4, 5, 6, 7].forEach(function (day) {
+    var entries = schedulesForDay(day);
+    html += '<div class="cs-week-col">' +
+      '<div class="cs-week-col-head' + (day === todayDay ? ' today' : '') + '"><span>' + DAY_NAMES[day] + '</span>' + (day === todayDay ? '<span>今天</span>' : '') + '</div>' +
+      '<div class="cs-week-col-body">';
+    if (entries.length === 0) html += '<div class="cs-week-empty">无课程表</div>';
+    entries.forEach(function (entry) {
+      var s = entry.s;
+      var classes = Array.isArray(s.classes) ? s.classes.slice().sort(function (a, b) { return toSec(normalizeTime(a.start_time)) - toSec(normalizeTime(b.start_time)); }) : [];
+      html += '<div class="cs-week-plan" onclick="selectSchedule(' + entry.idx + '); switchScheduleSubView(\'list\')" title="点击课程表名进入列表编辑">' +
+        '<div class="cs-week-plan-name"><span>' + escHtml(scheduleTitle(s, entry.idx)) + '</span>' +
+        (csesVersion === 1 && s.weeks && s.weeks !== 'all' ? '<span class="cs-week-rot">' + escHtml(WEEK_MAP[s.weeks]) + '</span>' : '') +
+        '</div>';
+      if (classes.length === 0) {
+        html += '<div class="cs-week-empty">（无课程）</div>';
+      } else {
+        classes.forEach(function (cls) {
+          var sIdx = entry.idx;
+          var cIdx = s.classes.indexOf(cls);
+          var sub = findSubject(cls.subject);
+          var name = cls.subject || '—';
+          var initial = sub && sub.simplified_name ? sub.simplified_name : name;
+          var isSel = quickDockTarget && quickDockTarget.schedIdx === sIdx && quickDockTarget.clsIdx === cIdx;
+          var isEditing = quickSelectCtx && quickSelectCtx.schedIdx === sIdx && quickSelectCtx.clsIdx === cIdx;
+          html += '<button class="cs-week-lesson' + (isSel ? ' selected' : '') + (isEditing ? ' editing' : '') + '"' +
+            ' title="点击选中此节次；再次点击打开科目选择面板"' +
+            ' onclick="event.stopPropagation(); weekLessonClick(' + sIdx + ', ' + cIdx + ')">' +
+            '<span class="cs-lesson-time">' + escHtml(shortTime(normalizeTime(cls.start_time))) + '</span>' +
+            '<span class="cs-lesson-name">' + escHtml(initial) + '</span>' +
+            '</button>';
         });
       }
+      html += '</div>';
     });
-    output.schedules.push(schedule);
-  }
-  return output;
+    html += '</div></div>';
+  });
+  html += '</div>';
+  box.innerHTML = html;
 }
 
-// ---------------- 保存 ----------------
-function saveConfig() {
-  var result = validateData();
-  if (result.errors.length) {
-    var msg = result.errors.slice(0, 5).join('\n');
-    if (!confirm('存在 ' + result.errors.length + ' 个验证错误，仍要保存吗？\n\n' + msg)) {
-      setStatus('已取消保存', 'error');
+/** 周视图：点击单元格选中；再次点击已选中的单元格打开科目选择面板 */
+function weekLessonClick(schedIdx, clsIdx) {
+  var t = quickDockTarget;
+  if (t && t.schedIdx === schedIdx && t.clsIdx === clsIdx) {
+    openQuickSelect(schedIdx, clsIdx);
+    return;
+  }
+  quickDockTarget = { schedIdx: schedIdx, clsIdx: clsIdx };
+  renderWeekView();
+  renderQuickDock();
+}
+
+// ================= 常驻快速选择菜单（列表 / 周视图右侧，仅科目名称） =================
+/** 列表视图：点击课程行选中当前课程，配合右侧快速选择菜单 */
+function selectLessonRow(i) {
+  if (selectedScheduleIdx < 0) return;
+  quickDockTarget = { schedIdx: selectedScheduleIdx, clsIdx: i };
+  var rows = document.querySelectorAll('#csScheduleDetail .cs-class-row');
+  for (var k = 0; k < rows.length; k++) rows[k].classList.toggle('selected', k === i);
+  renderQuickDock();
+}
+
+function onAutoNextChange(v) {
+  uiState.autoNextLesson = !!v;
+  persistViewState();
+}
+
+function updateQuickDock() {
+  var dock = $('csQuickDock');
+  if (!dock) return;
+  var show = isCses && view === 'schedules' && (scheduleSubView === 'list' || scheduleSubView === 'week');
+  dock.style.display = show ? 'flex' : 'none';
+  var cb = $('csDockAutoNext');
+  if (cb) cb.checked = !!uiState.autoNextLesson;
+  if (show) renderQuickDock();
+}
+
+/** 渲染快速选择菜单（仅科目名称；高亮当前目标课程已设置的科目） */
+function renderQuickDock() {
+  var list = $('csQuickDockList');
+  if (!list || !isCses || !cses) return;
+  var currentSub = null;
+  if (quickDockTarget) {
+    var s = cses.schedules[quickDockTarget.schedIdx];
+    var cls = s && s.classes ? s.classes[quickDockTarget.clsIdx] : null;
+    currentSub = cls ? cls.subject : null;
+  }
+  var html = '';
+  cses.subjects.forEach(function (sub, idx) {
+    if (!isPlainObject(sub)) return;
+    var name = sub.name || '';
+    html += '<button class="cs-dock-item' + (name && name === currentSub ? ' current' : '') + '" onclick="quickDockAssign(' + idx + ')" title="应用到选中的课程">' + escHtml(name || '未命名') + '</button>';
+  });
+  list.innerHTML = html || '<div class="cs-empty">暂无科目</div>';
+}
+
+/** 应用快速选择：把科目写入当前选中的课程位置（可自动跳到下一节） */
+function quickDockAssign(subjectIdx) {
+  var t = quickDockTarget;
+  if (!t) { alert('请先在列表或周视图中点击选择一个课程位置'); return; }
+  var sub = cses.subjects[subjectIdx];
+  if (!isPlainObject(sub)) return;
+  var s = cses.schedules[t.schedIdx];
+  if (!s || !s.classes || !s.classes[t.clsIdx]) {
+    alert('课程位置已失效，请重新选择');
+    quickDockTarget = null;
+    renderQuickDock();
+    return;
+  }
+  s.classes[t.clsIdx].subject = sub.name || '';
+  dirty = true;
+  commitUndo();
+  runValidation();
+  if (uiState.autoNextLesson && s.classes[t.clsIdx + 1]) {
+    quickDockTarget = { schedIdx: t.schedIdx, clsIdx: t.clsIdx + 1 };
+  } else {
+    quickDockTarget = null;
+  }
+  renderScheduleDetail();
+  renderWeekView();
+  renderQuickDock();
+}
+
+// ================= 课程快速选择面板 =================
+function openQuickSelect(schedIdx, clsIdx) {
+  var s = cses.schedules[schedIdx];
+  if (!s || !s.classes || !s.classes[clsIdx]) return;
+  quickSelectCtx = { schedIdx: schedIdx, clsIdx: clsIdx };
+  $('csQuickTitle').textContent = '快速选择科目（' + scheduleTitle(s, schedIdx) + ' 第 ' + (clsIdx + 1) + ' 节）';
+  $('csQuickSelect').style.display = '';
+  $('csQuickSearch').value = '';
+  renderQuickSelect();
+  renderWeekView(); // 高亮当前正在编辑的课程
+  $('csQuickSearch').focus();
+}
+
+function closeQuickSelect() {
+  $('csQuickSelect').style.display = 'none';
+  quickSelectCtx = null;
+  renderWeekView();
+}
+
+function renderQuickSelect() {
+  var grid = $('csQuickGrid');
+  if (!grid || !quickSelectCtx) return;
+  var kw = ($('csQuickSearch').value || '').trim().toLowerCase();
+  var s = cses.schedules[quickSelectCtx.schedIdx];
+  var current = s && s.classes ? s.classes[quickSelectCtx.clsIdx].subject : null;
+  var html = '';
+  var any = false;
+  cses.subjects.forEach(function (sub) {
+    if (!isPlainObject(sub)) return;
+    var name = sub.name || '';
+    if (kw && (name + (sub.simplified_name || '')).toLowerCase().indexOf(kw) < 0) return;
+    any = true;
+    html += '<button class="cs-quick-item' + (name === current ? ' current' : '') + '" onclick="quickPickSubject(' + cses.subjects.indexOf(sub) + ')">' +
+      '<span class="q-init">' + escHtml(sub.simplified_name || (name.slice(0, 1) || '?')) + '</span>' +
+      '<span class="q-name">' + escHtml(name) + '</span>' +
+      '</button>';
+  });
+  if (!any) html = '<div class="cs-empty">没有匹配的科目</div>';
+  html += '<label class="cs-quick-autonext"><input type="checkbox" ' + (uiState.autoNextLesson ? 'checked' : '') + ' onchange="onAutoNextChange(this.checked)" />选完自动跳到下一节</label>';
+  grid.innerHTML = html;
+}
+
+function quickPickSubject(subIdx) {
+  if (!quickSelectCtx) return;
+  var sub = cses.subjects[subIdx];
+  var s = cses.schedules[quickSelectCtx.schedIdx];
+  if (sub && s && s.classes && s.classes[quickSelectCtx.clsIdx]) {
+    s.classes[quickSelectCtx.clsIdx].subject = sub.name || '';
+    dirty = true;
+    commitUndo();
+    runValidation();
+    // 对齐 ClassIsland 2：选完自动跳到下一节
+    if (uiState.autoNextLesson && s.classes[quickSelectCtx.clsIdx + 1]) {
+      quickSelectCtx.clsIdx += 1;
+      $('csQuickTitle').textContent = '快速选择科目（' + scheduleTitle(s, quickSelectCtx.schedIdx) + ' 第 ' + (quickSelectCtx.clsIdx + 1) + ' 节）';
+      $('csQuickSearch').value = '';
+      renderQuickSelect();
+      renderScheduleDetail();
+      renderWeekView();
+      renderQuickDock();
       return;
     }
   }
-  var content = buildOutput();
-  if (window.CSEditor) {
-    if (window.CSEditor.emitSave) window.CSEditor.emitSave(content);
-    else if (window.CSEditor.saveContent) window.CSEditor.saveContent(content);
+  closeQuickSelect();
+  renderScheduleDetail();
+  renderWeekView();
+  renderQuickDock();
+}
+
+// ================= 科目（左表格 + 右详情，预设科目） =================
+function renderSubjects() {
+  var body = $('csSubjectsBody');
+  var lastCol = $('csSubjectLastCol');
+  if (lastCol) lastCol.textContent = csesVersion === 1 ? '教室 (room)' : '地点 (location)';
+  $('csSubjectsEmpty').style.display = cses.subjects.length === 0 ? '' : 'none';
+  var html = '';
+  cses.subjects.forEach(function (sub, idx) {
+    if (!isPlainObject(sub)) return;
+    var lastKey = csesVersion === 1 ? 'room' : 'location';
+    html += '<tr class="cs-subject-row' + (idx === selectedSubjectIdx ? ' selected' : '') + '" data-subject-idx="' + idx + '" onclick="selectSubject(' + idx + ')">' +
+      '<td><input class="cs-cell-input" value="' + escAttr(sub.name || '') + '" placeholder="如：数学" onclick="event.stopPropagation();selectSubject(' + idx + ')" oninput="onSubjectChange(' + idx + ',\'name\',this.value)" /></td>' +
+      '<td><input class="cs-cell-input" value="' + escAttr(sub.simplified_name || '') + '" placeholder="如：数" onclick="event.stopPropagation()" oninput="onSubjectChange(' + idx + ',\'simplified_name\',this.value)" /></td>' +
+      '<td><input class="cs-cell-input" value="' + escAttr(sub.teacher || '') + '" placeholder="教师姓名" onclick="event.stopPropagation()" oninput="onSubjectChange(' + idx + ',\'teacher\',this.value)" /></td>' +
+      '<td><input class="cs-cell-input" value="' + escAttr(sub[lastKey] || '') + '" placeholder="' + (csesVersion === 1 ? '上课教室' : '上课地点') + '" onclick="event.stopPropagation()" oninput="onSubjectChange(' + idx + ',\'' + lastKey + '\',this.value)" /></td>' +
+      '</tr>';
+  });
+  body.innerHTML = html;
+}
+
+function selectSubject(idx) {
+  // 只切换高亮与详情，不重建科目表格——避免点击单元格输入框时 DOM 被替换导致无法输入
+  selectedSubjectIdx = idx;
+  persistViewState();
+  var rows = document.querySelectorAll('#csSubjectsBody .cs-subject-row');
+  for (var i = 0; i < rows.length; i++) {
+    rows[i].classList.toggle('selected', parseInt(rows[i].getAttribute('data-subject-idx'), 10) === idx);
   }
-  dirty = false;
-  setStatus('已保存（' + nowStr() + '）', 'success');
+  renderSubjectDetail();
+}
+
+function renderSubjectDetail() {
+  var box = $('csSubjectDetail');
+  if (!isCses) { box.innerHTML = ''; return; }
+  var sub = selectedSubjectIdx >= 0 ? cses.subjects[selectedSubjectIdx] : null;
+  if (!sub) { box.innerHTML = '<div class="cs-empty">选择左侧科目以编辑详情</div>'; return; }
+  var lastKey = csesVersion === 1 ? 'room' : 'location';
+  var html = '<h3 class="cs-detail-title">科目详情</h3>' +
+    '<div class="cs-form-grid">' +
+    '<div class="cs-field"><label>科目名称（name）</label><input value="' + escAttr(sub.name || '') + '" oninput="onSubjectChange(' + selectedSubjectIdx + ',\'name\',this.value)" /></div>' +
+    '<div class="cs-field"><label>简称（simplified_name）</label><input value="' + escAttr(sub.simplified_name || '') + '" oninput="onSubjectChange(' + selectedSubjectIdx + ',\'simplified_name\',this.value)" /></div>' +
+    '<div class="cs-field"><label>教师（teacher）</label><input value="' + escAttr(sub.teacher || '') + '" oninput="onSubjectChange(' + selectedSubjectIdx + ',\'teacher\',this.value)" /></div>' +
+    '<div class="cs-field"><label>' + (csesVersion === 1 ? '教室（room）' : '地点（location）') + '</label><input value="' + escAttr(sub[lastKey] || '') + '" oninput="onSubjectChange(' + selectedSubjectIdx + ',\'' + lastKey + '\',this.value)" /></div>' +
+    '</div>' +
+    '<div class="cs-hint">课程表中的课程通过「名称」引用科目；重命名会自动同步所有引用。</div>' +
+    '<div id="csPresetWrap"></div>';
+  box.innerHTML = html;
+  renderPresetPanel();
+}
+
+/**
+ * 科目变更：重命名时同步课程表中对该科目的引用（课程通过名称引用科目）
+ */
+function onSubjectChange(idx, field, value) {
+  var sub = cses.subjects[idx];
+  if (!isPlainObject(sub)) return;
+  var oldName = sub.name;
+  sub[field] = value;
+  if (field === 'name' && oldName !== value) {
+    cses.schedules.forEach(function (s) {
+      if (!isPlainObject(s) || !Array.isArray(s.classes)) return;
+      s.classes.forEach(function (c) {
+        if (c.subject === oldName) c.subject = value;
+      });
+    });
+    renderWeekView();
+    renderQuickDock();
+  }
+  dirty = true;
+  queueUndo();
   updateStats();
 }
 
-// ---------------- 统计 / 状态栏 ----------------
-function updateStats() {
-  if (!currentData) return;
-  var sCount = currentData.subjects.length;
-  var schCount = currentData.schedules.length;
-  var clsCount = 0;
-  currentData.schedules.forEach(function (s) { clsCount += s.classes.length; });
-  var mode = $('csesOutputMode') ? $('csesOutputMode').value : 'cy';
-  var modeName = { cy: 'YAML', cj: 'JSON', ci: 'ClassIsland', es: 'ExamSchedule' }[mode] || 'YAML';
-  $('csesStats').textContent = '科目 ' + sCount + ' | 课程表 ' + schCount + ' | 课时 ' + clsCount + ' | 输出 ' + modeName + (dirty ? ' | 未保存' : '');
+function addSubject() {
+  ensureCsesMode();
+  var sub = { name: '新科目', simplified_name: '', teacher: '' };
+  sub[csesVersion === 1 ? 'room' : 'location'] = '';
+  cses.subjects.push(sub);
+  selectedSubjectIdx = cses.subjects.length - 1;
+  dirty = true;
+  commitUndo();
+  switchView('subjects');
+  renderAll(); runValidation();
 }
 
-// ---------------- 初始化 ----------------
-(function init() {
-  initData();
-  switchView('schedule');
-  updateStats();
-  setStatus('CSES 编辑器就绪（Ctrl+S 保存）', '');
-  // 快捷键
-  document.addEventListener('keydown', function (e) {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      saveConfig();
-    }
-    if (e.shiftKey && e.altKey && e.key.toLowerCase() === 'f') {
-      e.preventDefault();
-      if (currentView === 'schedule') { loadSchedule(currentScheduleIndex); }
+function duplicateSubject() {
+  var idx = selectedSubjectIdx;
+  if (idx < 0 || !isPlainObject(cses.subjects[idx])) { alert('请先选择一个科目'); return; }
+  var copy = JSON.parse(JSON.stringify(cses.subjects[idx]));
+  copy.name = (copy.name || '科目') + ' 副本';
+  cses.subjects.push(copy);
+  selectedSubjectIdx = cses.subjects.length - 1;
+  dirty = true;
+  commitUndo();
+  renderAll(); runValidation();
+}
+
+function removeSelectedSubject() {
+  var idx = selectedSubjectIdx;
+  if (idx < 0 || !isPlainObject(cses.subjects[idx])) { alert('请先选择一个科目'); return; }
+  var sub = cses.subjects[idx];
+  if (!confirm('确认删除科目「' + (sub.name || '未命名') + '」？课程表中对它的引用将失效。')) return;
+  cses.subjects.splice(idx, 1);
+  if (selectedSubjectIdx === idx) selectedSubjectIdx = -1;
+  dirty = true;
+  commitUndo();
+  revalidateSelections();
+  renderAll(); runValidation();
+}
+
+/** 预设科目面板（常用科目，已添加的会置灰） */
+function showPresetPanel() {
+  presetOpen = !presetOpen;
+  renderPresetPanel();
+}
+
+function renderPresetPanel() {
+  var wrap = $('csPresetWrap');
+  if (!wrap) return;
+  if (!presetOpen) { wrap.innerHTML = ''; return; }
+  var roomKey = csesVersion === 1 ? 'room' : 'location';
+  var html = '<div class="cs-preset-wrap">' +
+    '<div class="cs-panel-title">常用科目预设（已添加的科目会置灰）</div>' +
+    '<div class="cs-preset-grid">';
+  PRESET_SUBJECTS.forEach(function (p, i) {
+    var added = !!findSubject(p.name);
+    html += '<button class="cs-preset-chip' + (added ? ' added' : '') + '" ' + (added ? 'disabled' : 'onclick="addPresetSubject(' + i + ')"') + '>' +
+      '<span class="p-init">' + escHtml(p.simplified) + '</span>' +
+      '<span class="p-name">' + escHtml(p.name) + '</span>' +
+      (added ? '<span class="p-added">已添加</span>' : '') +
+      '</button>';
+  });
+  html += '</div>' +
+    '<div style="margin-top:8px"><button class="cs-btn small primary" onclick="addAllPresetSubjects()">添加全部未添加科目</button></div>' +
+    '</div>';
+  wrap.innerHTML = html;
+}
+
+function addPresetSubject(presetIdx) {
+  var p = PRESET_SUBJECTS[presetIdx];
+  if (!p || findSubject(p.name)) return;
+  var sub = { name: p.name, simplified_name: p.simplified, teacher: '' };
+  sub[csesVersion === 1 ? 'room' : 'location'] = '';
+  cses.subjects.push(sub);
+  selectedSubjectIdx = cses.subjects.length - 1;
+  dirty = true;
+  commitUndo();
+  renderAll(); runValidation();
+}
+
+function addAllPresetSubjects() {
+  var roomKey = csesVersion === 1 ? 'room' : 'location';
+  var added = 0;
+  PRESET_SUBJECTS.forEach(function (p) {
+    if (!findSubject(p.name)) {
+      var sub = { name: p.name, simplified_name: p.simplified, teacher: '' };
+      sub[roomKey] = '';
+      cses.subjects.push(sub);
+      added++;
     }
   });
+  if (added > 0) { dirty = true; commitUndo(); renderAll(); runValidation(); }
+  alert(added > 0 ? ('已添加 ' + added + ' 个预设科目') : '全部预设科目均已添加');
+}
+
+// ================= 配置（CSES V2.0 configuration / cycle） =================
+function renderConfig() {
+  if (csesVersion !== 2) return;
+  var cfg = cses.configuration;
+  var desc = $('csConfigDesc');
+  if (desc && document.activeElement !== desc) desc.value = cfg.description || '';
+  $('csConfigCollapse').classList.toggle('cs-collapsed', !!uiState.collapse.config);
+
+  var cyc = cfg.cycle;
+  $('csCycleGrid').innerHTML =
+    '<div class="cs-field"><label>工作日总数（work_count）</label><input type="number" min="1" value="' + escAttr(cyc.work_count) + '" onchange="onCycleField(\'work_count\', this.value)" /></div>' +
+    '<div class="cs-field"><label>休息日总数（rest_count）</label><input type="number" min="0" value="' + escAttr(cyc.rest_count) + '" onchange="onCycleField(\'rest_count\', this.value)" /></div>';
+
+  var rows = '';
+  (cyc.spans || []).forEach(function (span, i) {
+    var act = span.activity === 'rest' ? 'rest' : 'work';
+    rows += '<div class="cs-span-row">' +
+      '<span class="cs-idx">' + (i + 1) + '</span>' +
+      '<select onchange="onSpanChange(' + i + ',\'activity\',this.value)">' +
+        '<option value="work"' + (act === 'work' ? ' selected' : '') + '>工作日（work）</option>' +
+        '<option value="rest"' + (act === 'rest' ? ' selected' : '') + '>休息日（rest）</option>' +
+      '</select>' +
+      '<input type="number" min="1" value="' + escAttr(span.count) + '" onchange="onSpanChange(' + i + ',\'count\',this.value)" />' +
+      '<button class="cs-row-del" title="删除此段" onclick="removeSpan(' + i + ')">×</button>' +
+      '</div>';
+  });
+  $('csSpanRows').innerHTML = rows || '<div class="cs-empty" style="padding:10px">暂无周期分配，点击上方按钮添加</div>';
+
+  var spanSum = 0;
+  (cyc.spans || []).forEach(function (span) { spanSum += parseInt(span.count, 10) || 0; });
+  var total = (parseInt(cyc.work_count, 10) || 0) + (parseInt(cyc.rest_count, 10) || 0);
+  var hint = $('csCycleHint');
+  hint.textContent = '周期总天数 = work_count + rest_count = ' + total + '；spans 计数之和 = ' + spanSum + '。' +
+    '启用日 enable_day 的序号对应周期里的第 N 个工作日。';
+  hint.className = 'cs-hint' + (spanSum !== total ? ' warn' : '');
+}
+
+function onConfigNameInput() {
+  if (!isCses || csesVersion !== 2) return;
+  cses.configuration.name = $('csConfigName').value;
+  dirty = true;
+  queueUndo();
+}
+
+function onConfigField(field, value) {
+  if (!isCses || csesVersion !== 2) return;
+  cses.configuration[field] = value;
+  dirty = true;
+  queueUndo();
+}
+
+function onCycleField(field, value) {
+  if (!isCses || csesVersion !== 2) return;
+  var v = parseInt(value, 10);
+  cses.configuration.cycle[field] = isNaN(v) ? 0 : v;
+  dirty = true;
+  queueUndo();
+  renderConfig();
+  runValidation();
+}
+
+function addSpan(activity) {
+  if (!isCses || csesVersion !== 2) return;
+  cses.configuration.cycle.spans.push({ activity: activity, count: 1 });
+  dirty = true;
+  commitUndo();
+  renderConfig();
+  runValidation();
+}
+
+function removeSpan(idx) {
+  if (!isCses || csesVersion !== 2) return;
+  cses.configuration.cycle.spans.splice(idx, 1);
+  dirty = true;
+  commitUndo();
+  renderConfig();
+  runValidation();
+}
+
+function onSpanChange(idx, field, value) {
+  if (!isCses || csesVersion !== 2) return;
+  var span = cses.configuration.cycle.spans[idx];
+  if (!isPlainObject(span)) return;
+  if (field === 'activity') span.activity = value === 'rest' ? 'rest' : 'work';
+  else span.count = parseInt(value, 10) || 1;
+  dirty = true;
+  queueUndo();
+  renderConfig();
+  runValidation();
+}
+
+// ================= 校验 =================
+function runValidation() {
+  validationErrors = []; validationWarnings = [];
+  if (!isCses || !cses) { renderIssues(); return; }
+
+  if (cses.subjects.length === 0) validationWarnings.push('尚未添加任何科目');
+  if (cses.schedules.length === 0) validationWarnings.push('尚未添加任何课程表');
+
+  var subjectNames = {};
+  cses.subjects.forEach(function (sub, i) {
+    if (!isPlainObject(sub)) {
+      validationErrors.push('subjects 第 ' + (i + 1) + ' 项不是对象');
+      return;
+    }
+    var name = sub.name || '';
+    if (!String(name).trim()) validationWarnings.push('第 ' + (i + 1) + ' 个科目缺少名称');
+    else if (subjectNames[name]) validationErrors.push('存在重复科目名称：' + name);
+    subjectNames[name] = true;
+  });
+
+  cses.schedules.forEach(function (s, si) {
+    if (!isPlainObject(s)) {
+      validationErrors.push('schedules 第 ' + (si + 1) + ' 项不是对象');
+      return;
+    }
+    var title = scheduleTitle(s, si);
+    if (!String(s.name || '').trim()) validationErrors.push('课程表「' + title + '」缺少名称（name）');
+    var days = daysOf(s);
+    if (csesVersion === 1) {
+      if (days.length === 0 || days[0] < 1 || days[0] > 7) validationErrors.push('课程表「' + title + '」enable_day 应为 1-7 的整数');
+      if (['all', 'odd', 'even'].indexOf(s.weeks) < 0) validationErrors.push('课程表「' + title + '」weeks 应为 all / odd / even');
+    } else {
+      if (days.length === 0) validationErrors.push('课程表「' + title + '」未启用任何日期（enable_day）');
+      days.forEach(function (d) {
+        if (isNaN(d) || d < 1) validationErrors.push('课程表「' + title + '」enable_day 含无效日期：' + d);
+      });
+    }
+    var prevEnd = -1;
+    (s.classes || []).forEach(function (c, ci) {
+      var where = '课程表「' + title + '」第 ' + (ci + 1) + ' 节课';
+      if (!c.subject) validationErrors.push(where + '缺少科目（subject）');
+      else if (!findSubject(c.subject)) validationErrors.push(where + '引用了不存在的科目：' + c.subject);
+      var st = normalizeTime(c.start_time), et = normalizeTime(c.end_time);
+      if (!st || !et) validationErrors.push(where + '缺少开始/结束时间');
+      else {
+        if (!TIME_RE.test(st) || !TIME_RE.test(et)) validationErrors.push(where + '时间格式应为 HH:MM:SS');
+        else if (et <= st) validationErrors.push(where + '结束时间早于开始时间');
+        else {
+          var startSec = toSec(st);
+          if (prevEnd >= 0 && startSec < prevEnd) {
+            validationWarnings.push(where + '与上一节课程时间重叠');
+          }
+          prevEnd = Math.max(prevEnd, toSec(et));
+        }
+      }
+    });
+  });
+
+  if (csesVersion === 2) {
+    var cyc = cses.configuration.cycle;
+    var wc = parseInt(cyc.work_count, 10), rc = parseInt(cyc.rest_count, 10);
+    if (isNaN(wc) || wc < 2) validationErrors.push('configuration.cycle.work_count 应为不小于 2 的整数');
+    if (isNaN(rc) || rc < 2) validationErrors.push('configuration.cycle.rest_count 应为不小于 2 的整数');
+    if (!Array.isArray(cyc.spans) || cyc.spans.length === 0) {
+      validationErrors.push('configuration.cycle.spans 缺少周期分配');
+    } else {
+      var spanSum = 0;
+      cyc.spans.forEach(function (span, i) {
+        if (span.activity !== 'work' && span.activity !== 'rest') validationErrors.push('spans 第 ' + (i + 1) + ' 段 activity 应为 work / rest');
+        var cnt = parseInt(span.count, 10);
+        if (isNaN(cnt) || cnt < 1) validationErrors.push('spans 第 ' + (i + 1) + ' 段 count 应为不小于 1 的整数');
+        else spanSum += cnt;
+      });
+      if (!isNaN(wc) && !isNaN(rc) && spanSum !== wc + rc) {
+        validationWarnings.push('spans 计数之和（' + spanSum + '）与周期总天数（' + (wc + rc) + '）不一致');
+      }
+    }
+  }
+  renderIssues();
+}
+
+function renderIssues() {
+  var all = validationErrors.map(function (m) { return { type: 'error', msg: m }; })
+    .concat(validationWarnings.map(function (m) { return { type: 'warning', msg: m }; }));
+  $('csIssueCount').textContent = all.length;
+  var list = $('csIssueList');
+  if (all.length === 0) {
+    list.innerHTML = '<div class="cs-issue-none">没有发现问题</div>';
+  } else {
+    list.innerHTML = all.map(function (iss) {
+      return '<div class="cs-issue-item ' + iss.type + '"><span class="cs-issue-dot"></span><span>' + escHtml(iss.msg) + '</span></div>';
+    }).join('');
+  }
+}
+
+function toggleIssues() {
+  $('csIssuesPanel').classList.toggle('collapsed');
+}
+
+// ================= 源码 / 通用回退视图 =================
+function onRawInput() { rawDirty = true; dirty = true; }
+function syncFromRaw() {
+  var text = $('csRaw').value;
+  if (!loadFromContent(text)) return;
+  dirty = true;
+  commitUndo();
+}
+function onGenericInput() {
+  dirty = true;
+}
+
+// ================= Ribbon 命令（保存由平台保存按钮触发） =================
+function handleCommand(cmd) {
+  try {
+    switch (cmd) {
+      case 'undo': undo(); break;
+      case 'redo': redo(); break;
+      case 'cs-detect': redetect(); break;
+      case 'cs-add-schedule': ensureCsesMode(); addSchedule(); break;
+      case 'cs-dup-schedule': if (isCses) duplicateSchedule(); break;
+      case 'cs-add-class': if (isCses) { switchView('schedules'); switchScheduleSubView('list'); addClass(); } break;
+      case 'cs-add-subject': ensureCsesMode(); addSubject(); break;
+      case 'cs-preset-subject': ensureCsesMode(); switchView('subjects'); presetOpen = true; renderAll(); break;
+      case 'cs-validate': if (isCses) { runValidation(); alert('校验完成：' + validationErrors.length + ' 个错误，' + validationWarnings.length + ' 个警告'); } break;
+      case 'cs-format': if (isCses) { rawDirty = false; switchView('raw'); } break;
+      case 'cs-toggle-raw': if (isCses) switchView(view === 'raw' ? 'schedules' : 'raw'); break;
+    }
+  } catch (e) { /* 用户取消等 */ }
+}
+
+window.addEventListener('message', function (e) {
+  if (!e.data || !e.data.__ceseCommand) return;
+  handleCommand(e.data.__ceseCommand);
+});
+
+document.addEventListener('keydown', function (e) {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    requestSave();
+  }
+  if (e.key === 'Escape' && quickSelectCtx) {
+    closeQuickSelect();
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+    if (isCses && document.activeElement && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+      e.preventDefault();
+      undo();
+    }
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
+    if (isCses && document.activeElement && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+      e.preventDefault();
+      redo();
+    }
+  }
+});
+
+window.addEventListener('beforeunload', function (e) {
+  if (dirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// ================= 初始化 =================
+(function init() {
+  var content = window.CSEditor && window.CSEditor.file ? (window.CSEditor.file.content || '') : '';
+  restoreViewState();
+  loadFromContent(content);
+  if (isCses) {
+    revalidateSelections();
+    runValidation();
+    switchView(view === 'config' && csesVersion !== 2 ? 'schedules' : view);
+  }
 })();

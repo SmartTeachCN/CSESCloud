@@ -1,0 +1,53 @@
+{
+  "Name": "示例档案",
+  "TimeLayouts": {
+    "d3f3b9a1-1111-4b2e-9f4c-000000000001": {
+      "Name": "默认时间表",
+      "Layouts": [
+        { "StartTime": "08:00:00", "EndTime": "08:40:00", "TimeType": 0, "DefaultClassId": "97d0bf3f-137f-4f8a-87d6-ff387063bbd3", "IsHideDefault": false },
+        { "StartTime": "08:40:00", "EndTime": "08:50:00", "TimeType": 1, "IsHideDefault": false },
+        { "StartTime": "08:50:00", "EndTime": "09:30:00", "TimeType": 0, "DefaultClassId": "1154d452-5ede-4194-b4dd-cb40c956c8ed", "IsHideDefault": false },
+        { "StartTime": "09:30:00", "EndTime": "09:50:00", "TimeType": 1, "IsHideDefault": false },
+        { "StartTime": "09:50:00", "EndTime": "10:30:00", "TimeType": 0, "DefaultClassId": "3bbed0c0-bcf3-4dfe-a78d-5da9b02cf8bd", "IsHideDefault": false }
+      ],
+      "AttachedObjects": {}
+    }
+  },
+  "ClassPlans": {
+    "c2a7f111-2222-4c3d-8a5e-000000000001": {
+      "TimeLayoutId": "d3f3b9a1-1111-4b2e-9f4c-000000000001",
+      "TimeRule": { "WeekDay": 1, "WeekCountDiv": 0, "WeekCountDivTotal": 0, "IsActive": false },
+      "Classes": [
+        { "SubjectId": "97d0bf3f-137f-4f8a-87d6-ff387063bbd3" },
+        { "SubjectId": "1154d452-5ede-4194-b4dd-cb40c956c8ed" },
+        { "SubjectId": "3bbed0c0-bcf3-4dfe-a78d-5da9b02cf8bd" }
+      ],
+      "Name": "周一课表",
+      "IsOverlay": false,
+      "IsEnabled": true,
+      "AssociatedGroup": "acaf4ef0-e261-4262-b941-34ea93cb4369"
+    },
+    "c2a7f111-2222-4c3d-8a5e-000000000002": {
+      "TimeLayoutId": "d3f3b9a1-1111-4b2e-9f4c-000000000001",
+      "TimeRule": { "WeekDay": 2, "WeekCountDiv": 0, "WeekCountDivTotal": 0, "IsActive": false },
+      "Classes": [
+        { "SubjectId": "1154d452-5ede-4194-b4dd-cb40c956c8ed" },
+        { "SubjectId": "97d0bf3f-137f-4f8a-87d6-ff387063bbd3" },
+        { "SubjectId": "3bbed0c0-bcf3-4dfe-a78d-5da9b02cf8bd" }
+      ],
+      "Name": "周二课表",
+      "IsOverlay": false,
+      "IsEnabled": true,
+      "AssociatedGroup": "acaf4ef0-e261-4262-b941-34ea93cb4369"
+    }
+  },
+  "ClassPlanGroups": {
+    "acaf4ef0-e261-4262-b941-34ea93cb4369": { "Name": "默认课表群", "IsGlobal": false }
+  },
+  "SelectedClassPlanGroupId": "acaf4ef0-e261-4262-b941-34ea93cb4369",
+  "Subjects": {
+    "97d0bf3f-137f-4f8a-87d6-ff387063bbd3": { "Name": "语文", "Initial": "语", "TeacherName": "李老师", "IsOutDoor": false },
+    "1154d452-5ede-4194-b4dd-cb40c956c8ed": { "Name": "数学", "Initial": "数", "TeacherName": "张老师", "IsOutDoor": false },
+    "3bbed0c0-bcf3-4dfe-a78d-5da9b02cf8bd": { "Name": "英语", "Initial": "英", "TeacherName": "王老师", "IsOutDoor": false }
+  }
+}

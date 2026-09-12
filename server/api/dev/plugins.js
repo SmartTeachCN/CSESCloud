@@ -9,6 +9,7 @@
  *  - GET  action=published               列出已发布插件
  *  - GET  action=shared-list             列出共享市场插件
  *  - GET  action=icon&plugin_key=X       输出插件真实图标 PNG（icon 值为 asset:icon.png 时引用）
+ *  - GET  action=samples&plugin_key=X    列出插件示例文件（samples/ 目录，含内容，供「从模板新建」）
  *
  * 需要智教联盟登录：
  *  - GET  action=list                    列出当前开发者的插件
@@ -24,6 +25,9 @@ const fs = require('fs');
 const path = require('path');
 const { nowStr, HttpSent } = require('../../lib/response');
 const { PluginFS } = require('../../lib/dev-fs');
+
+/** 示例文件仅支持文本扩展名（二进制无法放入 JSON 响应） */
+const SAMPLE_TEXT_EXTS = ['yml', 'yaml', 'json', 'txt', 'md', 'xml', 'csv', 'html', 'htm', 'css', 'js', 'ini', 'toml', 'ea2'];
 
 /** 按 plugin_key 查找插件（支持 id 兼容） */
 function findPlugin(fs, query) {
@@ -87,6 +91,28 @@ module.exports = async (ctx) => {
     res.set('Cache-Control', 'public, max-age=300');
     res.send(fs.readFileSync(iconFile));
     throw new HttpSent();
+  }
+
+  // ===== [公开] 列出插件的示例文件（轻编辑器「从模板新建」） =====
+  if (method === 'GET' && action === 'samples') {
+    const plugin = findPlugin(PluginFS, query);
+    if (!plugin) Response.error('插件不存在');
+    const dir = PluginFS.findDir(plugin.plugin_key);
+    const samplesDir = dir ? path.join(dir, 'samples') : null;
+    const files = [];
+    if (samplesDir && fs.existsSync(samplesDir)) {
+      const entries = fs.readdirSync(samplesDir, { withFileTypes: true })
+        .filter(e => e.isFile() && !e.name.startsWith('.'))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      for (const entry of entries) {
+        // 示例约定为文本文件，二进制内容无法放入 JSON 响应，跳过
+        const ext = path.extname(entry.name).slice(1).toLowerCase();
+        if (!SAMPLE_TEXT_EXTS.includes(ext)) continue;
+        const content = fs.readFileSync(path.join(samplesDir, entry.name), 'utf8');
+        files.push({ name: entry.name, size: Buffer.byteLength(content), content });
+      }
+    }
+    Response.success({ plugin_key: plugin.plugin_key, plugin_name: plugin.name, files });
   }
 
   // ===== 以下需要联盟登录 =====

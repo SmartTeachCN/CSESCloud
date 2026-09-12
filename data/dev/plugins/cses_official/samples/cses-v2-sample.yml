@@ -1,0 +1,52 @@
+version: 2
+configuration:
+  name: 2026年下学期
+  description: 2026年下学期的课程表（CSES V2.0 模板示例）
+  cycle:
+    work_count: 5
+    rest_count: 2
+    spans:
+      - activity: work
+        count: 5
+      - activity: rest
+        count: 2
+subjects:
+  - name: 数学
+    simplified_name: 数
+    teacher: 李梅
+    location: 101
+  - name: 语文
+    simplified_name: 语
+    teacher: 李四
+    location: 102
+  - name: 英语
+    simplified_name: 英
+    teacher: 王五
+    location: A103
+  - name: 体育
+    simplified_name: 体
+    location: 操场
+schedules:
+  - name: 周一课表
+    enable_day:
+      - 1
+    classes:
+      - subject: 数学
+        start_time: "08:00:00"
+        end_time: "08:40:00"
+      - subject: 语文
+        start_time: "08:50:00"
+        end_time: "09:30:00"
+      - subject: 英语
+        start_time: "09:40:00"
+        end_time: "10:20:00"
+  - name: 周二课表
+    enable_day:
+      - 2
+    classes:
+      - subject: 英语
+        start_time: "08:00:00"
+        end_time: "08:40:00"
+      - subject: 体育
+        start_time: "08:50:00"
+        end_time: "09:30:00"

@@ -359,7 +359,7 @@ CREATE TABLE IF NOT EXISTS editor_plugins (
     name TEXT NOT NULL,                         -- 插件名称
     version TEXT NOT NULL DEFAULT '1.0.0',      -- 版本号
     description TEXT,                           -- 插件描述
-    extensions TEXT NOT NULL,                   -- 注册的文件后缀（JSON数组，如 ["cses","json"]）
+    extensions TEXT NOT NULL,                   -- 注册的文件后缀（JSON数组，如 ["yml","json"]）
     editor_html TEXT NOT NULL,                  -- 编辑器 HTML 模板
     editor_js TEXT NOT NULL,                    -- 编辑器 JS 逻辑
     editor_css TEXT,                            -- 编辑器 CSS 样式

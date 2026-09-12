@@ -71,7 +71,7 @@
             </div>
             <div class="form-group full">
               <label>注册文件后缀（逗号分隔）</label>
-              <input v-model="extensionsStr" @input="onExtensionsChange" placeholder="cses, json" />
+              <input v-model="extensionsStr" @input="onExtensionsChange" placeholder="yml, json" />
               <div class="ext-preview">
                 <span v-for="ext in currentExtensions" :key="ext" class="ext-chip">.{{ ext }}</span>
                 <span v-if="currentExtensions.length === 0" class="ext-chip empty">未注册后缀</span>

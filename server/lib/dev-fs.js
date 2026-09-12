@@ -436,6 +436,8 @@ const PluginFS = {
       editor_html: readText(path.join(dir, 'editor.html')),
       editor_js: readText(path.join(dir, 'editor.js')),
       editor_css: readText(path.join(dir, 'editor.css')),
+      // 是否附带示例文件（samples/ 目录，供轻编辑器「从模板新建」使用）
+      has_samples: fs.existsSync(path.join(dir, 'samples')),
       ribbon: manifest.ribbon || [],
     };
   },
