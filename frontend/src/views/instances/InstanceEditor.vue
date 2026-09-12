@@ -550,6 +550,36 @@ const examEditorPlugin = ref<any>(null);
 const examPluginFrame = ref<any>(null);
 const filePluginFrame = ref<any>(null);
 
+/** 会话内记住当前打开的插件编辑文件（刷新后恢复） */
+function rememberExamEditor() {
+  try {
+    if (examEditorFile.value) {
+      sessionStorage.setItem('cses-exam-editor-' + instanceId.value, JSON.stringify({ fileId: examEditorFile.value.id }));
+    } else {
+      sessionStorage.removeItem('cses-exam-editor-' + instanceId.value);
+    }
+  } catch { /* ignore */ }
+}
+
+/** 刷新/重进后恢复上一次打开的插件编辑文件 */
+async function restoreExamEditor() {
+  try {
+    const raw = sessionStorage.getItem('cses-exam-editor-' + instanceId.value);
+    if (!raw) return;
+    const { fileId } = JSON.parse(raw);
+    if (!fileId) return;
+    const full = await instanceFilesApi.get(fileId);
+    const ext = (full.file_type || '').toLowerCase() || (full.name || '').split('.').pop()?.toLowerCase() || '';
+    let plugin: any = null;
+    try { plugin = await instanceFilesApi.resolveEditor(ext); } catch { }
+    examEditorFile.value = { id: full.id, name: full.name, content: full.content || '', file_type: full.file_type || ext, directory: full.directory || '' };
+    examEditorPlugin.value = plugin;
+    examEditorMode.value = true;
+  } catch {
+    try { sessionStorage.removeItem('cses-exam-editor-' + instanceId.value); } catch { }
+  }
+}
+
 // ===== 编辑器 =====
 const editorFrame = ref<HTMLIFrameElement | null>(null);
 const iframeReady = ref(false);
@@ -611,7 +641,7 @@ const viewRibbonGroup: any = {
 // 宿主级会自己处理的命令（不转发给插件）
 const hostRibbonCommands = ['find', 'history', 'version', 'fullscreen', 'refresh', 'immersive', 'reload', 'share', 'import', 'export', 'save', 'undo', 'redo'];
 
-// EA2 平台应用各页面 Ribbon 操作组
+// EA2 / ClassIsland 等平台应用各页面 Ribbon 操作组
 const ea2PageRibbonGroups: Record<string, any[]> = {
   connect: [{
     label: '设备操作',
@@ -626,6 +656,14 @@ const ea2PageRibbonGroups: Record<string, any[]> = {
       { id: 'ea2-new-exam', label: '新建考试', icon: 'ri-add-line', type: 'action', command: 'new_exam' },
       { id: 'ea2-multi-edit', label: '多选编辑', icon: 'ri-checkbox-multiple-line', command: 'multi_edit' },
       { id: 'ea2-group-mgmt', label: '分组管理', icon: 'ri-folder-line', command: 'group_mgmt' },
+    ]
+  }],
+  profiles: [{
+    label: '档案操作',
+    tools: [
+      { id: 'ci-new-profile', label: '新建档案', icon: 'ri-add-line', type: 'action', command: 'new_profile' },
+      { id: 'ci-deploy-profile', label: '部署档案', icon: 'ri-send-plane-line', command: 'deploy_profile' },
+      { id: 'ci-multi-edit', label: '多选编辑', icon: 'ri-checkbox-multiple-line', command: 'multi_edit' },
     ]
   }],
   config: [{
@@ -906,6 +944,11 @@ window.addEventListener('message', async (e) => {
     else if (action === 'listEa2Files') { result = await listEa2Files(); }
     else if (action === 'saveEa2File') { result = await saveEa2File(payload); }
     else if (action === 'deleteEa2File') { result = await deleteEa2File(payload); }
+    else if (action === 'openProfile') { await openProfileInEditor(payload); result = { ok: true }; }
+    else if (action === 'listCiProfiles') { result = await listCiProfiles(); }
+    else if (action === 'saveCiProfile') { result = await saveCiProfile(payload); }
+    else if (action === 'deleteCiProfile') { result = await deleteCiProfile(payload); }
+    else if (action === 'downloadFile') { downloadGeneratedFile(payload); result = { ok: true }; }
     else if (action === 'notify') { console.log('[editor notify]', payload.msg); result = { ok: true }; }
     else if (action === 'controlApi') { result = await callControlApi(payload.action, payload.payload ?? {}); }
     else throw new Error('未知 action: ' + action);
@@ -932,8 +975,14 @@ function onRibbonTool(tool: any) {
   else if (tool.command === 'immersive') { /* 沉浸模式占位，选中态由 activeRibbonTool 控制 */ }
   else if (tool.command === 'share') showShareDialog.value = true;
 }
-function handleUndo() { if (iframeReady.value && editorFrame.value) editorFrame.value.contentWindow?.postMessage({ __ceseCommand: 'undo' }, '*'); }
-function handleRedo() { if (iframeReady.value && editorFrame.value) editorFrame.value.contentWindow?.postMessage({ __ceseCommand: 'redo' }, '*'); }
+function handleUndo() {
+  if (examEditorMode.value) { triggerExamPluginCommand('undo'); return; }
+  if (iframeReady.value && editorFrame.value) editorFrame.value.contentWindow?.postMessage({ __ceseCommand: 'undo' }, '*');
+}
+function handleRedo() {
+  if (examEditorMode.value) { triggerExamPluginCommand('redo'); return; }
+  if (iframeReady.value && editorFrame.value) editorFrame.value.contentWindow?.postMessage({ __ceseCommand: 'redo' }, '*');
+}
 function onAutoSaveChange(v: boolean) { autoSave.value = v; }
 
 async function openExamInEditor(payload: any) {
@@ -962,6 +1011,7 @@ async function openExamInEditor(payload: any) {
     examEditorFile.value = { id: fileId, name: fileName, content: ea2Content, file_type: 'ea2', directory: examDir + '/' };
     examEditorPlugin.value = plugin;
     examEditorMode.value = true;
+    rememberExamEditor();
     await loadFileTree(examDir);
   } catch (e: any) {
     alert('打开编辑器失败: ' + (e.message || '未知错误'));
@@ -972,6 +1022,7 @@ function closeExamEditor() {
   examEditorMode.value = false;
   examEditorFile.value = null;
   examEditorPlugin.value = null;
+  rememberExamEditor();
   if (iframeReady.value && editorFrame.value) {
     editorFrame.value.contentWindow?.postMessage({ __ceseCommand: 'page_exams' }, '*');
   }
@@ -1038,6 +1089,132 @@ async function deleteEa2File(payload: any) {
   const existing = (fileTree.value.files || []).find((f: any) => f.name === name);
   if (existing) { await instanceFilesApi.delete(existing.id); await loadFileTree('exams'); }
   return { ok: true };
+}
+
+// ===== ClassIsland 档案（.json + 关键格式识别） =====
+/** 识别 ClassIsland 档案关键结构（与档案编辑器插件的识别规则一致） */
+function isClassIslandProfileData(obj: any): boolean {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+  const isDict = (v: any) => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!isDict(obj.TimeLayouts) || !isDict(obj.ClassPlans) || !isDict(obj.Subjects)) return false;
+  for (const id of Object.keys(obj.Subjects)) {
+    const s = obj.Subjects[id];
+    if (!s || typeof s !== 'object' || typeof s.Name !== 'string') return false;
+  }
+  for (const id of Object.keys(obj.TimeLayouts)) {
+    const tl = obj.TimeLayouts[id];
+    if (!tl || typeof tl !== 'object' || !Array.isArray(tl.Layouts)) return false;
+  }
+  return true;
+}
+
+function countProfileItems(data: any) {
+  return {
+    subjects: Object.keys(data?.Subjects || {}).length,
+    layouts: Object.keys(data?.TimeLayouts || {}).length,
+    plans: Object.keys(data?.ClassPlans || {}).length,
+  };
+}
+
+async function openProfileInEditor(payload: any) {
+  const profileData = payload.profileData || {};
+  const profileName = payload.profileName || '未命名档案';
+  const recordId = payload.record_id || '';
+  const existingName = payload.fileName || null;
+  const rand = Math.random().toString(36).substring(2, 8);
+  const fileName = existingName
+    ? (existingName.endsWith('.json') ? existingName : existingName + '.json')
+    : ('profile-' + rand + '.json');
+  const profileDir = 'profiles';
+  try {
+    await loadFileTree(profileDir);
+    const existing = (fileTree.value.files || []).find((f: any) => f.name === fileName);
+    let fileId: number;
+    if (existing) {
+      fileId = existing.id;
+    } else {
+      const saveRes = await instanceFilesApi.save({ instance_id: instanceId.value, directory: profileDir, name: fileName, content: JSON.stringify(profileData, null, 4), file_type: 'json', file_category: 'instance_config' });
+      fileId = saveRes.id;
+    }
+    let plugin = null;
+    try { plugin = await instanceFilesApi.resolveEditor('json'); } catch { }
+    examEditorFile.value = { id: fileId, name: fileName, content: JSON.stringify(profileData, null, 4), file_type: 'json', directory: profileDir + '/' };
+    examEditorPlugin.value = plugin;
+    examEditorMode.value = true;
+    rememberExamEditor();
+    await loadFileTree(profileDir);
+  } catch (e: any) {
+    alert('打开档案编辑器失败: ' + (e.message || '未知错误'));
+  }
+}
+
+async function listCiProfiles() {
+  await loadFileTree('profiles');
+  const jsonFiles = (fileTree.value.files || []).filter((f: any) =>
+    (f.name || '').toLowerCase().endsWith('.json') &&
+    ((f.file_type || '').toLowerCase() === 'json' || (f.name || '').toLowerCase().endsWith('.json'))
+  );
+  const result: any[] = [];
+  for (const f of jsonFiles) {
+    try {
+      const full = await instanceFilesApi.get(f.id);
+      const data = JSON.parse(full.content || '{}');
+      if (!isClassIslandProfileData(data)) continue;
+      const counts = countProfileItems(data);
+      result.push({
+        id: full.id,
+        name: full.name,
+        record_id: full.name.replace(/\.json$/i, ''),
+        profile_name: data.Name || full.name,
+        data,
+        subjects: counts.subjects,
+        layouts: counts.layouts,
+        plans: counts.plans,
+        updated_at: full.updated_at,
+      });
+    } catch { /* skip malformed */ }
+  }
+  return result;
+}
+
+async function saveCiProfile(payload: any) {
+  if (!canWrite.value) throw new Error('无写权限');
+  let name = payload.name || payload.fileName || '';
+  if (name && !name.endsWith('.json')) name += '.json';
+  if (!name) name = 'profile-' + Math.random().toString(36).substring(2, 8) + '.json';
+  const content = typeof payload.data === 'string' ? payload.data : JSON.stringify(payload.data || {}, null, 4);
+  await loadFileTree('profiles');
+  const existing = (fileTree.value.files || []).find((f: any) => f.name === name);
+  if (existing) {
+    await instanceFilesApi.save({ id: existing.id, instance_id: instanceId.value, name, content, file_type: 'json', file_category: 'instance_config' });
+    return { fileId: existing.id, name };
+  }
+  const res = await instanceFilesApi.save({ instance_id: instanceId.value, directory: 'profiles', name, content, file_type: 'json', file_category: 'instance_config' });
+  await loadFileTree('profiles');
+  return { fileId: res.id, name };
+}
+
+async function deleteCiProfile(payload: any) {
+  if (!canWrite.value) throw new Error('无写权限');
+  const name = (payload.name || '').endsWith('.json') ? payload.name : (payload.name || '') + '.json';
+  await loadFileTree('profiles');
+  const existing = (fileTree.value.files || []).find((f: any) => f.name === name);
+  if (existing) { await instanceFilesApi.delete(existing.id); await loadFileTree('profiles'); }
+  return { ok: true };
+}
+
+/** 触发浏览器下载（供实例应用生成凭据/导出文件使用） */
+function downloadGeneratedFile(payload: { name?: string; content?: string; mime?: string }) {
+  const name = payload.name || 'download.json';
+  const blob = new Blob([payload.content || ''], { type: payload.mime || 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // 加载配置文件（从实例存储空间的 config/ 子目录）
@@ -1110,12 +1287,13 @@ async function onPluginFrameRequest(requestId: number, action: string, payload: 
 function onExamPluginSave(content: string) {
   if (!examEditorFile.value || !canWrite.value) return;
   saving.value = true;
+  const fileType = examEditorFile.value.file_type || 'ea2';
   instanceFilesApi.save({
     id: examEditorFile.value.id,
     instance_id: instanceId.value,
     name: examEditorFile.value.name,
     content,
-    file_type: 'ea2',
+    file_type: fileType,
     file_category: 'instance_config',
   })
     .then(() => {
@@ -1184,6 +1362,7 @@ function startDrag(e: MouseEvent) {
 
 onMounted(async () => {
   await loadInstance();
+  await restoreExamEditor();
   if (isInstanceSub.value) nextTick(() => { subModalVisible.value = true; });
 });
 </script>

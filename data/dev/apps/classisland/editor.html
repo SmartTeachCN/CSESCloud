@@ -1,0 +1,404 @@
+<style>/* ===== ClassIsland 平台侧实例应用（对齐平台 Fluent 设计体系） ===== */
+:root {
+  --app-bg: #F3F3F3;
+  --layer-default: rgba(255, 255, 255, 0.863);
+  --card-bg: rgba(255, 255, 255, 0.70);
+  --card-stroke: rgba(0, 0, 0, 0.06);
+  --card-bg-secondary: rgba(246, 246, 246, 0.50);
+  --flyout-bg: rgba(252, 252, 252, 0.92);
+  --flyout-border: rgba(0, 0, 0, 0.06);
+  --flyout-backdrop: blur(30px) saturate(160%) brightness(1.02);
+  --text-primary: rgba(0, 0, 0, 0.89);
+  --text-secondary: rgba(0, 0, 0, 0.62);
+  --text-tertiary: rgba(0, 0, 0, 0.45);
+  --text-disabled: rgba(0, 0, 0, 0.36);
+  --subtle-secondary: rgba(0, 0, 0, 0.04);
+  --subtle-tertiary: rgba(0, 0, 0, 0.02);
+  --subtle-pressed: rgba(0, 0, 0, 0.06);
+  --ctrl-fill-default: rgba(255, 255, 255, 0.70);
+  --ctrl-border-rest: rgba(0, 0, 0, 0.06);
+  --ctrl-border-accent: rgba(0, 0, 0, 0.16);
+  --ctrl-solid-fill: #FFFFFF;
+  --accent-base: #0067C0;
+  --accent-hover: rgba(0, 103, 192, 0.90);
+  --accent-pressed: rgba(0, 103, 192, 0.80);
+  --accent-text: #FFFFFF;
+  --divider-stroke: rgba(0, 0, 0, 0.06);
+  --status-success: #107C10;
+  --status-error: #C42B1C;
+  --status-warning: #CA8F04;
+  --status-info: #0067C0;
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-full: 9999px;
+  --spacer-1: 4px; --spacer-2: 8px; --spacer-3: 12px; --spacer-4: 16px; --spacer-5: 20px; --spacer-6: 24px; --spacer-8: 32px; --spacer-10: 40px;
+  --font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+  --font-size-xs: 12px; --font-size-sm: 13px; --font-size-base: 14px; --font-size-lg: 16px; --font-size-xl: 18px; --font-size-2xl: 24px;
+  --fast-duration: 0.167s;
+  --fast-out-slow-in: cubic-bezier(0, 0, 0, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --app-bg: #202020;
+    --layer-default: rgba(58, 58, 58, 0.637);
+    --card-bg: rgba(255, 255, 255, 0.0512);
+    --card-stroke: rgba(0, 0, 0, 0.10);
+    --card-bg-secondary: rgba(255, 255, 255, 0.0326);
+    --flyout-bg: rgba(44, 44, 44, 0.86);
+    --flyout-border: rgba(255, 255, 255, 0.10);
+    --flyout-backdrop: blur(44px) saturate(190%) brightness(1.22) contrast(1.05);
+    --text-primary: #FFFFFF;
+    --text-secondary: rgba(255, 255, 255, 0.77);
+    --text-tertiary: rgba(255, 255, 255, 0.53);
+    --text-disabled: rgba(255, 255, 255, 0.36);
+    --subtle-secondary: rgba(255, 255, 255, 0.0605);
+    --subtle-tertiary: rgba(255, 255, 255, 0.0419);
+    --subtle-pressed: rgba(255, 255, 255, 0.03);
+    --ctrl-fill-default: rgba(255, 255, 255, 0.0605);
+    --ctrl-border-rest: rgba(0, 0, 0, 0.07);
+    --ctrl-border-accent: rgba(255, 255, 255, 0.0941);
+    --ctrl-solid-fill: #454545;
+    --accent-base: #4CC2FF;
+    --accent-hover: rgba(96, 205, 255, 0.90);
+    --accent-pressed: rgba(96, 205, 255, 0.80);
+    --accent-text: #000000;
+    --divider-stroke: rgba(255, 255, 255, 0.08);
+    color-scheme: dark;
+  }
+}
+
+.cia-app { display: flex; flex-direction: column; height: 100%; background: var(--app-bg); color: var(--text-primary); font-family: var(--font-family); font-size: var(--font-size-sm); overflow: hidden; color-scheme: light dark; }
+.cia-page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.cia-page-header { display: flex; align-items: center; justify-content: space-between; padding: var(--spacer-3) var(--spacer-5); border-bottom: 1px solid var(--divider-stroke); flex-shrink: 0; }
+.cia-page-header h2 { margin: 0; font-size: var(--font-size-lg); font-weight: 600; color: var(--text-primary); }
+.cia-page-actions { display: flex; gap: var(--spacer-2); }
+.cia-page-body { flex: 1; overflow-y: auto; padding: var(--spacer-4) var(--spacer-5); }
+.cia-empty { text-align: center; padding: var(--spacer-10) var(--spacer-4); color: var(--text-tertiary); font-size: var(--font-size-sm); }
+.cia-empty-compact { padding: var(--spacer-4); }
+
+.cia-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--spacer-1); padding: 5px var(--spacer-4); background: var(--ctrl-fill-default); color: var(--text-primary); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); font-size: var(--font-size-sm); font-weight: 500; cursor: pointer; font-family: inherit; transition: background var(--fast-duration) var(--fast-out-slow-in), border-color var(--fast-duration), transform var(--fast-duration); }
+.cia-btn:hover { background: var(--subtle-secondary); }
+.cia-btn:active { transform: scale(0.98); }
+.cia-btn.primary { background: var(--accent-base); color: var(--accent-text); border-color: transparent; }
+.cia-btn.primary:hover { background: var(--accent-hover); }
+.cia-btn.small { padding: 3px var(--spacer-3); font-size: var(--font-size-xs); }
+.cia-btn.danger { color: var(--status-error); }
+.cia-btn.danger:hover { background: rgba(196, 43, 28, 0.08); border-color: rgba(196, 43, 28, 0.2); }
+
+.cia-device-stats { display: flex; gap: var(--spacer-3); margin-bottom: var(--spacer-4); }
+.cia-stat-card { flex: 1; padding: var(--spacer-4); background: var(--card-bg); border: 1px solid var(--card-stroke); border-radius: var(--radius-md); text-align: left; }
+.cia-stat-value { display: block; font-size: var(--font-size-2xl); font-weight: 700; color: var(--text-primary); line-height: 1.2; }
+.cia-stat-value.c-success { color: var(--status-success); }
+.cia-stat-label { display: block; font-size: var(--font-size-xs); color: var(--text-tertiary); margin-top: var(--spacer-1); }
+
+.cia-section { background: var(--card-bg); border: 1px solid var(--card-stroke); border-radius: var(--radius-md); margin-bottom: var(--spacer-3); overflow: hidden; }
+.cia-section-title { padding: var(--spacer-2) var(--spacer-4); font-size: var(--font-size-xs); font-weight: 600; color: var(--text-tertiary); background: var(--subtle-tertiary); border-bottom: 1px solid var(--divider-stroke); letter-spacing: 0.02em; }
+
+.cia-device-list, .cia-enrollment-list { padding: 0; }
+.cia-device-item, .cia-enrollment-item { display: flex; align-items: center; padding: var(--spacer-3) var(--spacer-4); border-bottom: 1px solid var(--divider-stroke); gap: var(--spacer-3); transition: background var(--fast-duration); }
+.cia-device-item:last-child, .cia-enrollment-item:last-child { border-bottom: none; }
+.cia-device-item:hover, .cia-enrollment-item:hover { background: var(--subtle-tertiary); }
+.cia-device-status { width: 8px; height: 8px; border-radius: var(--radius-full); flex-shrink: 0; }
+.cia-device-status.online { background: var(--status-success); }
+.cia-device-status.offline { background: var(--text-disabled); }
+.cia-device-info { flex: 1; min-width: 0; }
+.cia-device-name { font-size: var(--font-size-sm); font-weight: 500; color: var(--text-primary); }
+.cia-device-meta { font-size: var(--font-size-xs); color: var(--text-tertiary); margin-top: 2px; }
+.cia-device-notes { font-size: var(--font-size-xs); color: var(--accent-base); margin-top: 2px; font-style: italic; }
+.cia-protocol-select {
+  padding: 3px var(--spacer-2); background: var(--ctrl-fill-default); color: var(--text-primary);
+  border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs); font-family: inherit; cursor: pointer;
+  transition: border-color var(--fast-duration);
+}
+.cia-protocol-select:focus { border-color: var(--accent-base); outline: none; }
+.cia-config-device-sel { padding: var(--spacer-2) var(--spacer-3); border-bottom: 1px solid var(--divider-stroke); }
+.cia-config-device-sel select {
+  width: 100%; padding: 5px var(--spacer-2); background: var(--ctrl-fill-default); color: var(--text-primary);
+  border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs); font-family: inherit; cursor: pointer; outline: none;
+}
+.cia-config-device-sel select:focus { border-color: var(--accent-base); }
+.cia-device-actions { display: flex; gap: var(--spacer-1); align-items: center; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+.cia-device-profile { font-size: var(--font-size-xs); color: var(--status-info); margin-top: var(--spacer-1); }
+.cia-enrollment-code { font-family: var(--font-family-mono); font-size: var(--font-size-sm); color: var(--accent-base); flex: 1; word-break: break-all; }
+.cia-enrollment-meta { font-size: var(--font-size-xs); color: var(--text-tertiary); white-space: nowrap; }
+.cia-dot { display: inline-block; width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--status-success); margin-right: var(--spacer-1); animation: cia-pulse 2s ease-in-out infinite; }
+@keyframes cia-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.cia-cmd-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+.cia-cmd-table th, .cia-cmd-table td { padding: var(--spacer-2) var(--spacer-3); text-align: left; border-bottom: 1px solid var(--divider-stroke); vertical-align: top; }
+.cia-cmd-table th { color: var(--text-tertiary); font-weight: 500; white-space: nowrap; }
+.cia-cmd-table td { color: var(--text-primary); word-break: break-all; }
+.cia-st-succeeded { color: var(--status-success); }
+.cia-st-failed { color: var(--status-error); }
+.cia-st-pending { color: var(--status-warning); }
+.cia-st-muted { color: var(--text-tertiary); }
+
+.cia-profile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--spacer-3); }
+.cia-profile-grid>.cia-empty { grid-column: 1 / -1; }
+.cia-profile-card { position: relative; background: var(--card-bg); border: 1px solid var(--card-stroke); border-radius: var(--radius-md); padding: var(--spacer-4); cursor: pointer; transition: border-color var(--fast-duration), background var(--fast-duration); }
+.cia-profile-card:hover { border-color: var(--ctrl-border-accent); background: var(--card-bg-secondary); }
+.cia-profile-card.selected { border-color: var(--accent-base); background: rgba(0, 103, 192, 0.06); }
+.cia-profile-card-name { font-size: var(--font-size-base); font-weight: 600; margin-bottom: var(--spacer-1); color: var(--text-primary); }
+.cia-profile-card-meta { font-size: var(--font-size-xs); color: var(--text-tertiary); display: flex; gap: var(--spacer-3); flex-wrap: wrap; }
+.cia-profile-card-actions { display: flex; gap: var(--spacer-1); margin-top: var(--spacer-3); flex-wrap: wrap; }
+.cia-profile-playing { font-size: var(--font-size-xs); color: var(--status-warning); margin-top: var(--spacer-2); }
+.cia-group-tag { display: inline-flex; align-items: center; font-size: var(--font-size-xs); color: var(--accent-base); padding: 1px var(--spacer-2); background: rgba(0, 103, 192, 0.08); border-radius: var(--radius-full); }
+
+.cia-multi-select-bar { display: flex; align-items: center; gap: var(--spacer-2); padding: var(--spacer-2) var(--spacer-3); margin-bottom: var(--spacer-3); background: rgba(0, 103, 192, 0.06); border: 1px solid rgba(0, 103, 192, 0.12); border-radius: var(--radius-md); font-size: var(--font-size-sm); color: var(--text-primary); }
+.cia-multi-select-bar span:first-child { font-weight: 500; margin-right: auto; }
+
+.cia-config-shell { display: flex; height: 100%; overflow: hidden; }
+.cia-config-sidebar { width: 190px; background: var(--card-bg-secondary); border-right: 1px solid var(--divider-stroke); flex-shrink: 0; overflow-y: auto; }
+.cia-config-nav { padding: var(--spacer-2) 0; }
+.cia-config-nav-item { display: block; width: 100%; padding: var(--spacer-2) var(--spacer-4); text-align: left; background: none; border: none; color: var(--text-secondary); font-size: var(--font-size-sm); cursor: pointer; font-family: inherit; transition: background var(--fast-duration), color var(--fast-duration); border-left: 3px solid transparent; }
+.cia-config-nav-item:hover { background: var(--subtle-tertiary); color: var(--text-primary); }
+.cia-config-nav-item.active { background: var(--subtle-secondary); border-left-color: var(--accent-base); color: var(--accent-base); font-weight: 500; }
+.cia-config-content { flex: 1; overflow-y: auto; padding: var(--spacer-5); }
+.cia-config-tab h2 { margin: 0 0 var(--spacer-4); font-size: var(--font-size-xl); font-weight: 600; color: var(--text-primary); }
+.cia-config-card { background: var(--card-bg); border: 1px solid var(--card-stroke); border-radius: var(--radius-md); overflow: hidden; margin-bottom: var(--spacer-3); }
+.cia-config-item { display: flex; align-items: center; justify-content: space-between; padding: var(--spacer-3) var(--spacer-4); gap: var(--spacer-4); }
+.cia-config-item-main { flex: 1; }
+.cia-config-item-title { font-size: var(--font-size-sm); font-weight: 500; color: var(--text-primary); }
+.cia-config-item-desc { font-size: var(--font-size-xs); color: var(--text-tertiary); margin-top: 2px; line-height: 1.5; }
+.cia-config-item-action { display: flex; align-items: center; gap: var(--spacer-1); flex-shrink: 0; }
+.cia-config-item-action input, .cia-config-item-action select { padding: 5px var(--spacer-2); background: var(--ctrl-fill-default); color: var(--text-primary); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); font-size: var(--font-size-xs); font-family: inherit; outline: none; transition: border-color var(--fast-duration); }
+.cia-config-item-action input:focus, .cia-config-item-action select:focus { border-color: var(--accent-base); }
+.cia-config-divider { height: 1px; background: var(--divider-stroke); margin: 0; }
+.cia-code-chip { font-family: var(--font-family-mono); font-size: var(--font-size-xs); padding: var(--spacer-1) var(--spacer-2); background: var(--subtle-secondary); border: 1px solid var(--card-stroke); border-radius: var(--radius-xs); color: var(--text-secondary); word-break: break-all; user-select: all; }
+
+.cia-modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.cia-modal { background: var(--flyout-bg); backdrop-filter: var(--flyout-backdrop); -webkit-backdrop-filter: var(--flyout-backdrop); border: 1px solid var(--flyout-border); border-radius: var(--radius-lg); width: 440px; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18); }
+.cia-modal-lg { width: 640px; }
+.cia-modal-header { display: flex; align-items: center; justify-content: space-between; padding: var(--spacer-4) var(--spacer-5); border-bottom: 1px solid var(--divider-stroke); flex-shrink: 0; }
+.cia-modal-header h3 { margin: 0; font-size: var(--font-size-lg); font-weight: 600; color: var(--text-primary); }
+.cia-modal-close { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: none; border: none; border-radius: var(--radius-sm); color: var(--text-tertiary); font-size: var(--font-size-lg); cursor: pointer; }
+.cia-modal-close:hover { background: var(--subtle-secondary); color: var(--text-primary); }
+.cia-modal-body { padding: var(--spacer-5); overflow-y: auto; flex: 1; }
+.cia-modal-footer { display: flex; justify-content: flex-end; gap: var(--spacer-2); padding: var(--spacer-4) var(--spacer-5); border-top: 1px solid var(--divider-stroke); flex-shrink: 0; }
+.cia-field { margin-bottom: var(--spacer-3); }
+.cia-field label { display: block; font-size: var(--font-size-sm); font-weight: 500; color: var(--text-secondary); margin-bottom: var(--spacer-1); }
+.cia-field input, .cia-field select { width: 100%; height: 34px; padding: 0 var(--spacer-3); background: var(--ctrl-fill-default); color: var(--text-primary); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); font-size: var(--font-size-sm); font-family: inherit; outline: none; box-sizing: border-box; }
+.cia-field input:focus, .cia-field select:focus { border-color: var(--accent-base); }
+.cia-enroll-result { margin-top: var(--spacer-3); padding: var(--spacer-3); background: var(--subtle-secondary); border-radius: var(--radius-md); text-align: center; }
+.cia-enroll-code-label { font-size: var(--font-size-xs); color: var(--text-secondary); margin-bottom: var(--spacer-1); }
+.cia-enroll-code { font-family: var(--font-family-mono); font-size: var(--font-size-lg); font-weight: 600; color: var(--accent-base); padding: var(--spacer-2); background: var(--ctrl-solid-fill); border: 1px solid var(--card-stroke); border-radius: var(--radius-sm); word-break: break-all; margin-bottom: var(--spacer-2); user-select: all; }
+
+.cia-profile-info-table { width: 100%; border-collapse: collapse; }
+.cia-profile-info-table th, .cia-profile-info-table td { padding: var(--spacer-2) var(--spacer-3); text-align: left; border-bottom: 1px solid var(--divider-stroke); font-size: var(--font-size-sm); }
+.cia-profile-info-table th { color: var(--text-tertiary); font-weight: 500; width: 110px; }
+.cia-device-checkboxes { max-height: 200px; overflow-y: auto; margin-top: var(--spacer-2); }
+.cia-device-checkbox { display: flex; align-items: center; gap: var(--spacer-2); padding: var(--spacer-1) 0; font-size: var(--font-size-sm); }
+.cia-device-checkbox input { accent-color: var(--accent-base); }
+.cia-tip-box { padding: var(--spacer-3) var(--spacer-4); background: rgba(0, 103, 192, 0.06); border: 1px solid rgba(0, 103, 192, 0.12); border-radius: var(--radius-md); font-size: var(--font-size-xs); color: var(--text-secondary); line-height: 1.7; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--subtle-secondary); border-radius: var(--radius-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--subtle-pressed); }
+</style><div class="cia-app">
+  <!-- ===== 连接应用页面 ===== -->
+  <div class="cia-page" id="ciaPageConnect">
+    <div class="cia-page-header">
+      <h2>设备连接</h2>
+      <div class="cia-page-actions">
+        <button class="cia-btn primary" onclick="showEnrollmentDialog()">+ 生成注册码</button>
+        <button class="cia-btn" onclick="showBroadcastDialog()">广播</button>
+        <button class="cia-btn" onclick="refreshDevices()">刷新</button>
+      </div>
+    </div>
+    <div class="cia-page-body">
+      <div class="cia-device-stats">
+        <div class="cia-stat-card"><span class="cia-stat-value" id="ciaStatTotal">0</span><span class="cia-stat-label">已接入设备</span></div>
+        <div class="cia-stat-card"><span class="cia-stat-value c-success" id="ciaStatOnline">0</span><span class="cia-stat-label">在线</span></div>
+        <div class="cia-stat-card"><span class="cia-stat-value" id="ciaStatProfiles">0</span><span class="cia-stat-label">档案数</span></div>
+      </div>
+      <div class="cia-section">
+        <div class="cia-section-title">设备列表（ClassIsland · CSES Cloud 适配器）</div>
+        <div class="cia-device-list" id="ciaDeviceList">
+          <div class="cia-empty">暂无设备连接，请生成注册码并在 ClassIsland 适配器中填入</div>
+        </div>
+      </div>
+      <div class="cia-section">
+        <div class="cia-section-title">注册码</div>
+        <div class="cia-enrollment-list" id="ciaEnrollmentList">
+          <div class="cia-empty">暂无有效注册码</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 档案管理页面 ===== -->
+  <div class="cia-page" id="ciaPageProfiles" style="display:none">
+    <div class="cia-page-header">
+      <h2>档案管理</h2>
+      <div class="cia-page-actions">
+        <button class="cia-btn primary" onclick="createNewProfile()">+ 新建档案</button>
+        <button class="cia-btn" onclick="refreshProfileList()">刷新</button>
+      </div>
+    </div>
+    <div class="cia-page-body">
+      <div class="cia-multi-select-bar" id="ciaMultiSelectBar" style="display:none">
+        <span id="ciaMultiSelectCount">已选 0 项</span>
+        <button class="cia-btn small primary" onclick="batchDeployProfiles()">批量部署</button>
+        <button class="cia-btn small danger" onclick="batchDeleteProfiles()">批量删除</button>
+        <button class="cia-btn small" onclick="toggleMultiSelect()">取消选择</button>
+      </div>
+      <div class="cia-profile-grid" id="ciaProfileGrid">
+        <div class="cia-empty">暂无档案，点击"新建档案"创建（.json ClassIsland 档案）</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 应用配置页面 ===== -->
+  <div class="cia-page" id="ciaPageConfig" style="display:none">
+    <div class="cia-config-shell">
+      <div class="cia-config-sidebar">
+        <div class="cia-config-device-sel">
+          <select id="ciaConfigDeviceSel" onchange="switchConfigDevice(this.value)">
+            <option value="__global__">全局配置（所有设备）</option>
+          </select>
+        </div>
+        <div class="cia-config-nav">
+          <button class="cia-config-nav-item active" data-cfg="sync" onclick="switchConfigTab('sync')">同步</button>
+          <button class="cia-config-nav-item" data-cfg="notification" onclick="switchConfigTab('notification')">通知</button>
+          <button class="cia-config-nav-item" data-cfg="connect" onclick="switchConfigTab('connect')">客户端接入</button>
+          <button class="cia-config-nav-item" data-cfg="advanced" onclick="switchConfigTab('advanced')">高级</button>
+        </div>
+      </div>
+      <div class="cia-config-content" id="ciaConfigContent"></div>
+    </div>
+  </div>
+
+  <!-- ===== 注册码弹窗 ===== -->
+  <div class="cia-modal-overlay" id="ciaEnrollmentModal" style="display:none" onclick="if(event.target===this)closeEnrollmentDialog()">
+    <div class="cia-modal">
+      <div class="cia-modal-header">
+        <h3>生成注册码</h3>
+        <button class="cia-modal-close" onclick="closeEnrollmentDialog()">&times;</button>
+      </div>
+      <div class="cia-modal-body">
+        <div class="cia-field">
+          <label>设备名称（可选）</label>
+          <input type="text" id="ciaEnrollName" placeholder="例如：高一（3）班讲台机" />
+        </div>
+        <div class="cia-field">
+          <label>最大使用次数</label>
+          <input type="number" id="ciaEnrollMaxUses" value="1" min="1" max="100" />
+        </div>
+        <div class="cia-field">
+          <label>有效期</label>
+          <select id="ciaEnrollExpiry">
+            <option value="3600">1 小时</option>
+            <option value="86400" selected>24 小时</option>
+            <option value="604800">7 天</option>
+            <option value="2592000">30 天</option>
+          </select>
+        </div>
+        <div class="cia-enroll-result" id="ciaEnrollResult" style="display:none">
+          <div class="cia-enroll-code-label">注册码（仅显示一次，请妥善保存）：</div>
+          <div class="cia-enroll-code" id="ciaEnrollCode"></div>
+          <div style="display:flex;gap:8px;justify-content:center">
+            <button class="cia-btn small" onclick="copyEnrollCode()">复制</button>
+            <button class="cia-btn small primary" onclick="downloadCredentials()">下载凭据</button>
+          </div>
+          <div style="font-size:11px;color:var(--text-tertiary);margin-top:6px">凭据文件可在客户端适配器「导入凭据」中直接使用，无需手动记录连接码</div>
+        </div>
+      </div>
+      <div class="cia-modal-footer">
+        <button class="cia-btn" onclick="closeEnrollmentDialog()">取消</button>
+        <button class="cia-btn primary" id="ciaEnrollGenerateBtn" onclick="generateEnrollmentCode()">生成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 档案详情弹窗 ===== -->
+  <div class="cia-modal-overlay" id="ciaProfileDetailModal" style="display:none" onclick="if(event.target===this)closeProfileDetail()">
+    <div class="cia-modal cia-modal-lg">
+      <div class="cia-modal-header">
+        <h3 id="ciaProfileDetailTitle">档案详情</h3>
+        <button class="cia-modal-close" onclick="closeProfileDetail()">&times;</button>
+      </div>
+      <div class="cia-modal-body" id="ciaProfileDetailBody"></div>
+      <div class="cia-modal-footer">
+        <button class="cia-btn" onclick="closeProfileDetail()">关闭</button>
+        <button class="cia-btn primary" id="ciaProfileDeployBtn" onclick="deploySelectedProfile()">部署到设备</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 部署确认弹窗 ===== -->
+  <div class="cia-modal-overlay" id="ciaDeployModal" style="display:none" onclick="if(event.target===this)closeDeployDialog()">
+    <div class="cia-modal">
+      <div class="cia-modal-header">
+        <h3>部署档案</h3>
+        <button class="cia-modal-close" onclick="closeDeployDialog()">&times;</button>
+      </div>
+      <div class="cia-modal-body">
+        <div class="cia-field">
+          <label>应用到客户端的档案文件名（可选）</label>
+          <input type="text" id="ciaDeployProfileName" placeholder="默认：CSES-Cloud.json" />
+        </div>
+        <p>将此档案下发到选中的 ClassIsland 设备？客户端将下载并应用。</p>
+        <div class="cia-device-checkboxes" id="ciaDeployDevices"></div>
+      </div>
+      <div class="cia-modal-footer">
+        <button class="cia-btn" onclick="closeDeployDialog()">取消</button>
+        <button class="cia-btn primary" onclick="confirmDeploy()">确认部署</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 广播弹窗 ===== -->
+  <div class="cia-modal-overlay" id="ciaBroadcastModal" style="display:none" onclick="if(event.target===this)closeBroadcastDialog()">
+    <div class="cia-modal">
+      <div class="cia-modal-header">
+        <h3>发送广播</h3>
+        <button class="cia-modal-close" onclick="closeBroadcastDialog()">&times;</button>
+      </div>
+      <div class="cia-modal-body">
+        <div class="cia-field">
+          <label>目标</label>
+          <div><code class="cia-code-chip" id="ciaBroadcastTarget">所有设备</code></div>
+        </div>
+        <div class="cia-field">
+          <label>标题</label>
+          <input type="text" id="ciaBroadcastTitle" placeholder="通知标题" />
+        </div>
+        <div class="cia-field">
+          <label>内容</label>
+          <input type="text" id="ciaBroadcastBody" placeholder="广播正文（可选）" />
+        </div>
+        <div class="cia-field">
+          <label>级别</label>
+          <select id="ciaBroadcastSeverity">
+            <option value="info">信息</option>
+            <option value="success">成功</option>
+            <option value="warning">警告</option>
+            <option value="error">错误</option>
+          </select>
+        </div>
+      </div>
+      <div class="cia-modal-footer">
+        <button class="cia-btn" onclick="closeBroadcastDialog()">取消</button>
+        <button class="cia-btn primary" onclick="sendBroadcast()">发送</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 设备命令列表弹窗 ===== -->
+  <div class="cia-modal-overlay" id="ciaCmdModal" style="display:none" onclick="if(event.target===this)closeCmdModal()">
+    <div class="cia-modal cia-modal-lg">
+      <div class="cia-modal-header">
+        <h3 id="ciaCmdTitle">设备命令</h3>
+        <button class="cia-modal-close" onclick="closeCmdModal()">&times;</button>
+      </div>
+      <div class="cia-modal-body" id="ciaCmdBody">
+        <div class="cia-empty cia-empty-compact">加载中...</div>
+      </div>
+      <div class="cia-modal-footer">
+        <button class="cia-btn" onclick="closeCmdModal()">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>

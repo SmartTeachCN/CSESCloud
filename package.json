@@ -3,14 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently -n api,vite -c blue,green \"node server/index.js\" \"pnpm --dir frontend dev\"",
+    "dev": "concurrently -n api,vite -c blue,green \"node --disable-warning=ExperimentalWarning server/index.js\" \"pnpm --dir frontend dev\"",
     "build": "pnpm --dir frontend build",
-    "start": "node server/index.js"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3"
-    ]
+    "start": "node --disable-warning=ExperimentalWarning server/index.js"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
@@ -18,7 +13,6 @@
   "packageManager": "pnpm@10.14.0+sha512.ad27a79641b49c3e481a16a805baa71817a04bbe06a38d17e60e2eaee83f6a146c6a688125f5792e48dd5ba30e7da52a5cda4c3992b9ccf333f9ce223af84748",
   "dependencies": {
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^13.0.3",
     "express": "^5.2.1",
     "multer": "^2.2.0",
     "qs": "^6.15.3",

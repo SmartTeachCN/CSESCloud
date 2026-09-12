@@ -140,10 +140,9 @@ try {
 
 // ── 回填现有实例的 app_key（从旧 apps 表映射） ──
 try {
-  const cnt = DB.update(
-    "UPDATE instances SET app_key = (SELECT a.app_key FROM apps a WHERE a.id = instances.app_id) WHERE app_key IS NULL AND app_id IS NOT NULL AND app_id > 0",
-    []
-  );
+  const cnt = DB.pdo().prepare(
+    "UPDATE instances SET app_key = (SELECT a.app_key FROM apps a WHERE a.id = instances.app_id) WHERE app_key IS NULL AND app_id IS NOT NULL AND app_id > 0"
+  ).run();
   if (cnt.changes > 0) console.log(`[db] 已回填 ${cnt.changes} 个实例的 app_key`);
 } catch (e) {
   console.warn('[db] app_key 回填跳过:', e.message);

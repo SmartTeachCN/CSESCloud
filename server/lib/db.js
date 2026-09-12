@@ -1,16 +1,19 @@
 /**
  * CSES Cloud - SQLite 数据库封装（NodeJS 版，1:1 复刻 lib/db.php）
+ *
+ * 使用 Node.js 内置的 node:sqlite（Node >= 22.5），无需原生编译（Node-GYP），
+ * Windows / Linux 开箱即用，便于在 Linux 服务器上部署。
  */
 const fs = require('fs');
 const path = require('path');
-const Database = require('better-sqlite3');
+const { DatabaseSync } = require('node:sqlite');
 
 const ROOT = path.join(__dirname, '..', '..');
 const DATA_DIR = path.join(ROOT, 'data');
 
 let _db = null;
 
-/** 递归净化参数：better-sqlite3 不接受 boolean/undefined，转为 1/0/null（对齐 PDO 行为） */
+/** 递归净化参数：SQLite 绑定不接受 boolean/undefined，转为 1/0/null（对齐 PDO 行为） */
 function sanitize(v) {
   if (v === undefined) return null;
   if (typeof v === 'boolean') return v ? 1 : 0;
@@ -23,6 +26,20 @@ function sanitize(v) {
   return v;
 }
 
+/** node:sqlite 的 BLOB 返回 Uint8Array，归一化为 Buffer（零拷贝视图），对齐 better-sqlite3 行为 */
+function normalizeValue(v) {
+  if (v instanceof Uint8Array && !Buffer.isBuffer(v)) {
+    return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+  }
+  return v;
+}
+
+function normalizeRow(row) {
+  if (!row || typeof row !== 'object') return row;
+  for (const k of Object.keys(row)) row[k] = normalizeValue(row[k]);
+  return row;
+}
+
 /** 获取数据库单例 */
 function pdo() {
   if (_db !== null) return _db;
@@ -31,9 +48,9 @@ function pdo() {
   const dbPath = path.join(DATA_DIR, 'cses.db');
   const isNew = !fs.existsSync(dbPath);
 
-  _db = new Database(dbPath);
-  _db.pragma('journal_mode = WAL');
-  _db.pragma('foreign_keys = ON');
+  _db = new DatabaseSync(dbPath);
+  _db.exec('PRAGMA journal_mode = WAL');
+  _db.exec('PRAGMA foreign_keys = ON');
 
   if (isNew) {
     migrate();
@@ -156,12 +173,12 @@ function one(sql, params = []) {
   const stmt = db.prepare(sql);
   const p = sanitize(params);
   const row = Array.isArray(p) ? stmt.get(...p) : stmt.get(p);
-  return row === undefined ? null : row;
+  return row === undefined ? null : normalizeRow(row);
 }
 
 /** 查询多行 */
 function all(sql, params = []) {
-  return _all(sql, params);
+  return _all(sql, params).map(normalizeRow);
 }
 
 /** 查询单个标量值 */
@@ -172,7 +189,7 @@ function scalar(sql, params = []) {
   const row = Array.isArray(p) ? stmt.get(...p) : stmt.get(p);
   if (row === undefined) return null;
   const keys = Object.keys(row);
-  return keys.length ? row[keys[0]] : null;
+  return keys.length ? normalizeValue(row[keys[0]]) : null;
 }
 
 /** 插入数据，返回 lastInsertId */

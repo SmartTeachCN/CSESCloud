@@ -1,0 +1,8 @@
+id: cloud.cses.classisland
+name: CSES Cloud 适配器
+description: 将 ClassIsland 接入 CSES Cloud 平台：通过注册码接入实例，自动同步平台侧维护的课表档案（Subjects/TimeLayouts/ClassPlans），并接收平台广播与设置下发。
+entranceAssembly: CsesCloudAdapter.dll
+url: https://github.com/CSESCloud/CSESCloudNG
+apiVersion: 2.0.0.0
+version: 1.0.0.0
+author: CSES Cloud

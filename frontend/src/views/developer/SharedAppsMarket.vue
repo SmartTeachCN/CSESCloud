@@ -29,6 +29,27 @@
       </button>
     </div>
 
+    <!-- 应用分类筛选 -->
+    <div v-if="appCategories.length > 0" class="app-category-bar">
+      <button
+        class="app-cat-chip"
+        :class="{ active: activeAppCategory === 'all' }"
+        @click="activeAppCategory = 'all'"
+      >
+        全部分类
+      </button>
+      <button
+        v-for="cat in appCategories"
+        :key="cat"
+        class="app-cat-chip"
+        :class="{ active: activeAppCategory === cat }"
+        @click="activeAppCategory = cat"
+      >
+        {{ cat }}
+        <span class="chip-count">{{ getCategoryAppCount(cat) }}</span>
+      </button>
+    </div>
+
     <div class="filter-bar">
       <div class="filter-search">
         <Icon icon="ri-search-line" :size="14" />
@@ -56,8 +77,8 @@
         <!-- 应用卡片 -->
         <div v-if="item._type === 'app' || activeCategory === 'apps'" class="item-card">
           <div class="card-head">
-            <div class="item-icon" :class="item.is_official ? 'official' : ''" :style="{ background: getCatColor(item.category) }">
-              <Icon icon="ri-apps-2-line" :size="20" />
+            <div class="item-icon" :class="item.is_official ? 'official' : ''" :style="getCatStyle(item.category)">
+              <Icon :icon="item.icon || 'ri-apps-2-line'" :size="20" />
             </div>
             <div class="head-meta">
               <div class="head-title">
@@ -159,14 +180,31 @@ const categoryTabs = [
 
 const activeCategory = ref('all');
 
+// 应用业务分类（从应用列表动态提取）
+const activeAppCategory = ref('all');
+const appCategories = computed(() => {
+  const set = new Set<string>();
+  for (const a of appsList.value) set.add(a.category || '通用');
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+});
+
+function getCategoryAppCount(cat: string): number {
+  return appsList.value.filter(a => (a.category || '通用') === cat).length;
+}
+
 const currentList = computed(() => {
-  if (activeCategory.value === 'apps') return appsList.value;
+  let apps = appsList.value;
+  if (activeAppCategory.value !== 'all') {
+    apps = apps.filter(a => (a.category || '通用') === activeAppCategory.value);
+  }
+  if (activeCategory.value === 'apps') return apps;
   if (activeCategory.value === 'plugins') return pluginsList.value;
-  // 'all' - merge both
-  const apps = appsList.value.map(a => ({ ...a, _type: 'app' }));
+  // 'all' - merge both（选中具体应用分类时不再混入插件）
+  const appItems = apps.map(a => ({ ...a, _type: 'app' }));
+  if (activeAppCategory.value !== 'all') return appItems;
   const plugins = pluginsList.value.map(p => ({ ...p, _type: 'plugin' }));
   // Sort: official first, then by updated_at
-  return [...apps, ...plugins].sort((a, b) => {
+  return [...appItems, ...plugins].sort((a, b) => {
     if (a.is_official !== b.is_official) return b.is_official - a.is_official;
     return (b.updated_at || '').localeCompare(a.updated_at || '');
   });
@@ -219,12 +257,13 @@ function getStatusLabel(status?: string): string {
   return labels[status || ''] || status || '';
 }
 
-function getCatColor(category?: string): string {
+function getCatStyle(category?: string): Record<string, string> {
   const c = (category || '').toLowerCase();
-  if (c.includes('教学')) return 'rgba(0, 103, 192, 0.1)';
-  if (c.includes('评测')) return 'rgba(202, 143, 4, 0.1)';
-  if (c.includes('ai')) return 'rgba(120, 90, 240, 0.1)';
-  return 'rgba(16, 124, 16, 0.1)';
+  if (c.includes('考试')) return { background: 'rgba(196, 43, 28, 0.1)', color: '#C42B1C' };
+  if (c.includes('教学')) return { background: 'rgba(0, 103, 192, 0.1)', color: '#0067C0' };
+  if (c.includes('评测')) return { background: 'rgba(202, 143, 4, 0.1)', color: '#CA8F04' };
+  if (c.includes('ai')) return { background: 'rgba(120, 90, 240, 0.1)', color: '#785AF0' };
+  return { background: 'rgba(16, 124, 16, 0.1)', color: '#107C10' };
 }
 
 function formatJson(obj: any): string {
@@ -330,6 +369,44 @@ onMounted(() => {
 .cat-tab.active .cat-count {
   background: var(--accent-text);
   color: var(--accent-base);
+}
+
+/* 应用分类筛选条 */
+.app-category-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacer-1);
+  margin-bottom: var(--spacer-3);
+}
+
+.app-cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px var(--spacer-3);
+  background: var(--card-bg);
+  border: 1px solid var(--card-stroke);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--fast-duration), color var(--fast-duration), border-color var(--fast-duration);
+}
+
+.app-cat-chip:hover {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+}
+
+.app-cat-chip.active {
+  background: var(--accent-base);
+  border-color: var(--accent-base);
+  color: var(--accent-text);
+}
+
+.chip-count {
+  font-size: 10px;
+  opacity: 0.75;
 }
 
 .filter-bar {

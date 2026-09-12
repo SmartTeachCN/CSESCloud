@@ -1,0 +1,47 @@
+{
+  "plugin_key": "classisland_profile_editor",
+  "name": "ClassIsland 档案编辑器",
+  "version": "1.0.0",
+  "description": "ClassIsland 档案（Profile）结构化编辑器。注册 .json 后缀并自动识别档案关键格式（TimeLayouts/ClassPlans/Subjects），支持科目、时间表、课表可视化编辑，兼容 1.x（StartSecond）与 2.x（StartTime）时间格式，保留未知字段原样回写；非 ClassIsland 格式的 .json 文件自动回退为通用 JSON 编辑器。",
+  "extensions": [
+    "json"
+  ],
+  "icon": "ri-calendar-view-line",
+  "ribbon": [
+    {
+      "label": "档案",
+      "tools": [
+        { "id": "ci-detect", "label": "重新识别", "icon": "ri-search-eye-line", "command": "ci-detect" },
+        { "id": "ci-subject", "label": "新建科目", "icon": "ri-book-2-line", "command": "ci-add-subject" }
+      ]
+    },
+    {
+      "label": "时间表",
+      "tools": [
+        { "id": "ci-timelayout", "label": "新建时间表", "icon": "ri-time-line", "command": "ci-add-timelayout" },
+        { "id": "ci-add-class", "label": "添加时间点", "icon": "ri-add-line", "command": "ci-add-timeitem" },
+        { "id": "ci-fill-breaks", "label": "自动填充课间", "icon": "ri-timer-flash-line", "command": "ci-fill-breaks" }
+      ]
+    },
+    {
+      "label": "课表",
+      "tools": [
+        { "id": "ci-classplan", "label": "新建课表", "icon": "ri-calendar-schedule-line", "command": "ci-add-classplan" },
+        { "id": "ci-group", "label": "新建课表群", "icon": "ri-folder-line", "command": "ci-add-group" }
+      ]
+    },
+    {
+      "label": "工具",
+      "tools": [
+        { "id": "ci-validate", "label": "校验", "icon": "ri-error-warning-line", "command": "ci-validate" },
+        { "id": "ci-format", "label": "格式化", "icon": "ri-code-s-slash-line", "command": "ci-format" },
+        { "id": "ci-raw", "label": "JSON 源码", "icon": "ri-braces-line", "command": "ci-toggle-raw" }
+      ]
+    }
+  ],
+  "status": "published",
+  "developer_username": "system",
+  "is_official": true,
+  "created_at": "2026-09-12 10:00:00",
+  "updated_at": "2026-09-12 10:00:00"
+}

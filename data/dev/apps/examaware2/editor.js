@@ -129,10 +129,10 @@ function showDeviceCommands(deviceId) {
       try { ptext = JSON.stringify(p); } catch (e) { ptext = String(p); }
       if (ptext && ptext.length > 80) ptext = ptext.slice(0, 80) + '…';
       var st = c.result_status || c.status || '';
-      var stColor = st === 'succeeded' ? '#4caf50' : (st === 'failed' ? '#f48771' : '#888');
+      var stClass = st === 'succeeded' ? 'ea2-st-succeeded' : (st === 'failed' ? 'ea2-st-failed' : (st ? 'ea2-st-pending' : 'ea2-st-muted'));
       return '<tr><td>' + escHtml(c.command_type || '') + '</td>' +
         '<td title="' + escAttr(ptext) + '">' + escHtml(ptext || '—') + '</td>' +
-        '<td><span style="color:' + stColor + '">' + escHtml(st) + '</span></td>' +
+        '<td><span class="' + stClass + '">' + escHtml(st) + '</span></td>' +
         '<td>' + escHtml((c.created_at || '').slice(0, 19)) + '</td></tr>';
     }).join('');
     document.getElementById('ea2CmdBody').innerHTML =
@@ -266,10 +266,10 @@ async function refreshEnrollments() {
       var isRevoked = !!c.revoked_at;
       var isExpired = new Date(c.expires_at).getTime() < Date.now();
       var status = isRevoked ? '已吊销' : (isExpired ? '已过期' : '有效');
-      var statusColor = isRevoked || isExpired ? '#888' : '#4caf50';
+      var statusClass = isRevoked || isExpired ? 'ea2-st-muted' : 'ea2-st-succeeded';
       return '<div class="ea2-enrollment-item">' +
         '<div class="ea2-enrollment-code" style="flex:1">' + (c.display_name || '未命名') + '</div>' +
-        '<div class="ea2-enrollment-meta">' + c.used_count + '/' + c.max_uses + ' · ' + status + '</div>' +
+        '<div class="ea2-enrollment-meta">' + c.used_count + '/' + c.max_uses + ' · <span class="' + statusClass + '">' + status + '</span></div>' +
         (!isRevoked
           ? '<button class="ea2-btn small danger" onclick="revokeEnrollment(' + c.id + ')">吊销</button>'
           : '<button class="ea2-btn small danger" onclick="deleteEnrollment(' + c.id + ')">删除</button>') +
@@ -340,8 +340,8 @@ async function refreshExamList() {
         (groupTags ? '<div class="ea2-exam-card-groups">' + groupTags + '</div>' : '') +
         (!multiSelectMode ? '<div class="ea2-exam-card-actions">' +
           '<button class="ea2-btn small" onclick="event.stopPropagation();viewExamDetail(\'' + exam.id + '\')">查看</button>' +
-          '<button class="ea2-btn small primary" onclick="event.stopPropagation();editExam(\'' + exam.id + '\')">编辑</button>' +
-          '<button class="ea2-btn small success" onclick="event.stopPropagation();openDeployDialog(\'' + exam.id + '\')">部署</button>' +
+          '<button class="ea2-btn small" onclick="event.stopPropagation();editExam(\'' + exam.id + '\')">编辑</button>' +
+          '<button class="ea2-btn small primary" onclick="event.stopPropagation();openDeployDialog(\'' + exam.id + '\')">部署</button>' +
           '<button class="ea2-btn small danger" onclick="event.stopPropagation();deleteExamConfirm(\'' + exam.id + '\',\'' + escAttr(exam.name) + '\')">删除</button>' +
         '</div>' : '') +
       '</div>';
@@ -436,7 +436,7 @@ function openDeployDialog(fileId) {
   window.CSES.request('controlApi', { action: 'device_list', payload: {} }).then(function(devices) {
     var container = document.getElementById('ea2DeployDevices');
     if (!devices || devices.length === 0) {
-      container.innerHTML = '<p style="color:#888">暂无可用设备，请先在"连接应用"页面注册设备</p>';
+      container.innerHTML = '<div class="ea2-empty ea2-empty-compact">暂无可用设备，请先在"连接应用"页面注册设备</div>';
       hideDeployWarning();
     } else {
       container.innerHTML = devices.map(function(d) {
@@ -450,7 +450,7 @@ function openDeployDialog(fileId) {
         return '<div class="ea2-device-checkbox">' +
           '<input type="checkbox" value="' + d.device_id + '" checked id="dev_' + d.device_id + '" data-playing="' + dataPlaying + '" onchange="updateDeployWarning()">' +
           '<label for="dev_' + d.device_id + '">' + escHtml(d.display_name) + ' (' + (d.platform || '?') + ')' + playingTag +
-          (notes ? ' <span style="color:#0067C0;font-style:italic;font-size:11px">' + escHtml(notes) + '</span>' : '') + '</label></div>';
+          (notes ? ' <span class="ea2-device-notes">' + escHtml(notes) + '</span>' : '') + '</label></div>';
       }).join('');
     }
     updateDeployWarning();
@@ -700,9 +700,9 @@ function renderConfigTab(tab) {
       break;
     case 'connect':
       html = '<h2>连接</h2><div class="ea2-config-card">' +
-        '<div class="ea2-config-item"><div class="ea2-config-item-main"><div class="ea2-config-item-title">服务器地址</div><div class="ea2-config-item-desc">客户端连接控制服务器的地址，由系统自动生成。</div></div><div class="ea2-config-item-action"><code style="font-size:10px;padding:4px 8px;background:var(--input-bg,#1e1e1e);border-radius:4px">' + escHtml(window.location.origin + '/api/rest-control?instance_uid=' + (window.CSES.instance ? window.CSES.instance.uid : '')) + '</code></div></div>' +
+        '<div class="ea2-config-item"><div class="ea2-config-item-main"><div class="ea2-config-item-title">服务器地址</div><div class="ea2-config-item-desc">客户端连接控制服务器的地址，由系统自动生成。</div></div><div class="ea2-config-item-action"><code class="ea2-code-chip">' + escHtml(window.location.origin + '/api/rest-control?instance_uid=' + (window.CSES.instance ? window.CSES.instance.uid : '')) + '</code></div></div>' +
         '<div class="ea2-config-divider"></div>' +
-        '<div class="ea2-config-item"><div class="ea2-config-item-main"><div class="ea2-config-item-title">WebSocket 网关</div><div class="ea2-config-item-desc">客户端 WebSocket 实时通信网关地址。</div></div><div class="ea2-config-item-action"><code style="font-size:10px;padding:4px 8px;background:var(--input-bg,#1e1e1e);border-radius:4px">' + escHtml(window.location.origin + '/api/ws-control') + '</code></div></div>' +
+        '<div class="ea2-config-item"><div class="ea2-config-item-main"><div class="ea2-config-item-title">WebSocket 网关</div><div class="ea2-config-item-desc">客户端 WebSocket 实时通信网关地址。</div></div><div class="ea2-config-item-action"><code class="ea2-code-chip">' + escHtml(window.location.origin + '/api/ws-control') + '</code></div></div>' +
         '<div class="ea2-config-divider"></div>' +
         '<div class="ea2-config-item"><div class="ea2-config-item-main"><div class="ea2-config-item-title">REST 轮询频率限制</div><div class="ea2-config-item-desc">长轮询设备的命令轮询间隔（秒）。默认 300（5 分钟）。客户端不写死，按此限制自适应调整。</div></div><div class="ea2-config-item-action"><input type="number" id="ea2PollInterval" value="300" min="5" max="86400" placeholder="300" style="width:110px" /><button class="ea2-btn small" onclick="savePollInterval()">保存</button></div></div>' +
         '<div class="ea2-config-divider"></div>' +

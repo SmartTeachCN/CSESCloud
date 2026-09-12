@@ -128,7 +128,7 @@ function renderWizard(){
   }else{
     html+='<div class="ea2-wizard-subtitle">第 '+w.day+' 天 — '+(w.editIdx>=0?'编辑第 '+(w.editIdx+1)+' 场':'已添加 '+w.subjects.length+' 个科目')+'</div>';
     html+='<div class="ea2-wizard-step"><span class="ea2-wizard-step-icon">3</span>科目信息</div>';
-    html+='<div class="ea2-wizard-field"><label>开始时间 <span style="color:var(--ea2-muted)">（默认 = 上一场结束 + 休息，可手动修改）</span></label><input type="datetime-local" id="wizStart" value="'+escAttr(w.wizStart||'')+'" oninput="if(window.wizard)window.wizard.wizStart=this.value" /></div>';
+    html+='<div class="ea2-wizard-field"><label>开始时间 <span class="ea2-hint">（默认 = 上一场结束 + 休息，可手动修改）</span></label><input type="datetime-local" id="wizStart" value="'+escAttr(w.wizStart||'')+'" oninput="if(window.wizard)window.wizard.wizStart=this.value" /></div>';
     html+='<div class="ea2-wizard-field"><label>科目名称</label><input type="text" id="wizSubject" value="'+escAttr(w.currentSubject)+'" placeholder="输入或点击下方预设" /></div>';
     html+='<div class="ea2-preset-grid">';
     for(var k in SUBJECT_PRESETS){html+='<button class="ea2-preset-chip'+(w.currentSubject===k?' selected':'')+'" onclick="wizSelectSubject(\''+k+'\')"><span class="preset-name">'+k+'</span><span class="preset-dur">'+SUBJECT_PRESETS[k]+'′</span></button>'}

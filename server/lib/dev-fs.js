@@ -73,7 +73,7 @@ function nowStr() {
 
 // ========== 应用文件存储 ==========
 
-const BASE_FIELDS = ['app_key', 'name', 'version', 'description', 'category', 'status',
+const BASE_FIELDS = ['app_key', 'name', 'version', 'description', 'category', 'status', 'icon',
   'developer_username', 'is_shared', 'is_official', 'forked_from', 'forked_by',
   'created_at', 'updated_at'];
 
@@ -127,6 +127,7 @@ const AppFS = {
       version: manifest.version || '1.0.0',
       description: manifest.description || '',
       category: manifest.category || '通用',
+      icon: manifest.icon || '',
       status: manifest.status || 'draft',
       developer_username: manifest.developer_username || '',
       is_shared: manifest.is_shared ? 1 : 0,
@@ -179,6 +180,7 @@ const AppFS = {
     const manifestData = data.app_info_manifest;
     const hasManifestUpdate = manifestData !== undefined || data.name !== undefined || data.version !== undefined
       || data.description !== undefined || data.category !== undefined || data.status !== undefined
+      || data.icon !== undefined
       || data.developer_username !== undefined || data.is_shared !== undefined || data.is_official !== undefined
       || data.updated_at !== undefined || data.created_at !== undefined;
 
@@ -189,6 +191,7 @@ const AppFS = {
       if (data.version !== undefined) merged.version = data.version;
       if (data.description !== undefined) merged.description = data.description;
       if (data.category !== undefined) merged.category = data.category;
+      if (data.icon !== undefined) merged.icon = data.icon;
       if (data.status !== undefined) merged.status = data.status;
       if (data.developer_username !== undefined) merged.developer_username = data.developer_username;
       if (data.is_shared !== undefined) merged.is_shared = data.is_shared ? true : false;
@@ -240,6 +243,7 @@ const AppFS = {
       version: data.version || '1.0.0',
       description: data.description || '',
       category: data.category || '通用',
+      icon: data.icon || 'ri-apps-2-line',
       status: 'draft',
       developer_username: username,
       is_shared: false,

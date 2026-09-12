@@ -1,0 +1,376 @@
+/* ===== ClassIsland 档案编辑器（对齐平台 Fluent 设计体系） ===== */
+:root {
+  --ci-bg: #F3F3F3;
+  --ci-card: rgba(255, 255, 255, 0.70);
+  --ci-card-stroke: rgba(0, 0, 0, 0.06);
+  --ci-text: rgba(0, 0, 0, 0.89);
+  --ci-text-2: rgba(0, 0, 0, 0.62);
+  --ci-text-3: rgba(0, 0, 0, 0.45);
+  --ci-subtle: rgba(0, 0, 0, 0.04);
+  --ci-subtle-2: rgba(0, 0, 0, 0.02);
+  --ci-border: rgba(0, 0, 0, 0.06);
+  --ci-accent: #0067C0;
+  --ci-accent-bg: rgba(0, 103, 192, 0.08);
+  --ci-ok: #107C10;
+  --ci-warn: #CA8F04;
+  --ci-err: #C42B1C;
+  --ci-radius: 8px;
+  --ci-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ci-bg: #202020;
+    --ci-card: rgba(255, 255, 255, 0.0512);
+    --ci-card-stroke: rgba(0, 0, 0, 0.10);
+    --ci-text: #FFFFFF;
+    --ci-text-2: rgba(255, 255, 255, 0.77);
+    --ci-text-3: rgba(255, 255, 255, 0.53);
+    --ci-subtle: rgba(255, 255, 255, 0.0605);
+    --ci-subtle-2: rgba(255, 255, 255, 0.0419);
+    --ci-border: rgba(255, 255, 255, 0.0706);
+    --ci-accent: #4CC2FF;
+    --ci-accent-bg: rgba(76, 194, 255, 0.10);
+    --ci-ok: #6CCB5F;
+    --ci-warn: #FAD02C;
+    --ci-err: #FF9964;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body { overflow: hidden; font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif; font-size: 13px; }
+
+.ci-app { display: flex; flex-direction: column; height: 100%; background: var(--ci-bg); color: var(--ci-text); }
+
+/* ---- 顶栏 ---- */
+.ci-topbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; background: var(--ci-card);
+  border-bottom: 1px solid var(--ci-card-stroke); flex-shrink: 0;
+}
+.ci-badge {
+  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+  padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: var(--ci-subtle); color: var(--ci-text-2); border: 1px solid var(--ci-border);
+}
+.ci-badge.ci-is-profile { background: rgba(16, 124, 16, 0.10); color: var(--ci-ok); border-color: rgba(16, 124, 16, 0.2); }
+.ci-badge.ci-not-profile { background: rgba(202, 143, 4, 0.10); color: var(--ci-warn); border-color: rgba(202, 143, 4, 0.2); }
+.ci-badge-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.ci-name-input {
+  width: 220px; height: 30px; padding: 0 10px; font-size: 13px; font-family: inherit;
+  background: var(--ci-card); color: var(--ci-text);
+  border: 1px solid var(--ci-border); border-radius: 6px; outline: none;
+}
+.ci-name-input:focus { border-color: var(--ci-accent); }
+.ci-stats { flex: 1; font-size: 11px; color: var(--ci-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ci-topbar-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* ---- 按钮 ---- */
+.ci-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  padding: 5px 14px; background: var(--ci-card); color: var(--ci-text);
+  border: 1px solid var(--ci-border); border-radius: 6px;
+  font-size: 12px; font-weight: 500; cursor: pointer; font-family: inherit;
+  transition: background 0.167s, border-color 0.167s;
+}
+.ci-btn:hover { background: var(--ci-subtle); }
+.ci-btn:active { transform: scale(0.98); }
+.ci-btn.primary { background: var(--ci-accent); color: #fff; border-color: transparent; }
+.ci-btn.small { padding: 3px 10px; font-size: 11px; }
+.ci-btn.danger { color: var(--ci-err); }
+.ci-btn.danger:hover { background: rgba(196, 43, 28, 0.08); }
+
+/* ---- 视图标签 ---- */
+.ci-view-tabs {
+  display: flex; gap: 2px; padding: 0 14px; flex-shrink: 0;
+  background: var(--ci-subtle-2); border-bottom: 1px solid var(--ci-card-stroke); overflow-x: auto;
+}
+.ci-view-tab {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 8px 14px; background: transparent; border: none; border-bottom: 2px solid transparent;
+  font-size: 12px; color: var(--ci-text-3); cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.ci-view-tab:hover { color: var(--ci-text); }
+.ci-view-tab.active { color: var(--ci-text); border-bottom-color: var(--ci-accent); font-weight: 600; }
+.ci-view-tab.disabled { opacity: 0.4; cursor: not-allowed; }
+.ci-view-tab svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* ---- 主体 ---- */
+.ci-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.ci-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 10px 14px 0; }
+
+.ci-panel-bar { display: flex; align-items: center; justify-content: space-between; padding: 0 0 8px; flex-shrink: 0; }
+.ci-panel-title { font-size: 11px; font-weight: 600; color: var(--ci-text-3); letter-spacing: 0.02em; }
+
+/* ---- 表格 ---- */
+.ci-table-wrap { flex: 1; overflow: auto; background: var(--ci-card); border: 1px solid var(--ci-card-stroke); border-radius: var(--ci-radius); margin-bottom: 10px; }
+.ci-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.ci-table th, .ci-table td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--ci-border); vertical-align: middle; }
+.ci-table th { color: var(--ci-text-3); font-weight: 500; white-space: nowrap; position: sticky; top: 0; background: var(--ci-card); z-index: 1; }
+.ci-table tr:hover td { background: var(--ci-subtle-2); }
+.ci-cell-input {
+  width: 100%; padding: 4px 8px; font-size: 12px; font-family: inherit;
+  background: transparent; color: var(--ci-text); border: 1px solid transparent; border-radius: 4px; outline: none;
+}
+.ci-cell-input:hover { border-color: var(--ci-border); }
+.ci-cell-input:focus { border-color: var(--ci-accent); background: var(--ci-card); }
+.ci-cell-check { accent-color: var(--ci-accent); width: 15px; height: 15px; cursor: pointer; }
+.ci-guid { font-family: var(--ci-mono); font-size: 10px; color: var(--ci-text-3); word-break: break-all; }
+
+/* ---- 列表 + 详情 双栏 ---- */
+.ci-split { flex: 1; display: flex; gap: 10px; overflow: hidden; margin-bottom: 10px; min-height: 0; }
+.ci-list-pane {
+  width: 240px; flex-shrink: 0; display: flex; flex-direction: column;
+  background: var(--ci-card); border: 1px solid var(--ci-card-stroke); border-radius: var(--ci-radius); overflow: hidden;
+}
+.ci-list-pane .ci-panel-bar { padding: 8px 10px; margin: 0; background: var(--ci-subtle-2); border-bottom: 1px solid var(--ci-border); }
+.ci-list { flex: 1; overflow-y: auto; padding: 4px; }
+.ci-list-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px; cursor: pointer;
+  color: var(--ci-text-2); font-size: 12px; transition: background 0.15s;
+}
+.ci-list-item:hover { background: var(--ci-subtle); color: var(--ci-text); }
+.ci-list-item.selected { background: var(--ci-accent-bg); color: var(--ci-accent); font-weight: 600; }
+.ci-list-item .ci-li-meta { margin-left: auto; font-size: 10px; color: var(--ci-text-3); font-weight: 400; }
+.ci-list-item .ci-li-del { visibility: hidden; border: none; background: none; color: var(--ci-text-3); cursor: pointer; font-size: 13px; padding: 0 2px; }
+.ci-list-item:hover .ci-li-del { visibility: visible; }
+.ci-list-item .ci-li-del:hover { color: var(--ci-err); }
+
+.ci-detail-pane { flex: 1; overflow-y: auto; background: var(--ci-card); border: 1px solid var(--ci-card-stroke); border-radius: var(--ci-radius); padding: 12px 14px; min-width: 0; }
+.ci-detail-title { font-size: 14px; font-weight: 600; margin: 0 0 10px; }
+.ci-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.ci-field label { display: block; font-size: 11px; color: var(--ci-text-3); margin-bottom: 3px; }
+.ci-field input, .ci-field select {
+  width: 100%; height: 30px; padding: 0 8px; font-size: 12px; font-family: inherit;
+  background: var(--ci-card); color: var(--ci-text); border: 1px solid var(--ci-border); border-radius: 6px; outline: none;
+}
+.ci-field input:focus, .ci-field select:focus { border-color: var(--ci-accent); }
+.ci-field input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--ci-accent); }
+
+/* ---- 时间点列表 ---- */
+.ci-items-head { display: flex; align-items: center; justify-content: space-between; margin: 6px 0; }
+.ci-items-head .ci-panel-title { margin: 0; }
+.ci-items-actions { display: flex; gap: 5px; }
+.ci-time-row { display: grid; grid-template-columns: 24px 120px 120px 110px 1fr 90px 28px; gap: 6px; align-items: center; padding: 4px 2px; border-radius: 6px; cursor: default; }
+.ci-time-row:hover { background: var(--ci-subtle-2); }
+.ci-time-row.selected { background: var(--ci-accent-bg); outline: 1px solid var(--ci-accent); }
+.ci-time-row .ci-idx { font-size: 11px; color: var(--ci-text-3); text-align: center; font-family: var(--ci-mono); cursor: pointer; }
+.ci-time-row input, .ci-time-row select {
+  height: 28px; padding: 0 6px; font-size: 12px; font-family: inherit;
+  background: var(--ci-card); color: var(--ci-text); border: 1px solid var(--ci-border); border-radius: 5px; outline: none; width: 100%;
+}
+.ci-time-row input:focus, .ci-time-row select:focus { border-color: var(--ci-accent); }
+.ci-time-row input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--ci-accent); }
+.ci-row-del { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; background: none; border: none; border-radius: 4px; color: var(--ci-text-3); cursor: pointer; }
+.ci-row-del:hover { background: rgba(196, 43, 28, 0.08); color: var(--ci-err); }
+.ci-tt-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; }
+.ci-tt-0 { background: rgba(0, 103, 192, 0.10); color: var(--ci-accent); }
+.ci-tt-1 { background: rgba(16, 124, 16, 0.10); color: var(--ci-ok); }
+.ci-tt-2 { background: var(--ci-subtle); color: var(--ci-text-3); }
+.ci-tt-3 { background: rgba(202, 143, 4, 0.12); color: var(--ci-warn); }
+
+/* ---- 课表群分组（对齐 ClassIsland 2 分组树） ---- */
+.ci-plan-group-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 8px 3px; font-size: 11px; font-weight: 600; color: var(--ci-text-3); letter-spacing: 0.02em;
+}
+.ci-plan-group-head .ci-group-count { font-weight: 400; }
+.ci-plan-group-head .ci-group-ops { margin-left: auto; display: flex; gap: 2px; visibility: hidden; }
+.ci-plan-group-head:hover .ci-group-ops { visibility: visible; }
+.ci-group-op { border: none; background: none; font-size: 11px; color: var(--ci-text-3); cursor: pointer; padding: 0 3px; font-family: inherit; }
+.ci-group-op:hover { color: var(--ci-accent); }
+.ci-group-op.danger:hover { color: var(--ci-err); }
+
+/* ---- 课表课程行（Classes 与时间表上课点对应） ---- */
+.ci-class-row { display: grid; grid-template-columns: 24px 120px 1fr 28px; gap: 6px; align-items: center; padding: 4px 2px; }
+.ci-class-row:hover { background: var(--ci-subtle-2); border-radius: 6px; }
+.ci-class-row .ci-idx { font-size: 11px; color: var(--ci-text-3); text-align: center; font-family: var(--ci-mono); }
+.ci-class-time { font-size: 11px; color: var(--ci-text-2); font-family: var(--ci-mono); white-space: nowrap; }
+.ci-class-row select, .ci-class-row input {
+  height: 28px; padding: 0 6px; font-size: 12px; font-family: inherit;
+  background: var(--ci-card); color: var(--ci-text); border: 1px solid var(--ci-border); border-radius: 5px; outline: none; width: 100%;
+}
+.ci-class-row select:focus, .ci-class-row input:focus { border-color: var(--ci-accent); }
+.ci-class-extra { font-size: 11px; color: var(--ci-warn); font-family: inherit; }
+
+/* ---- JSON 源码 / 通用回退 ---- */
+.ci-raw {
+  flex: 1; width: 100%; margin-bottom: 10px; padding: 12px; resize: none; outline: none;
+  background: var(--ci-card); color: var(--ci-text); border: 1px solid var(--ci-card-stroke); border-radius: var(--ci-radius);
+  font-family: var(--ci-mono); font-size: 12px; line-height: 1.6; tab-size: 2;
+}
+.ci-raw:focus { border-color: var(--ci-accent); }
+.ci-generic-tip {
+  margin-bottom: 8px; padding: 8px 12px; font-size: 12px; line-height: 1.6;
+  background: rgba(202, 143, 4, 0.08); border: 1px solid rgba(202, 143, 4, 0.2); border-radius: var(--ci-radius); color: var(--ci-text-2); flex-shrink: 0;
+}
+.ci-generic-tip code { font-family: var(--ci-mono); background: var(--ci-subtle); padding: 0 4px; border-radius: 3px; font-size: 11px; }
+
+/* ---- 空态 ---- */
+.ci-empty { padding: 28px 12px; text-align: center; color: var(--ci-text-3); font-size: 12px; }
+
+/* ---- 问题面板 ---- */
+.ci-issues { border-top: 1px solid var(--ci-card-stroke); background: var(--ci-card); flex-shrink: 0; }
+.ci-issues-head {
+  display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+  padding: 6px 14px; font-size: 11px; color: var(--ci-text-2); user-select: none;
+}
+.ci-issues-head b { color: var(--ci-accent); }
+.ci-issues-body { max-height: 140px; overflow-y: auto; padding: 0 14px 8px; }
+.ci-issues.collapsed .ci-issues-body { display: none; }
+.ci-issue-item { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 11px; }
+.ci-issue-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: currentColor; }
+.ci-issue-item.error { color: var(--ci-err); }
+.ci-issue-item.warning { color: var(--ci-warn); }
+.ci-issue-none { padding: 2px 0 4px; font-size: 11px; color: var(--ci-text-3); }
+
+/* ---- 子页签（列表/周视图/月视图、列表/可视化） ---- */
+.ci-subtabs { display: flex; gap: 4px; padding-bottom: 8px; flex-shrink: 0; }
+.ci-subtab {
+  padding: 4px 14px; background: var(--ci-card); color: var(--ci-text-2);
+  border: 1px solid var(--ci-border); border-radius: 999px;
+  font-size: 11px; cursor: pointer; font-family: inherit; transition: all 0.15s;
+}
+.ci-subtab:hover { color: var(--ci-text); }
+.ci-subtab.active { background: var(--ci-accent); color: #fff; border-color: transparent; font-weight: 600; }
+
+/* ---- 可收起设置区（课表设置 / 时间表设置） ---- */
+.ci-collapse-head {
+  display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none;
+  padding: 8px 10px; margin-bottom: 8px; border-radius: var(--ci-radius);
+  background: var(--ci-subtle-2); border: 1px solid var(--ci-border);
+}
+.ci-collapse-head:hover { background: var(--ci-subtle); }
+.ci-collapse-title { font-size: 12px; font-weight: 600; color: var(--ci-text-2); }
+.ci-collapse-chevron { font-size: 11px; color: var(--ci-text-3); transition: transform 0.15s; }
+.ci-collapse-body { padding: 0 2px 10px; }
+.ci-collapsed .ci-collapse-body { display: none; }
+.ci-collapsed .ci-collapse-chevron { transform: rotate(-90deg); }
+
+/* ---- 科目：左表格右详情 ---- */
+.ci-subjects-pane { width: 1fr; flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.ci-subjects-pane .ci-table-wrap { flex: 1; margin-bottom: 0; }
+.ci-subject-detail { max-width: 440px; flex: 0 0 380px; }
+.ci-subject-row { cursor: pointer; }
+.ci-subject-row.selected td { background: var(--ci-accent-bg) !important; }
+.ci-subject-row.selected td:first-child { font-weight: 600; color: var(--ci-accent); }
+.ci-subject-chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 34px; height: 34px; padding: 0 8px; border-radius: var(--ci-radius);
+  background: var(--ci-accent-bg); color: var(--ci-accent); font-weight: 700; font-size: 15px;
+}
+
+/* ---- 预设科目面板 ---- */
+.ci-preset-wrap { margin-top: 10px; border-top: 1px solid var(--ci-border); padding-top: 10px; }
+.ci-preset-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ci-preset-chip {
+  display: inline-flex; flex-direction: column; align-items: center; gap: 1px;
+  width: 64px; padding: 7px 0 5px; border-radius: var(--ci-radius); cursor: pointer;
+  background: var(--ci-card); border: 1px solid var(--ci-border); font-family: inherit;
+  transition: all 0.15s; position: relative;
+}
+.ci-preset-chip:hover { border-color: var(--ci-accent); background: var(--ci-accent-bg); }
+.ci-preset-chip.added { opacity: 0.38; cursor: default; }
+.ci-preset-chip .p-name { font-size: 11px; color: var(--ci-text); }
+.ci-preset-chip .p-init { font-size: 13px; font-weight: 700; color: var(--ci-accent); }
+.ci-preset-chip .p-added { position: absolute; top: 2px; right: 4px; font-size: 9px; color: var(--ci-ok); }
+
+/* ---- 周视图 ---- */
+.ci-cp-week, .ci-tl-visual { flex: 1; overflow: auto; }
+.ci-week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; min-height: 260px; }
+.ci-week-col { background: var(--ci-card); border: 1px solid var(--ci-card-stroke); border-radius: var(--ci-radius); overflow: hidden; display: flex; flex-direction: column; }
+.ci-week-col-head { padding: 6px 10px; font-size: 11px; font-weight: 600; color: var(--ci-text-2); background: var(--ci-subtle-2); border-bottom: 1px solid var(--ci-border); display: flex; justify-content: space-between; align-items: center; }
+.ci-week-col-head.today { color: var(--ci-accent); }
+.ci-week-col-body { flex: 1; padding: 6px; overflow-y: auto; }
+.ci-week-plan { padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; color: var(--ci-text-2); }
+.ci-week-plan:hover { background: var(--ci-subtle); }
+.ci-week-plan-name { font-weight: 600; color: var(--ci-text); margin-bottom: 4px; display: flex; justify-content: space-between; }
+.ci-week-plan-name .ci-week-rot { font-weight: 400; font-size: 10px; color: var(--ci-text-3); }
+.ci-week-lesson { display: flex; gap: 5px; padding: 1px 0; align-items: baseline; }
+.ci-week-lesson .ci-lesson-time { font-family: var(--ci-mono); font-size: 9px; color: var(--ci-text-3); }
+.ci-week-lesson .ci-lesson-name { color: var(--ci-text-2); }
+.ci-week-empty { color: var(--ci-text-3); font-size: 11px; padding: 4px 8px; }
+.ci-week-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 11px; color: var(--ci-text-3); }
+
+/* ---- 月视图 ---- */
+.ci-month-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ci-month-title { font-size: 13px; font-weight: 600; color: var(--ci-text); min-width: 110px; text-align: center; }
+.ci-month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.ci-month-head { text-align: center; font-size: 11px; color: var(--ci-text-3); padding: 4px 0; font-weight: 600; }
+.ci-month-cell {
+  min-height: 64px; background: var(--ci-card); border: 1px solid var(--ci-card-stroke);
+  border-radius: 6px; padding: 4px 6px; cursor: pointer; overflow: hidden; transition: border-color 0.15s;
+}
+.ci-month-cell:hover { border-color: var(--ci-accent); }
+.ci-month-cell.dim { opacity: 0.4; }
+.ci-month-cell.today { border-color: var(--ci-accent); }
+.ci-month-cell.ordered { background: var(--ci-accent-bg); }
+.ci-month-day { font-size: 10px; color: var(--ci-text-3); font-family: var(--ci-mono); }
+.ci-month-cell.today .ci-month-day { color: var(--ci-accent); font-weight: 700; }
+.ci-month-plan { font-size: 11px; font-weight: 600; color: var(--ci-text); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ci-month-plan.ordered-tag { color: var(--ci-accent); }
+
+/* ---- 时间表可视化视图 ---- */
+.ci-tl-visual-wrap { flex: 1; overflow-y: auto; padding: 4px 2px; }
+.ci-viz-item {
+  position: relative; margin: 0 auto 4px; max-width: 560px;
+  border-radius: var(--ci-radius); padding: 8px 14px; cursor: pointer;
+  border: 1px solid transparent; display: flex; align-items: center; gap: 12px;
+  transition: border-color 0.15s, transform 0.1s;
+}
+.ci-viz-item:hover { border-color: var(--ctrl-border-accent, rgba(0,0,0,0.16)); }
+.ci-viz-item.selected { border-color: var(--ci-accent); }
+.ci-viz-item .ci-viz-time { font-family: var(--ci-mono); font-size: 11px; color: var(--ci-text-2); width: 108px; flex-shrink: 0; }
+.ci-viz-item .ci-viz-main { flex: 1; min-width: 0; }
+.ci-viz-item .ci-viz-name { font-size: 13px; font-weight: 600; color: var(--ci-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ci-viz-item .ci-viz-sub { font-size: 10px; color: var(--ci-text-3); margin-top: 1px; }
+.ci-viz-0 { background: rgba(0, 103, 192, 0.10); }
+.ci-viz-1 { background: rgba(16, 124, 16, 0.10); }
+.ci-viz-2 { background: var(--ci-subtle); min-height: 20px !important; padding: 3px 14px !important; }
+.ci-viz-3 { background: rgba(202, 143, 4, 0.12); }
+.ci-viz-ratio { width: 5px; border-radius: 999px; align-self: stretch; background: currentColor; opacity: 0.55; flex-shrink: 0; }
+.ci-viz-item .ci-viz-ratio { color: var(--ci-accent); }
+.ci-viz-1 .ci-viz-ratio { color: var(--ci-ok); }
+.ci-viz-3 .ci-viz-ratio { color: var(--ci-warn); }
+.ci-viz-2 .ci-viz-ratio { display: none; }
+
+/* ---- 课程快速选择面板 ---- */
+.ci-quick-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 2000; }
+.ci-quick-panel {
+  width: 420px; max-height: 70vh; display: flex; flex-direction: column;
+  background: var(--ci-bg); border: 1px solid var(--ci-border); border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.2); overflow: hidden;
+}
+.ci-quick-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; font-size: 13px; font-weight: 600; color: var(--ci-text); border-bottom: 1px solid var(--ci-border); }
+.ci-quick-search { margin: 10px 14px 0; height: 30px; padding: 0 10px; font-size: 12px; font-family: inherit; background: var(--ci-card); color: var(--ci-text); border: 1px solid var(--ci-border); border-radius: 6px; outline: none; }
+.ci-quick-search:focus { border-color: var(--ci-accent); }
+.ci-quick-grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 6px; padding: 12px 14px 14px; }
+.ci-quick-item {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 4px 8px;
+  background: var(--ci-card); border: 1px solid var(--ci-border); border-radius: var(--ci-radius);
+  cursor: pointer; font-family: inherit; transition: all 0.15s; position: relative;
+}
+.ci-quick-item:hover { border-color: var(--ci-accent); background: var(--ci-accent-bg); }
+.ci-quick-item.current { border-color: var(--ci-accent); }
+.ci-quick-item .q-init { font-size: 18px; font-weight: 700; color: var(--ci-accent); }
+.ci-quick-item .q-name { font-size: 11px; color: var(--ci-text); max-width: 80px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ci-quick-item .q-outdoor { position: absolute; top: 3px; right: 5px; font-size: 9px; color: var(--ci-warn); }
+
+/* ---- 临时层 ---- */
+.ci-temp-card { margin-bottom: 10px; border: 1px solid var(--ci-border); border-radius: var(--ci-radius); overflow: hidden; }
+.ci-temp-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; background: var(--ci-subtle-2); }
+.ci-temp-title { font-size: 12px; font-weight: 600; color: var(--ci-warn); display: flex; align-items: center; gap: 6px; }
+.ci-temp-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ci-warn); }
+.ci-temp-body { padding: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--ci-text-2); }
+.ci-temp-body select, .ci-temp-body input {
+  height: 28px; padding: 0 8px; font-size: 12px; font-family: inherit;
+  background: var(--ci-card); color: var(--ci-text); border: 1px solid var(--ci-border); border-radius: 6px; outline: none;
+}
+.ci-temp-active { color: var(--ci-warn); font-weight: 600; }
+
+/* ---- 滚动条 ---- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--ci-subtle); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ci-border); }

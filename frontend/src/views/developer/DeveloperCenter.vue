@@ -386,7 +386,10 @@
             </div>
             <div class="form-group">
               <label>分类</label>
-              <input v-model="createForm.category" placeholder="教学服务 / 评测服务 / AI 服务 / 通用服务" />
+              <input v-model="createForm.category" list="create-category-suggestions" placeholder="考试管理 / 教学服务 / 评测服务 / AI 服务 / 通用" />
+              <datalist id="create-category-suggestions">
+                <option v-for="c in categorySuggestions" :key="c" :value="c" />
+              </datalist>
             </div>
             <div class="form-group">
               <label>描述</label>
@@ -474,6 +477,8 @@ const createForm = ref({
   description: '',
   is_official: false
 });
+
+const categorySuggestions = ['考试管理', '教学服务', '评测服务', 'AI 服务', '通用'];
 
 interface DevItem {
   id: number;

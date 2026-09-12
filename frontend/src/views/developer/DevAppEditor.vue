@@ -6,7 +6,7 @@
         <button class="back-btn" @click="goBack" title="返回">
           <Icon icon="ri-arrow-left-s-line" :size="18" />
         </button>
-        <div class="app-icon"><Icon icon="ri-apps-2-line" :size="20" /></div>
+        <div class="app-icon"><Icon :icon="app?.icon || 'ri-apps-2-line'" :size="20" /></div>
         <div class="app-meta">
           <div class="app-title-row">
             <span class="app-name">{{ app?.name || '加载中...' }}</span>
@@ -89,7 +89,20 @@
             </div>
             <div class="form-group">
               <label>分类</label>
-              <input v-model="basicForm.category" :disabled="readonly" @input="markDirty('basic')" placeholder="教学服务 / 评测服务 / AI 服务" />
+              <input v-model="basicForm.category" :disabled="readonly" @input="markDirty('basic')" list="app-category-suggestions" placeholder="考试管理 / 教学服务 / 评测服务 / AI 服务" />
+              <datalist id="app-category-suggestions">
+                <option v-for="c in categorySuggestions" :key="c" :value="c" />
+              </datalist>
+            </div>
+            <div class="form-group">
+              <label>应用图标</label>
+              <div class="icon-input">
+                <span class="icon-preview"><Icon :icon="basicForm.icon || 'ri-apps-2-line'" :size="18" /></span>
+                <input v-model="basicForm.icon" :disabled="readonly" @input="markDirty('basic')" list="app-icon-suggestions" placeholder="ri-apps-2-line" />
+              </div>
+              <datalist id="app-icon-suggestions">
+                <option v-for="ic in iconSuggestions" :key="ic" :value="ic" />
+              </datalist>
             </div>
             <div class="form-group full">
               <label>描述</label>
@@ -385,7 +398,16 @@ const tabs = [
 ];
 
 // 基础信息
-const basicForm = ref({ name: '', version: '', category: '', description: '' });
+const basicForm = ref({ name: '', version: '', category: '', description: '', icon: '' });
+
+// 分类/图标建议（datalist）
+const categorySuggestions = ['考试管理', '教学服务', '评测服务', 'AI 服务', '通用'];
+const iconSuggestions = [
+  'ri-apps-2-line', 'ri-award-line', 'ri-book-open-line', 'ri-calculator-line',
+  'ri-checkbox-multiple-line', 'ri-computer-line', 'ri-database-2-line', 'ri-file-list-3-line',
+  'ri-flask-line', 'ri-global-line', 'ri-lightbulb-line', 'ri-medal-line',
+  'ri-school-line', 'ri-settings-3-line', 'ri-store-2-line', 'ri-tools-line',
+];
 
 // 各类清单文本（textarea 编辑）
 const appInfoText = ref('');
@@ -584,7 +606,8 @@ async function loadApp() {
       name: res.name || '',
       version: res.version || '1.0.0',
       category: res.category || '通用',
-      description: res.description || ''
+      description: res.description || '',
+      icon: res.icon || res.app_info_manifest?.icon || 'ri-apps-2-line'
     };
     appInfoText.value = res.app_info_manifest ? JSON.stringify(res.app_info_manifest, null, 2) : '';
     editorHtml.value = res.editor_html || '';
@@ -954,6 +977,25 @@ onMounted(() => {
 }
 
 .form-group.full { grid-column: 1 / -1; }
+
+.icon-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.icon-preview {
+  position: absolute;
+  left: var(--spacer-2);
+  display: inline-flex;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+.icon-input input {
+  width: 100%;
+  padding-left: calc(var(--spacer-2) * 2 + 18px);
+}
 
 .manifest-hint {
   display: flex;

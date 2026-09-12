@@ -1,0 +1,153 @@
+<div class="ci-app">
+  <!-- ===== 顶栏：格式识别 + 档案名 + 统计（保存走平台 Ribbon 保存按钮） ===== -->
+  <div class="ci-topbar">
+    <div class="ci-badge" id="ciFormatBadge"><span class="ci-badge-dot"></span><span id="ciFormatText">识别中…</span></div>
+    <input type="text" id="ciProfileName" class="ci-name-input" placeholder="档案名称（Name）" oninput="onNameInput()" />
+    <span class="ci-stats" id="ciStats"></span>
+  </div>
+
+  <!-- ===== 视图切换（对齐 ClassIsland 2 档案设置：课表 / 时间表 / 科目） ===== -->
+  <div class="ci-view-tabs" id="ciViewTabs">
+    <button class="ci-view-tab" data-view="classplans" onclick="switchView('classplans')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      <span>课表</span>
+    </button>
+    <button class="ci-view-tab" data-view="timelayouts" onclick="switchView('timelayouts')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+      <span>时间表</span>
+    </button>
+    <button class="ci-view-tab" data-view="subjects" onclick="switchView('subjects')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <span>科目</span>
+    </button>
+    <button class="ci-view-tab" data-view="raw" onclick="switchView('raw')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      <span>JSON 源码</span>
+    </button>
+  </div>
+
+  <div class="ci-body">
+    <!-- ===== 课表：列表 / 周视图 / 月视图（对齐 ClassIsland 2 底部页签） ===== -->
+    <div class="ci-view" id="ciViewClassPlans" style="display:none">
+      <div class="ci-subtabs" id="ciCpSubTabs">
+        <button class="ci-subtab active" data-sub="list" onclick="switchClassPlanSubView('list')">列表</button>
+        <button class="ci-subtab" data-sub="week" onclick="switchClassPlanSubView('week')">周视图</button>
+        <button class="ci-subtab" data-sub="month" onclick="switchClassPlanSubView('month')">月视图</button>
+      </div>
+
+      <!-- 列表视图：左课表群分组树 + 右设置（可收起）与课程 -->
+      <div class="ci-cp-list" id="ciCpListWrap">
+        <div class="ci-split">
+          <div class="ci-list-pane">
+            <div class="ci-panel-bar">
+              <span class="ci-panel-title">课表（ClassPlans）</span>
+              <div class="ci-items-actions">
+                <button class="ci-btn small" onclick="addClassPlan()" title="新建课表">+ 课表</button>
+                <button class="ci-btn small" onclick="addGroup()" title="新建课表群">+ 群</button>
+              </div>
+            </div>
+            <div class="ci-list" id="ciClassPlanList"></div>
+          </div>
+          <div class="ci-detail-pane" id="ciClassPlanDetail">
+            <div class="ci-empty">选择左侧课表以编辑</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 周视图 -->
+      <div class="ci-cp-week" id="ciCpWeekWrap" style="display:none"></div>
+
+      <!-- 月视图（支持预定课表 OrderedSchedules） -->
+      <div class="ci-cp-month" id="ciCpMonthWrap" style="display:none"></div>
+    </div>
+
+    <!-- ===== 时间表：列表 / 可视化 ===== -->
+    <div class="ci-view" id="ciViewTimeLayouts" style="display:none">
+      <div class="ci-subtabs" id="ciTlSubTabs">
+        <button class="ci-subtab active" data-sub="list" onclick="switchTimeLayoutSubView('list')">列表</button>
+        <button class="ci-subtab" data-sub="visual" onclick="switchTimeLayoutSubView('visual')">可视化</button>
+      </div>
+      <div class="ci-tl-list" id="ciTlListWrap">
+        <div class="ci-split">
+          <div class="ci-list-pane">
+            <div class="ci-panel-bar">
+              <span class="ci-panel-title">时间表（TimeLayouts）</span>
+              <button class="ci-btn small" onclick="addTimeLayout()">+ 时间表</button>
+            </div>
+            <div class="ci-list" id="ciTimeLayoutList"></div>
+          </div>
+          <div class="ci-detail-pane" id="ciTimeLayoutDetail">
+            <div class="ci-empty">选择左侧时间表以编辑时间点</div>
+          </div>
+        </div>
+      </div>
+      <div class="ci-tl-visual" id="ciTlVisualWrap" style="display:none"></div>
+    </div>
+
+    <!-- ===== 科目：左表格 + 右详情（对齐 ClassIsland 2） ===== -->
+    <div class="ci-view" id="ciViewSubjects" style="display:none">
+      <div class="ci-split">
+        <div class="ci-subjects-pane">
+          <div class="ci-panel-bar">
+            <span class="ci-panel-title">科目（Subjects）</span>
+            <div class="ci-items-actions">
+              <button class="ci-btn small" onclick="addSubject()">+ 添加</button>
+              <button class="ci-btn small" onclick="showPresetPanel()" title="从 ClassIsland 默认科目中添加">预设科目</button>
+              <button class="ci-btn small" onclick="duplicateSubject()" title="复制选中的科目">复制</button>
+              <button class="ci-btn small danger" onclick="removeSelectedSubject()">删除</button>
+            </div>
+          </div>
+          <div class="ci-table-wrap">
+            <table class="ci-table" id="ciSubjectsTable">
+              <thead><tr><th>名称 (Name)</th><th style="width:20%">简称 (Initial)</th><th style="width:26%">教师 (TeacherName)</th></tr></thead>
+              <tbody id="ciSubjectsBody"></tbody>
+            </table>
+            <div class="ci-empty" id="ciSubjectsEmpty">暂无科目，点击「添加」或「预设科目」创建</div>
+          </div>
+        </div>
+        <div class="ci-detail-pane ci-subject-detail" id="ciSubjectDetail">
+          <div class="ci-empty">选择左侧科目以编辑详情</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== JSON 源码 ===== -->
+    <div class="ci-view" id="ciViewRaw" style="display:none">
+      <div class="ci-panel-bar">
+        <span class="ci-panel-title">JSON 源码（保留未知字段，Ctrl+S 保存）</span>
+        <button class="ci-btn small" onclick="syncFromRaw()">从源码载入</button>
+      </div>
+      <textarea class="ci-raw" id="ciRaw" spellcheck="false" oninput="onRawInput()"></textarea>
+    </div>
+
+    <!-- ===== 通用 JSON 回退编辑器（非 ClassIsland 格式） ===== -->
+    <div class="ci-view" id="ciGenericView" style="display:none">
+      <div class="ci-generic-tip">
+        当前文件不是 ClassIsland 档案（未识别到 TimeLayouts / ClassPlans / Subjects 关键结构），已回退为通用 JSON 编辑器。
+        档案需包含 <code>TimeLayouts</code>、<code>ClassPlans</code>、<code>Subjects</code> 三个对象后才能进入结构化编辑。
+      </div>
+      <textarea class="ci-raw" id="ciGeneric" spellcheck="false" oninput="onGenericInput()"></textarea>
+    </div>
+  </div>
+
+  <!-- ===== 课程快速选择面板 ===== -->
+  <div class="ci-quick-overlay" id="ciQuickSelect" style="display:none" onclick="if(event.target===this)closeQuickSelect()">
+    <div class="ci-quick-panel">
+      <div class="ci-quick-head">
+        <span id="ciQuickTitle">快速选择科目</span>
+        <button class="ci-row-del" onclick="closeQuickSelect()">&times;</button>
+      </div>
+      <input type="text" class="ci-quick-search" id="ciQuickSearch" placeholder="搜索科目…" oninput="renderQuickSelect()" />
+      <div class="ci-quick-grid" id="ciQuickGrid"></div>
+    </div>
+  </div>
+
+  <!-- ===== 问题面板 ===== -->
+  <div class="ci-issues" id="ciIssuesPanel">
+    <div class="ci-issues-head" onclick="toggleIssues()">
+      <span>问题 <b id="ciIssueCount">0</b></span>
+      <span class="ci-issues-toggle" id="ciIssueToggleIcon">&#9662;</span>
+    </div>
+    <div class="ci-issues-body" id="ciIssueList"></div>
+  </div>
+</div>

@@ -387,6 +387,11 @@ module.exports = function seed() {
     data_flow: '采集 -> 清洗 -> 综合分析 -> 个性化推荐',
   });
 
+  // 示例应用通过 AppFS 存放在文件系统（smart_classroom_v1 / homework_eval_v1），
+  // SQL 的 apps 表在种子阶段没有对应行，故此处 id 允许为 null（消费方按 app_key 处理）
+  const appId1 = DB.scalar("SELECT id FROM apps WHERE app_key = 'smart_classroom_v1'") ?? null;
+  const appId2 = DB.scalar("SELECT id FROM apps WHERE app_key = 'homework_eval_v1'") ?? null;
+
   const sampleCallingInstances = JSON.stringify({
     instances: [
       { app_id: appId1, app_key: 'smart_classroom_v1', app_name: '智慧课堂云服务', alias: '主课堂', role: 'primary' },
@@ -420,7 +425,7 @@ module.exports = function seed() {
   });
 
   // ===== 将第一个实例关联到智慧课堂云服务应用，便于演示自动生成编辑器 =====
-  if (allInstanceIds[0] !== undefined) {
+  if (appId1 && allInstanceIds[0] !== undefined) {
     DB.update('instances', { app_id: appId1 }, 'id = ?', [allInstanceIds[0]]);
   }
 
@@ -502,7 +507,6 @@ module.exports = function seed() {
         type: n[0],
         title: n[1],
         content: n[2],
-        is_read: 0,
         created_at: dateStr(new Date(Date.now() - (1 + Math.floor(Math.random() * 72)) * 3600e3)),
       });
     }

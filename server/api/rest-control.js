@@ -31,6 +31,10 @@
  *   exam_config_deploy       部署考试配置到设备
  *   exam_config_list         列出考试配置部署记录
  *
+ *   === ClassIsland 档案 ===
+ *   profile_list             列出 profiles 目录下识别为 ClassIsland 档案的 .json 文件
+ *   profile_deploy           将 ClassIsland 档案部署到设备（profile.prepare）
+ *
  *   === 错误上报 (v1) ===
  *   device_errors           上报设备错误
  *
@@ -94,6 +98,29 @@ function phpTruthy(v) {
   if (typeof v === 'string') return v !== '' && v !== '0';
   if (Array.isArray(v)) return v.length > 0;
   if (typeof v === 'object') return Object.keys(v).length > 0;
+  return true;
+}
+
+/**
+ * ClassIsland 档案关键格式识别：
+ * 必须同时存在 TimeLayouts / ClassPlans / Subjects 三个字典，且条目结构合法。
+ */
+function isClassIslandProfile(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+  const isDict = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!isDict(obj.TimeLayouts) || !isDict(obj.ClassPlans) || !isDict(obj.Subjects)) return false;
+  for (const id of Object.keys(obj.Subjects)) {
+    const s = obj.Subjects[id];
+    if (!isDict(s) || typeof s.Name !== 'string') return false;
+  }
+  for (const id of Object.keys(obj.TimeLayouts)) {
+    const tl = obj.TimeLayouts[id];
+    if (!isDict(tl) || !Array.isArray(tl.Layouts)) return false;
+  }
+  for (const id of Object.keys(obj.ClassPlans)) {
+    const cp = obj.ClassPlans[id];
+    if (!isDict(cp)) return false;
+  }
   return true;
 }
 
@@ -360,7 +387,10 @@ module.exports = async (ctx) => {
       const displayName = body.display_name ?? '';
       const maxUses = parseInt(body.max_uses ?? 1, 10) || 0;
       const expiresIn = parseInt(body.expires_in_seconds ?? 86400, 10) || 0;
-      const rawCode = 'EA2-' + crypto.randomBytes(16).toString('hex');
+      // 前缀可由平台侧应用指定（如 ClassIsland 用 CSES-），默认保持 EA2- 兼容
+      const rawPrefix = String(body.prefix ?? 'EA2-').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const prefix = rawPrefix !== '' ? rawPrefix.slice(0, 8) + '-' : 'EA2-';
+      const rawCode = prefix + crypto.randomBytes(16).toString('hex');
       const codeHash = sha256(rawCode);
       const now = nowStr();
       DB.insert('ea2_enrollment_codes', {
@@ -747,6 +777,128 @@ module.exports = async (ctx) => {
         };
       });
       Response.success(result);
+    }
+
+    // ===== ClassIsland 档案 =====
+    case 'profile_list': {
+      // 返回 profiles 目录下的 .json 文件（仅保留通过 ClassIsland 关键格式识别的档案）
+      const inst0 = DB.one('SELECT instance_uid FROM instances WHERE id = ?', [instanceId]);
+      const baseDir0 = inst0 ? ('/instances/' + inst0.instance_uid + '/profiles/') : '/instances/-/profiles/';
+      const files = DB.all(
+        "SELECT * FROM cloud_files WHERE instance_id = ? AND file_type = 'json' AND (directory = ? OR name LIKE '%.json') ORDER BY updated_at DESC",
+        [instanceId, baseDir0]
+      );
+      const result = [];
+      for (const f of files) {
+        if (!String(f.directory ?? '').endsWith('/profiles/')) continue;
+        const content = Buffer.isBuffer(f.content) ? f.content.toString('utf8') : (f.content ?? '{}');
+        const data = jsonDecodeSafe(content, null);
+        if (!isClassIslandProfile(data)) continue;
+        result.push({
+          id: f.id,
+          name: f.name,
+          profile_name: data.Name ?? f.name,
+          subjects: Object.keys(data.Subjects ?? {}).length,
+          time_layouts: Object.keys(data.TimeLayouts ?? {}).length,
+          class_plans: Object.keys(data.ClassPlans ?? {}).length,
+          file_size: f.file_size,
+          updated_at: f.updated_at,
+        });
+      }
+      Response.success(result);
+    }
+
+    case 'profile_deploy': {
+      // 将 ClassIsland 档案（.json）下发到设备：为每台设备创建 profile.prepare 命令
+      const profileConfigId = body.profile_config_id ?? '';
+      let deviceIds = body.device_ids ?? []; // 空 = 所有设备
+      const profileName = String(body.profile_name ?? body.target_profile ?? '').trim();
+
+      if (!phpTruthy(profileConfigId)) {
+        Response.error('缺少 profile_config_id');
+      }
+
+      // 查找档案文件：优先 profiles 目录，其次按 id
+      let profileFile = null;
+      const inst = DB.one('SELECT instance_uid FROM instances WHERE id = ?', [instanceId]);
+      if (inst) {
+        const baseDir = '/instances/' + inst.instance_uid + '/profiles/';
+        let fileName = String(profileConfigId);
+        if (!fileName.endsWith('.json')) fileName += '.json';
+        profileFile = DB.one(
+          "SELECT * FROM cloud_files WHERE instance_id = ? AND file_type = 'json' AND directory = ? AND (name = ? OR id = ?)",
+          [instanceId, baseDir, fileName, parseInt(profileConfigId, 10) || 0]
+        );
+      }
+      if (!profileFile) {
+        profileFile = DB.one(
+          'SELECT * FROM cloud_files WHERE instance_id = ? AND id = ?',
+          [instanceId, parseInt(profileConfigId, 10) || 0]
+        );
+      }
+      if (!profileFile) {
+        Response.error('档案文件不存在', 404, 404);
+      }
+
+      const profileContent = Buffer.isBuffer(profileFile.content)
+        ? profileFile.content.toString('utf8')
+        : (profileFile.content ?? '');
+      const profileData = jsonDecodeSafe(profileContent, null);
+      if (!isClassIslandProfile(profileData)) {
+        Response.error('文件不是有效的 ClassIsland 档案（缺少 TimeLayouts/ClassPlans/Subjects 关键结构）', 400, 400);
+      }
+
+      const now = nowStr();
+      const deploymentId = Helpers.uuid();
+
+      // 获取目标设备
+      if (Helpers.empty(deviceIds)) {
+        const devices = DB.all(
+          "SELECT device_id FROM ea2_devices WHERE instance_id = ? AND lifecycle_status = 'active'",
+          [instanceId]
+        );
+        deviceIds = devices.map((d) => d.device_id);
+      }
+
+      if (Helpers.empty(deviceIds)) {
+        Response.error('没有可用的活跃设备');
+      }
+
+      // 为每个设备创建 profile.prepare 命令
+      for (const did of deviceIds) {
+        DB.insert('ea2_commands', {
+          command_id: Helpers.uuid(),
+          instance_id: instanceId,
+          device_id: did,
+          command_type: 'profile.prepare',
+          payload: JSON.stringify({
+            deployment_id: deploymentId,
+            profile_config_id: String(profileFile.id),
+            profile_version_id: deploymentId,
+            profile_name: phpTruthy(profileName) ? profileName : String(profileFile.name),
+            profile_display_name: profileData.Name ?? '',
+            artifact: {
+              url: '/api/instance-files?action=download&id=' + profileFile.id,
+              media_type: 'application/vnd.classisland.profile+json',
+              size_bytes: Buffer.byteLength(profileContent, 'utf8'),
+              sha256: crypto.createHash('sha256').update(profileContent, 'utf8').digest('hex'),
+              expires_at: isoC(new Date(Date.now() + 3600 * 1000)),
+            },
+          }),
+          status: 'pending',
+          issued_at: now,
+          expires_at: dateStr(new Date(Date.now() + 3600 * 1000)),
+          created_at: now,
+        });
+        const wc = wsControl();
+        if (wc) wc.notifyDevice(instanceId, did);
+      }
+
+      Response.success({
+        deployment_id: deploymentId,
+        device_count: deviceIds.length,
+        profile_name: profileData.Name ?? '未命名档案',
+      }, '档案已部署');
     }
 
     // ===== 连接协议切换（管理端调用，实时协调客户端） =====

@@ -11,9 +11,6 @@ importers:
       bcryptjs:
         specifier: ^3.0.3
         version: 3.0.3
-      better-sqlite3:
-        specifier: ^13.0.3
-        version: 13.0.3
       express:
         specifier: ^5.2.1
         version: 5.2.1
@@ -51,10 +48,6 @@ packages:
   bcryptjs@3.0.3:
     resolution: {integrity: sha512-GlF5wPWnSa/X5LKM1o0wz0suXIINz1iHRLvTS+sLyi7XPbe5ycmYI3DlZqVGZZtDgl4DmasFg7gOB3JYbphV5g==}
     hasBin: true
-
-  better-sqlite3@13.0.3:
-    resolution: {integrity: sha512-RbOBxmLBG8uvFUc15X9+9SFemKcQ0WBuISBVkpuiaUB2qblC8UWlHEjdWVoZ8AdhSwmoEgsiXKfopX0CQxaACQ==}
-    engines: {node: '>=22'}
 
   body-parser@2.3.0:
     resolution: {integrity: sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==}
@@ -285,10 +278,6 @@ packages:
     resolution: {integrity: sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==}
     engines: {node: '>= 0.6'}
 
-  node-addon-api@8.9.2:
-    resolution: {integrity: sha512-VijLXbi3UACN69I0JVXJsX4tjACjNoQDgv2gTF6sx2wWEi8tkSg2eX8p5gSIFi8z2+DL3oHmY6OyKce38SDolg==}
-    engines: {node: ^18 || ^20 || >= 21}
-
   object-inspect@1.13.4:
     resolution: {integrity: sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==}
     engines: {node: '>= 0.4'}
@@ -482,10 +471,6 @@ snapshots:
   append-field@1.0.0: {}
 
   bcryptjs@3.0.3: {}
-
-  better-sqlite3@13.0.3:
-    dependencies:
-      node-addon-api: 8.9.2
 
   body-parser@2.3.0:
     dependencies:
@@ -724,8 +709,6 @@ snapshots:
       type-is: 1.6.18
 
   negotiator@1.0.0: {}
-
-  node-addon-api@8.9.2: {}
 
   object-inspect@1.13.4: {}
 

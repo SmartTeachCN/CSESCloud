@@ -65,7 +65,8 @@ module.exports = async (ctx) => {
   if (method === 'GET' && action === 'published') {
     const apps = AppFS.listPublished().map(a => ({
       _id: a._id, app_key: a.app_key, name: a.name,
-      version: a.version, description: a.description, category: a.category,
+      version: a.version, description: a.description, category: a.category, icon: a.icon,
+      is_official: a.is_official,
     }));
     Response.success(apps);
   }
@@ -83,7 +84,7 @@ module.exports = async (ctx) => {
     }
     const result = apps.map(a => ({
       _id: a._id, app_key: a.app_key, name: a.name, version: a.version,
-      description: a.description, category: a.category, status: a.status,
+      description: a.description, category: a.category, icon: a.icon, status: a.status,
       developer_username: a.developer_username, is_official: a.is_official,
       forked_from: a.forked_from, forked_by: a.forked_by,
       created_at: a.created_at, updated_at: a.updated_at,
@@ -111,7 +112,7 @@ module.exports = async (ctx) => {
     // 返回精简字段
     const result = apps.map(a => ({
       _id: a._id, app_key: a.app_key, name: a.name, version: a.version,
-      description: a.description, category: a.category, status: a.status,
+      description: a.description, category: a.category, icon: a.icon, status: a.status,
       is_shared: a.is_shared, is_official: a.is_official,
       developer_username: a.developer_username,
       created_at: a.created_at, updated_at: a.updated_at,
@@ -146,12 +147,13 @@ module.exports = async (ctx) => {
       version: body.version ?? '1.0.0',
       description: body.description ?? '',
       category: body.category ?? '通用',
+      icon: body.icon ?? 'ri-apps-2-line',
       is_official: isOfficial,
       app_info_manifest: {
         name, version: body.version ?? '1.0.0',
         description: body.description ?? '',
         category: body.category ?? '通用',
-        author: effectiveDeveloper, homepage: '', tags: [], icon: 'ri-apps-2-line',
+        author: effectiveDeveloper, homepage: '', tags: [], icon: body.icon ?? 'ri-apps-2-line',
       },
       editor_html: '', editor_js: '',
       storage_manifest: { collections: [] },
@@ -174,6 +176,7 @@ module.exports = async (ctx) => {
     if ('version' in body) updates.version = String(body.version).trim();
     if ('description' in body) updates.description = body.description;
     if ('category' in body) updates.category = body.category;
+    if ('icon' in body) updates.icon = String(body.icon ?? '').trim();
     writeApp(app, updates);
     Response.success(null, '已保存');
   }

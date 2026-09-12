@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "protocolVersion": 1,
+  "supportedCommands": [
+    "profile.prepare",
+    "profile.activate",
+    "broadcast.show",
+    "broadcast.dismiss",
+    "settings.apply"
+  ],
+  "description": "用于 ClassIsland 客户端（CSES Cloud 适配器）远程同步档案、下发广播与设置"
+}
