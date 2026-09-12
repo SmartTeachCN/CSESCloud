@@ -155,6 +155,8 @@ module.exports = function seed() {
     author: 'admin',
     homepage: 'https://cses.cloud/apps/smart-classroom',
     icon: 'ri-graduation-cap-line',
+    // 演示应用：不进入“新建实例”的应用选择列表
+    hide_from_instances: true,
     tags: ['课堂', '教学', 'K12'],
     // Ribbon 工具栏：编辑器顶部按钮组，点击后通过 postMessage 通知 iframe
     ribbon: [
@@ -334,6 +336,8 @@ module.exports = function seed() {
     category: 'AI服务',
     author: 'dev_ai',
     icon: 'ri-brain-line',
+    // 演示应用：不进入“新建实例”的应用选择列表
+    hide_from_instances: true,
     tags: ['AI', '推荐', '学习路径'],
     ribbon: [
       { label: 'AI', tools: [

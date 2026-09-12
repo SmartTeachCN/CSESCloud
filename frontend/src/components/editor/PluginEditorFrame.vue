@@ -9,7 +9,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 
 const props = defineProps<{
   plugin: {
@@ -104,8 +104,8 @@ function onLoad() {
   emit('ready');
 }
 
-// 监听来自插件 iframe 的消息
-window.addEventListener('message', (e) => {
+// 监听来自插件 iframe 的消息（随组件挂载/卸载注册与移除，避免多实例叠加导致保存/请求重复触发）
+function onPluginMessage(e: MessageEvent) {
   if (!e.data) return;
 
   // 处理插件请求
@@ -138,6 +138,14 @@ window.addEventListener('message', (e) => {
   if (e.data.__csesPluginSetRibbon) {
     emit('setRibbon', Array.isArray(e.data.groups) ? e.data.groups : []);
   }
+}
+
+onMounted(() => {
+  window.addEventListener('message', onPluginMessage);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('message', onPluginMessage);
 });
 
 defineExpose({ iframeReady, pluginFrame });

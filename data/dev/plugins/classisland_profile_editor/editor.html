@@ -1,9 +1,13 @@
 <div class="ci-app">
-  <!-- ===== 顶栏：格式识别 + 档案名 + 统计（保存走平台 Ribbon 保存按钮） ===== -->
+  <!-- ===== 顶栏：格式识别 + 档案名 + 统计 + 当前启用课表（保存走平台 Ribbon 保存按钮） ===== -->
   <div class="ci-topbar">
     <div class="ci-badge" id="ciFormatBadge"><span class="ci-badge-dot"></span><span id="ciFormatText">识别中…</span></div>
     <input type="text" id="ciProfileName" class="ci-name-input" placeholder="档案名称（Name）" oninput="onNameInput()" />
     <span class="ci-stats" id="ciStats"></span>
+    <div class="ci-topbar-actions">
+      <button class="ci-btn small" onclick="openGroupModal()" title="选择当前课表群">课表群</button>
+      <div class="ci-active-plan" id="ciActivePlan"></div>
+    </div>
   </div>
 
   <!-- ===== 视图切换（对齐 ClassIsland 2 档案设置：课表 / 时间表 / 科目） ===== -->
@@ -27,7 +31,7 @@
   </div>
 
   <div class="ci-body">
-    <!-- ===== 课表：列表 / 周视图 / 月视图（对齐 ClassIsland 2 底部页签） ===== -->
+    <!-- ===== 课表：列表 / 周视图 / 月视图（对齐 ClassIsland 2 底部页签）+ 常驻快速选择 ===== -->
     <div class="ci-view" id="ciViewClassPlans" style="display:none">
       <div class="ci-subtabs" id="ciCpSubTabs">
         <button class="ci-subtab active" data-sub="list" onclick="switchClassPlanSubView('list')">列表</button>
@@ -35,30 +39,41 @@
         <button class="ci-subtab" data-sub="month" onclick="switchClassPlanSubView('month')">月视图</button>
       </div>
 
-      <!-- 列表视图：左课表群分组树 + 右设置（可收起）与课程 -->
-      <div class="ci-cp-list" id="ciCpListWrap">
-        <div class="ci-split">
-          <div class="ci-list-pane">
-            <div class="ci-panel-bar">
-              <span class="ci-panel-title">课表（ClassPlans）</span>
-              <div class="ci-items-actions">
-                <button class="ci-btn small" onclick="addClassPlan()" title="新建课表">+ 课表</button>
-                <button class="ci-btn small" onclick="addGroup()" title="新建课表群">+ 群</button>
+      <div class="ci-cp-body">
+        <!-- 列表视图：左课表群分组树 + 右设置（可收起）与课程 -->
+        <div class="ci-cp-list" id="ciCpListWrap">
+          <div class="ci-split">
+            <div class="ci-list-pane">
+              <div class="ci-panel-bar">
+                <span class="ci-panel-title">课表（ClassPlans）</span>
+                <div class="ci-items-actions">
+                  <button class="ci-btn small" onclick="addClassPlan()" title="新建课表">+ 课表</button>
+                  <button class="ci-btn small" onclick="duplicateClassPlan()" title="克隆当前选中的课表">复制</button>
+                </div>
               </div>
+              <div class="ci-list" id="ciClassPlanList"></div>
             </div>
-            <div class="ci-list" id="ciClassPlanList"></div>
-          </div>
-          <div class="ci-detail-pane" id="ciClassPlanDetail">
-            <div class="ci-empty">选择左侧课表以编辑</div>
+            <div class="ci-detail-pane" id="ciClassPlanDetail">
+              <div class="ci-empty">选择左侧课表以编辑</div>
+            </div>
           </div>
         </div>
+
+        <!-- 周视图 -->
+        <div class="ci-cp-week" id="ciCpWeekWrap" style="display:none"></div>
+
+        <!-- 月视图（支持预定课表 OrderedSchedules） -->
+        <div class="ci-cp-month" id="ciCpMonthWrap" style="display:none"></div>
+
+        <!-- 常驻快速选择菜单（列表 / 周视图显示，仅科目名称） -->
+        <div class="ci-quick-dock" id="ciQuickDock">
+          <div class="ci-quick-dock-head">
+            <span class="ci-panel-title">快速选择</span>
+            <label class="ci-quick-autonext"><input type="checkbox" id="ciDockAutoNext" onchange="onAutoNextChange(this.checked)" />自动下一个</label>
+          </div>
+          <div class="ci-quick-dock-list" id="ciQuickDockList"></div>
+        </div>
       </div>
-
-      <!-- 周视图 -->
-      <div class="ci-cp-week" id="ciCpWeekWrap" style="display:none"></div>
-
-      <!-- 月视图（支持预定课表 OrderedSchedules） -->
-      <div class="ci-cp-month" id="ciCpMonthWrap" style="display:none"></div>
     </div>
 
     <!-- ===== 时间表：列表 / 可视化 ===== -->
@@ -139,6 +154,21 @@
       </div>
       <input type="text" class="ci-quick-search" id="ciQuickSearch" placeholder="搜索科目…" oninput="renderQuickSelect()" />
       <div class="ci-quick-grid" id="ciQuickGrid"></div>
+    </div>
+  </div>
+
+  <!-- ===== 课表群选择模态框 ===== -->
+  <div class="ci-quick-overlay" id="ciGroupModal" style="display:none" onclick="if(event.target===this)closeGroupModal()">
+    <div class="ci-quick-panel ci-group-panel">
+      <div class="ci-quick-head">
+        <span>选择课表群（SelectedClassPlanGroupId）</span>
+        <button class="ci-row-del" onclick="closeGroupModal()">&times;</button>
+      </div>
+      <div class="ci-group-list" id="ciGroupList"></div>
+      <div class="ci-group-foot">
+        <button class="ci-btn small" onclick="addGroup()">+ 新建课表群</button>
+        <button class="ci-btn small primary" onclick="closeGroupModal()">完成</button>
+      </div>
     </div>
   </div>
 

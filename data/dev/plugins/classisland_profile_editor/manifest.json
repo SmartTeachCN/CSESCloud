@@ -6,7 +6,7 @@
   "extensions": [
     "json"
   ],
-  "icon": "ri-calendar-view-line",
+  "icon": "asset:icon.png",
   "ribbon": [
     {
       "label": "档案",

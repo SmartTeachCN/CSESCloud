@@ -6,6 +6,8 @@ var selectedProfileId = null;
 var deployProfileId = null;
 var lastEnrollCode = null;
 var configCache = {};
+var autoSaveEnabled = true;    // 平台 Ribbon「自动保存」开关（由宿主经 __ceseAutoSave 同步）
+var configDirty = false;       // 自动保存关闭时，配置有未写入的更改
 
 // ===== 初始化 =====
 (function init() {
@@ -15,7 +17,15 @@ var configCache = {};
 
 function listenCommands() {
   window.addEventListener('message', function (e) {
-    if (!e.data || !e.data.__ceseCommand) return;
+    if (!e.data) return;
+    // 平台自动保存开关同步：重新开启时冲销未保存的配置更改
+    if (typeof e.data.__ceseAutoSave === 'boolean') {
+      var prev = autoSaveEnabled;
+      autoSaveEnabled = e.data.__ceseAutoSave;
+      if (!prev && autoSaveEnabled && configDirty) saveConfig();
+      return;
+    }
+    if (!e.data.__ceseCommand) return;
     switch (e.data.__ceseCommand) {
       case 'page_connect': switchPage('connect'); break;
       case 'page_profiles': switchPage('profiles'); break;
@@ -71,8 +81,14 @@ async function refreshDevices() {
   } catch (e) { console.error('获取设备列表失败:', e); }
 }
 
+/** 在线判定：优先使用服务端按协议/轮询间隔计算的 is_online；缺失时按协议放宽窗口回退 */
 function deviceOnline(d) {
-  return d.last_seen_at && (Date.now() - new Date(d.last_seen_at).getTime()) < 60000;
+  if (d && typeof d.is_online === 'boolean') return d.is_online;
+  if (!d || !d.last_seen_at) return false;
+  var t = Date.parse(String(d.last_seen_at).replace(' ', 'T'));
+  if (isNaN(t)) return false;
+  var threshold = d.protocol === 'ws' ? 90000 : 630000; // 长轮询默认间隔 300 秒，放宽到 2 倍以上
+  return (Date.now() - t) < threshold;
 }
 
 function renderDeviceCards(devices, profilePlaying) {
@@ -81,17 +97,16 @@ function renderDeviceCards(devices, profilePlaying) {
     container.innerHTML = '<div class="cia-empty">暂无设备连接，请生成注册码并在 ClassIsland 客户端的「CSES Cloud 适配器」中导入凭据（或填写服务器地址与注册码）</div>';
     return;
   }
-  var now = Date.now();
   container.innerHTML = devices.map(function (d) {
     var lastSeen = d.last_seen_at ? new Date(d.last_seen_at).getTime() : 0;
-    var isOnline = (now - lastSeen) < 60000;
+    var isOnline = deviceOnline(d);
     var notes = d.notes || '';
     var rep = d.last_reported_state || {};
     var curProfile = rep.profile || null;
     var playing = profilePlaying[d.device_id];
     var profileLine = curProfile
-      ? '<span class="cia-dot"></span>' + escHtml(curProfile.name || curProfile.profile_name || '未命名') + (curProfile.version ? '（' + escHtml(String(curProfile.version).slice(0, 8)) + '）' : '')
-      : (playing ? '<span class="cia-dot"></span>部署中: ' + escHtml(playing.profile_name || playing.name || '未命名') : '');
+      ? escHtml(curProfile.name || curProfile.profile_name || '未命名') + (curProfile.version ? '（' + escHtml(String(curProfile.version).slice(0, 8)) + '）' : '')
+      : (playing ? '部署中: ' + escHtml(playing.profile_name || playing.name || '未命名') : '');
     var checked = selectedDevices.has(d.device_id);
     var meta = escHtml(d.platform || 'ClassIsland') + ' · ' + escHtml(d.app_version || '') + ' · ' +
       (isOnline ? '在线' : '离线') + ' · ' + (d.protocol === 'ws' ? 'WebSocket' : '长轮询') +
@@ -459,20 +474,28 @@ function openProfilePickerModal() {
   var currentId = rep.profile && rep.profile.config_id ? String(rep.profile.config_id) : '';
   document.getElementById('ciaProfilePickerModal').style.display = '';
   var list = document.getElementById('ciaProfilePickerList');
-  if (!cachedProfiles.length) {
-    list.innerHTML = '<div class="cia-empty">暂无档案，请先在「档案管理」页面创建</div>';
-    return;
-  }
-  list.innerHTML = cachedProfiles.map(function (p) {
-    var checked = String(p.id) === currentId;
-    if (checked) pickerSelectedProfileId = String(p.id);
-    return '<label class="cia-picker-item' + (checked ? ' selected' : '') + '" data-id="' + p.id + '">' +
-      '<input type="radio" name="ciaProfilePicker" value="' + p.id + '"' + (checked ? ' checked' : '') + ' onchange="pickerSelectedProfileId = String(this.value); markPickerSelection()" />' +
-      '<span class="cia-picker-main"><b>' + escHtml(p.profile_name || p.name) + '</b>' +
-      '<small>' + p.subjects + ' 科目 · ' + p.layouts + ' 时间表 · ' + p.plans + ' 课表</small></span>' +
-      (checked ? '<span class="cia-picker-current">当前</span>' : '') +
-      '</label>';
-  }).join('');
+  list.innerHTML = '<div class="cia-empty cia-empty-compact">加载中...</div>';
+  // 实时拉取档案列表，避免陈旧缓存导致“当前档案”标记/关联失效
+  window.CSES.request('listCiProfiles').then(function (profiles) {
+    cachedProfiles = profiles || [];
+    if (pickerDeviceId !== modalDevice?.device_id) return; // 弹框已被关闭/切换
+    if (!cachedProfiles.length) {
+      list.innerHTML = '<div class="cia-empty">暂无档案，请先在「档案管理」页面创建</div>';
+      return;
+    }
+    list.innerHTML = cachedProfiles.map(function (p) {
+      var checked = String(p.id) === currentId;
+      if (checked) pickerSelectedProfileId = String(p.id);
+      return '<label class="cia-picker-item' + (checked ? ' selected' : '') + '" data-id="' + p.id + '">' +
+        '<input type="radio" name="ciaProfilePicker" value="' + p.id + '"' + (checked ? ' checked' : '') + ' onchange="pickerSelectedProfileId = String(this.value); markPickerSelection()" />' +
+        '<span class="cia-picker-main"><b>' + escHtml(p.profile_name || p.name) + '</b>' +
+        '<small>' + p.subjects + ' 科目 · ' + p.layouts + ' 时间表 · ' + p.plans + ' 课表</small></span>' +
+        (checked ? '<span class="cia-picker-current">当前</span>' : '') +
+        '</label>';
+    }).join('');
+  }).catch(function (e) {
+    list.innerHTML = '<div class="cia-empty">档案列表加载失败: ' + escHtml(e.message || '') + '</div>';
+  });
 }
 
 function markPickerSelection() {
@@ -492,14 +515,25 @@ function closeProfilePicker() {
 async function confirmApplyProfile() {
   if (!pickerDeviceId) return;
   if (!pickerSelectedProfileId) { alert('请先选择一个档案'); return; }
+  var deviceId = pickerDeviceId;
   try {
     var res = await window.CSES.request('controlApi', {
       action: 'profile_deploy',
-      payload: { profile_config_id: pickerSelectedProfileId, device_ids: [pickerDeviceId] }
+      payload: { profile_config_id: pickerSelectedProfileId, device_ids: [deviceId] }
     });
     closeProfilePicker();
     alert('已下发档案应用命令（' + (res.profile_name || '档案') + '），客户端将在下次轮询/推送时应用。');
     refreshDevices();
+    // 延迟刷新设备模态框数据，客户端应用并上报后「课表档案」即显示新关联
+    setTimeout(async function () {
+      if (!modalDevice || modalDevice.device_id !== deviceId) return;
+      try {
+        modalDevice = await window.CSES.request('controlApi', { action: 'device_get', payload: { device_id: deviceId } });
+        if (modalDeviceTab === 'basic' && document.getElementById('ciaDeviceModal').style.display !== 'none') {
+          renderDeviceBasicTab();
+        }
+      } catch (e) { /* 忽略 */ }
+    }, 3000);
   } catch (e) { alert('应用失败: ' + e.message); }
 }
 
@@ -956,6 +990,12 @@ async function saveConfigField(path, value) {
     obj = obj[keys[i]];
   }
   obj[keys[keys.length - 1]] = value;
+  if (!autoSaveEnabled) {
+    // 自动保存关闭：仅记录更改，待平台 Ribbon「保存」时再写入并下发
+    configDirty = true;
+    updateConfigDirtyBadge();
+    return;
+  }
   await saveConfig();
 }
 
@@ -967,7 +1007,15 @@ async function saveConfig() {
       await window.CSES.request('saveConfigFile', { file: 'device-' + configDeviceId + '.json', content: deviceConfigRaw });
     }
     await dispatchSettings();
+    configDirty = false;
+    updateConfigDirtyBadge();
   } catch (e) { console.error('保存配置失败:', e); }
+}
+
+/** 配置页「未保存更改」提示（自动保存关闭时） */
+function updateConfigDirtyBadge() {
+  var el = document.getElementById('ciaCfgDirtyBadge');
+  if (el) el.style.display = configDirty ? '' : 'none';
 }
 
 /**
@@ -1003,6 +1051,11 @@ function switchConfigTab(tab) {
   renderConfigTab(tab);
 }
 
+/** 折叠/展开设置左栏导航组（对齐客户端 NavigationView 分组交互） */
+function toggleConfigNavGroup(headEl) {
+  headEl.parentElement.classList.toggle('open');
+}
+
 function renderConfigPage() {
   refreshConfigDeviceSelector();
   switchConfigTab('general');
@@ -1036,6 +1089,22 @@ function cfgRow(title, desc, actionHtml) {
 
 function cfgCard(title, rows) {
   return '<div class="cia-config-card">' + (title ? '<div class="cia-section-title">' + title + '</div>' : '') + rows.join('<div class="cia-config-divider"></div>') + '</div>';
+}
+
+/** 可展开设置项（对齐客户端 SettingsExpander：页眉标题+控件，点击展开显示子项） */
+function cfgExpander(title, desc, footerHtml, childRows) {
+  return '<div class="cia-expander">' +
+    '<div class="cia-expander-head" onclick="toggleCfgExpander(this)">' +
+      '<span class="cia-expander-chevron">&#9662;</span>' +
+      '<div class="cia-config-item-main" style="flex:1"><div class="cia-config-item-title">' + title + '</div><div class="cia-config-item-desc">' + desc + '</div></div>' +
+      (footerHtml ? '<div class="cia-config-item-action" onclick="event.stopPropagation()">' + footerHtml + '</div>' : '') +
+    '</div>' +
+    '<div class="cia-expander-body">' + childRows.join('<div class="cia-config-divider"></div>') + '</div>' +
+  '</div>';
+}
+
+function toggleCfgExpander(headEl) {
+  headEl.parentElement.classList.toggle('open');
 }
 
 /** 开关型设置（bool） */
@@ -1101,10 +1170,11 @@ function renderConfigTab(tab) {
     case 'general':
       html = '<h2>基本 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
         cfgCard('主界面显示', [
-          cfgRow('隐藏模式', '基础模式按下方开关隐藏主界面；规则模式按条件规则隐藏。', cfgSelect('client.hideMode', 0, [[0, '基础模式'], [1, '规则模式']], 'parseInt(this.value)')),
-          cfgRow('上课时隐藏', '上课时间自动隐藏主界面。', cfgBoolSelect('client.hideOnClass', false)),
-          cfgRow('前台是最大化窗口时隐藏', '', cfgBoolSelect('client.hideOnMaxWindow', false)),
-          cfgRow('前台是全屏窗口时隐藏', '', cfgBoolSelect('client.hideOnFullscreen', false)),
+          cfgExpander('隐藏模式', '基础模式按下方开关隐藏主界面；规则模式按条件规则隐藏。', cfgSelect('client.hideMode', 0, [[0, '基础模式'], [1, '规则模式']], 'parseInt(this.value)'), [
+            cfgRow('上课时隐藏', '上课时间自动隐藏主界面。', cfgBoolSelect('client.hideOnClass', false)),
+            cfgRow('前台是最大化窗口时隐藏', '', cfgBoolSelect('client.hideOnMaxWindow', false)),
+            cfgRow('前台是全屏窗口时隐藏', '', cfgBoolSelect('client.hideOnFullscreen', false)),
+          ]),
         ]) +
         cfgCard('周次', [
           cfgRow('单周开始时间', '单周轮换模式的起始日期（默认取本周周日）。', cfgDate('client.singleWeekStartTime', weekStartDefault())),
@@ -1120,11 +1190,12 @@ function renderConfigTab(tab) {
     case 'clock':
       html = '<h2>时钟 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
         cfgCard('精确时间', [
-          cfgRow('使用精确时间', '从 NTP 服务器获取精确时间进行课程计算。', cfgBoolSelect('client.exactTimeEnabled', true)),
-          cfgRow('NTP 服务器', '精确时间使用的 NTP 服务器地址。', cfgText('client.exactTimeServer', 'ntp.aliyun.com', 150)),
-          cfgRow('自动校时', '定期与 NTP 服务器校准时间。', cfgBoolSelect('client.timeAutoAdjust', false)),
-          cfgRow('校时间隔（秒）', '自动校时的时间间隔。', cfgNumber('client.timeAutoAdjustSeconds', 0, { min: 0, max: 86400, float: true })),
-          cfgRow('手动时间偏移（秒）', '在精确时间基础上手动调整的偏移量。', cfgNumber('client.timeOffsetSeconds', 0, { float: true })),
+          cfgExpander('使用精确时间', '从 NTP 服务器获取精确时间进行课程计算。', cfgBoolSelect('client.exactTimeEnabled', true), [
+            cfgRow('NTP 服务器', '精确时间使用的 NTP 服务器地址。', cfgText('client.exactTimeServer', 'ntp.aliyun.com', 150)),
+            cfgRow('自动校时', '定期与 NTP 服务器校准时间。', cfgBoolSelect('client.timeAutoAdjust', false)),
+            cfgRow('校时间隔（秒）', '自动校时的时间间隔。', cfgNumber('client.timeAutoAdjustSeconds', 0, { min: 0, max: 86400, float: true })),
+            cfgRow('手动时间偏移（秒）', '在精确时间基础上手动调整的偏移量。', cfgNumber('client.timeOffsetSeconds', 0, { float: true })),
+          ]),
         ]) +
         cfgCard('时间线显示', [
           cfgRow('时间点附加信息', '时间点上显示的附加信息类型。', cfgSelect('client.extraInfoType', 0, [[0, '持续时间'], [1, '已过/持续'], [2, '剩余/持续'], [3, '已过百分比'], [4, '剩余时间'], [5, '倒计时']], 'parseInt(this.value)')),
@@ -1213,24 +1284,22 @@ function renderConfigTab(tab) {
           cfgRow('允许提醒置顶', '提醒提供方可请求置顶显示。', cfgBoolSelect('client.allowNotificationTopmost', true)),
         ]) +
         cfgCard('声音', [
-          cfgRow('提醒音效', '启用提醒音效。', cfgBoolSelect('client.isNotificationSoundEnabled', true)),
-          cfgRow('允许提醒使用音效', '提醒提供方可播放音效。', cfgBoolSelect('client.allowNotificationSound', false)),
-          cfgRow('提醒音量', '', cfgNumber('client.notificationSoundVolume', 1, { min: 0, max: 1, step: 0.05, float: true })),
+          cfgExpander('提醒音效', '启用提醒音效。', cfgBoolSelect('client.isNotificationSoundEnabled', true), [
+            cfgRow('允许提醒使用音效', '提醒提供方可播放音效。', cfgBoolSelect('client.allowNotificationSound', false)),
+            cfgRow('提醒音量', '', cfgNumber('client.notificationSoundVolume', 1, { min: 0, max: 1, step: 0.05, float: true })),
+          ]),
         ]) +
         cfgCard('语音', [
-          cfgRow('提醒语音', '启用提醒语音朗读。', cfgBoolSelect('client.isSpeechEnabled', true)),
-          cfgRow('允许提醒使用语音', '提醒提供方可朗读内容。', cfgBoolSelect('client.allowNotificationSpeech', false)),
-          cfgRow('语音音量', '', cfgNumber('client.speechVolume', 1, { min: 0, max: 1, step: 0.05, float: true })),
+          cfgExpander('提醒语音', '启用提醒语音朗读。', cfgBoolSelect('client.isSpeechEnabled', true), [
+            cfgRow('允许提醒使用语音', '提醒提供方可朗读内容。', cfgBoolSelect('client.allowNotificationSpeech', false)),
+            cfgRow('语音音量', '', cfgNumber('client.speechVolume', 1, { min: 0, max: 1, step: 0.05, float: true })),
+          ]),
         ]) +
         cfgCard('课程提醒', [
           cfgRow('准备上课提醒', '上课前指定时间发出提醒。', cfgBoolSelect('client.classPrepareEnabled', true)),
           cfgRow('提醒提前量（秒）', '准备上课提醒的提前秒数。', cfgNumber('client.classPrepareSeconds', 60, { min: 10, max: 3600 })),
           cfgRow('下课提醒', '下课时发出提醒。', cfgBoolSelect('client.classOffEnabled', true)),
           cfgRow('课程切换提醒', '课程切换时发出提醒。', cfgBoolSelect('client.classChangingEnabled', true)),
-        ]) +
-        cfgCard('广播测试', [
-          cfgRow('发送测试广播', isGlobal ? '向所有设备下发一条测试广播。' : '向该设备下发一条测试广播。', '<button class="cia-btn small" onclick="showBroadcastDialog(' + (isGlobal ? '' : ('\'' + configDeviceId + '\', \'\'')) + ')">发送</button>'),
-          cfgRow('撤回广播', '向客户端下发 broadcast.dismiss 关闭当前提醒。', '<button class="cia-btn small danger" onclick="dismissBroadcast(' + (isGlobal ? '' : ('\'' + configDeviceId + '\'')) + ')">撤回</button>'),
         ]);
       break;
     case 'window':
@@ -1247,8 +1316,9 @@ function renderConfigTab(tab) {
         ]) +
         cfgCard('交互与显示', [
           cfgRow('启用鼠标点击', '启用时鼠标可与主界面元素交互；禁用时点击将穿透到后方窗口。', cfgBoolSelect('client.isMouseClickingEnabled', true)),
-          cfgRow('指针移入淡化', '鼠标移入或触屏点击主界面区域时淡化主界面。', cfgBoolSelect('client.isMouseInFadingEnabled', true)),
-          cfgRow('触屏点击后自动恢复时间（ms）', '触屏点击主界面后自动恢复显示的延时，0 为禁用。', cfgNumber('client.touchInFadingDurationMs', 0, { min: 0, float: true })),
+          cfgExpander('指针移入淡化', '鼠标移入或触屏点击主界面区域时淡化主界面。', cfgBoolSelect('client.isMouseInFadingEnabled', true), [
+            cfgRow('触屏点击后自动恢复时间（ms）', '触屏点击主界面后自动恢复显示的延时，0 为禁用。', cfgNumber('client.touchInFadingDurationMs', 0, { min: 0, float: true })),
+          ]),
           cfgRow('阻止截图', '开启后其他应用无法截取主界面窗口内容。', cfgBoolSelect('client.isWindowCaptureBlockingEnabled', false)),
           cfgRow('使用原始输入', '使用 RawInput 接收鼠标/触屏事件，可区分鼠标与触摸；不兼容时可禁用。', cfgBoolSelect('client.useRawInput', false)),
         ]);
@@ -1307,7 +1377,9 @@ function renderConfigTab(tab) {
       switchConfigTab('general');
       return;
   }
-  container.innerHTML = '<div class="cia-config-tab">' + html + '</div>';
+  container.innerHTML = '<div class="cia-config-tab">' + html +
+    '<div id="ciaCfgDirtyBadge" style="display:none;margin-top:var(--spacer-3);padding:var(--spacer-2) var(--spacer-3);border-radius:var(--radius-md);background:rgba(202,143,4,0.08);border:1px solid rgba(202,143,4,0.2);font-size:var(--font-size-xs);color:var(--status-warning)">有未保存的更改——平台「自动保存」已关闭，点击 Ribbon「保存」后才会写入并下发到设备。</div></div>';
+  updateConfigDirtyBadge();
 }
 
 function loadServerProtocolConfig() {

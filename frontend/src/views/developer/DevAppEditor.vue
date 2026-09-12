@@ -6,7 +6,7 @@
         <button class="back-btn" @click="goBack" title="返回">
           <Icon icon="ri-arrow-left-s-line" :size="18" />
         </button>
-        <div class="app-icon"><Icon :icon="app?.icon || 'ri-apps-2-line'" :size="20" /></div>
+        <div class="app-icon" :class="{ asset: isAssetIcon(app?.icon) }"><AppIcon :icon="app?.icon" :app-key="app?.app_key" :size="22" fallback="ri-apps-2-line" /></div>
         <div class="app-meta">
           <div class="app-title-row">
             <span class="app-name">{{ app?.name || '加载中...' }}</span>
@@ -97,7 +97,7 @@
             <div class="form-group">
               <label>应用图标</label>
               <div class="icon-input">
-                <span class="icon-preview"><Icon :icon="basicForm.icon || 'ri-apps-2-line'" :size="18" /></span>
+                <span class="icon-preview"><AppIcon :icon="basicForm.icon" :app-key="app?.app_key" :size="18" fallback="ri-apps-2-line" /></span>
                 <input v-model="basicForm.icon" :disabled="readonly" @input="markDirty('basic')" list="app-icon-suggestions" placeholder="ri-apps-2-line" />
               </div>
               <datalist id="app-icon-suggestions">
@@ -577,6 +577,11 @@ function getStatusLabel(status?: string): string {
   return labels[status || ''] || status || '';
 }
 
+/** icon 值以 asset: 开头表示应用自带真实图标（由 AppIcon 渲染） */
+function isAssetIcon(icon?: string): boolean {
+  return !!icon && icon.startsWith('asset:');
+}
+
 function markDirty(tab: string) {
   dirtyTabs.value[tab] = true;
 }
@@ -807,6 +812,12 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+/* 应用自带真实图标时不使用底色 */
+.app-icon.asset {
+  background: transparent;
+  overflow: hidden;
 }
 
 .app-meta { flex: 1; min-width: 0; }

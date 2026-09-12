@@ -24,8 +24,9 @@ var selectedTimeLayoutId = null;
 var selectedClassPlanId = null;
 var selectedItemIdx = -1;          // 时间表当前选中时间点
 var selectedSubjectId = null;      // 科目当前选中
-var uiState = { collapse: { classplans: false, timelayouts: false } }; // 收起状态（每个列表视图一个配置）
+var uiState = { collapse: { classplans: false, timelayouts: false }, durClass: 40, durBreak: 10 }; // 收起状态与时间点时长（每个列表视图/时长独立配置）
 var quickSelectCtx = null;         // 快速选择面板上下文 {type:'subject',planId,idx} / {type:'plan',dateKey}
+var quickDockTarget = null;        // 常驻快速选择菜单的当前目标 {type:'lesson'|'week', planId, idx}
 var dirty = false;
 var rawDirty = false;              // 源码视图手动改过、尚未载入
 var validationErrors = [];
@@ -275,6 +276,8 @@ function persistViewState() {
       selectedSubjectId: selectedSubjectId,
     selectedItemIdx: selectedItemIdx,
     collapse: uiState.collapse,   // 收起/展开状态（每个列表视图一个配置）
+    durClass: uiState.durClass,   // 时间点时长：上课（分钟）
+    durBreak: uiState.durBreak,   // 时间点时长：课间（分钟）
     autoNextLesson: !!uiState.autoNextLesson,
   }));
   } catch (e) { /* ignore */ }
@@ -299,6 +302,8 @@ function restoreViewState() {
       };
     }
     uiState.autoNextLesson = !!st.autoNextLesson;
+    if (typeof st.durClass === 'number' && st.durClass > 0) uiState.durClass = st.durClass;
+    if (typeof st.durBreak === 'number' && st.durBreak >= 0) uiState.durBreak = st.durBreak;
   } catch (e) { /* ignore */ }
 }
 
@@ -428,6 +433,7 @@ function switchView(v) {
 
 function switchClassPlanSubView(sub) {
   classPlanSubView = sub;
+  if (sub === 'month') quickDockTarget = null; // 月视图无课程位置选择
   persistViewState();
   applyClassPlanSubView();
   renderAll();
@@ -475,6 +481,8 @@ function renderAll() {
   renderClassPlanDetail();
   renderWeekView();
   renderMonthView();
+  updateQuickDock();
+  renderActivePlanBar();
   updateStats();
 }
 
@@ -486,7 +494,7 @@ function renderSubjects() {
   var html = '';
   keys.forEach(function (id) {
     var sub = profile.Subjects[id] || {};
-    html += '<tr class="ci-subject-row' + (id === selectedSubjectId ? ' selected' : '') + '" onclick="selectSubject(\'' + id + '\')">' +
+    html += '<tr class="ci-subject-row' + (id === selectedSubjectId ? ' selected' : '') + '" data-subject-id="' + escAttr(id) + '" onclick="selectSubject(\'' + id + '\')">' +
       '<td><input class="ci-cell-input" value="' + escAttr(sub.Name || '') + '" placeholder="如：数学" onclick="event.stopPropagation();selectSubject(\'' + id + '\')" oninput="onSubjectChange(\'' + id + '\',\'Name\',this.value)" /></td>' +
       '<td><input class="ci-cell-input" value="' + escAttr(sub.Initial || '') + '" placeholder="如：数" onclick="event.stopPropagation()" oninput="onSubjectChange(\'' + id + '\',\'Initial\',this.value)" /></td>' +
       '<td><input class="ci-cell-input" value="' + escAttr(sub.TeacherName || '') + '" placeholder="教师姓名" onclick="event.stopPropagation()" oninput="onSubjectChange(\'' + id + '\',\'TeacherName\',this.value)" /></td>' +
@@ -496,9 +504,14 @@ function renderSubjects() {
 }
 
 function selectSubject(id) {
+  // 只切换高亮与详情，不重建科目表格——避免点击单元格输入框时 DOM 被替换导致无法输入
   selectedSubjectId = id;
   persistViewState();
-  renderSubjects(); renderSubjectDetail();
+  var rows = document.querySelectorAll('#ciSubjectsBody .ci-subject-row');
+  for (var i = 0; i < rows.length; i++) {
+    rows[i].classList.toggle('selected', rows[i].getAttribute('data-subject-id') === id);
+  }
+  renderSubjectDetail();
 }
 
 function renderSubjectDetail() {
@@ -669,17 +682,23 @@ function renderTimeLayoutDetail() {
     '<div class="ci-field"><label>时间表名称</label><input value="' + escAttr(tl.Name || '') + '" oninput="onTimeLayoutField(\'Name\',this.value)" /></div>' +
     '<div class="ci-field"><label>GUID</label><input class="ci-guid" value="' + escAttr(selectedTimeLayoutId) + '" readonly /></div>' +
     '</div></div></div>' +
-    // 对齐 ClassIsland 2：按类型插入时间点 + 复制当前时间点
+    // 对齐 ClassIsland 2：按类型插入时间点 + 时间点时长（快速创建指定长度的上课/课间）+ 复制当前时间点
     '<div class="ci-items-head"><span class="ci-panel-title">时间点（' + items.length + '）</span>' +
     '<div class="ci-items-actions">' +
-    '<button class="ci-btn small" onclick="insertTimeItem(0)" title="在选中时间点后插入一节上课（默认 40 分钟）">+ 上课</button>' +
-    '<button class="ci-btn small" onclick="insertTimeItem(1)" title="在选中时间点后插入课间（默认 10 分钟）">+ 课间</button>' +
+    '<span class="ci-dur-field" title="插入上课时间点时使用的时长">上课<input type="number" min="1" max="600" value="' + escAttr(uiState.durClass) + '" onchange="onDurChange(\'durClass\', this.value)" />分</span>' +
+    '<span class="ci-dur-field" title="插入课间时间点时使用的时长">课间<input type="number" min="0" max="600" value="' + escAttr(uiState.durBreak) + '" onchange="onDurChange(\'durBreak\', this.value)" />分</span>' +
+    '<button class="ci-btn small" onclick="insertTimeItem(0)" title="在选中时间点后插入一节上课（使用上课时长）">+ 上课</button>' +
+    '<button class="ci-btn small" onclick="insertTimeItem(1)" title="在选中时间点后插入课间（使用课间时长）">+ 课间</button>' +
     '<button class="ci-btn small" onclick="insertTimeItem(2)" title="在选中时间点后插入分割线">+ 分割</button>' +
     '<button class="ci-btn small" onclick="insertTimeItem(3)" title="在选中时间点后插入行动时间点">+ 行动</button>' +
     '<button class="ci-btn small" onclick="duplicateTimeItem()" title="复制选中的时间点">复制</button>' +
     '<button class="ci-btn small" onclick="removeTimeItem()" title="删除选中的时间点">删除</button>' +
     '</div></div>';
   if (items.length === 0) html += '<div class="ci-empty" style="padding:10px">暂无时间点，点击上方「+ 上课」从 08:00 开始排一天的时间。</div>';
+  // 表头（与 .ci-time-row 网格列对齐）
+  html += '<div class="ci-time-row ci-time-head">' +
+    '<span>#</span><span>开始</span><span>结束</span><span>类型</span><span>科目 / 名称</span><span>隐藏</span><span></span>' +
+    '</div>';
   items.forEach(function (item, i) {
     var t = itemTimes(item);
     var type = typeof item.TimeType === 'number' ? item.TimeType : 0;
@@ -714,8 +733,8 @@ function timeTypeOptions(selected) {
 }
 
 function selectTimeItem(i) {
+  // 只切换高亮与可视化，不重建时间点行——避免点击行内输入框时 DOM 被替换导致无法输入
   selectedItemIdx = i;
-  renderTimeLayoutDetail();
   renderTimeLayoutVisual();
   persistViewState();
 }
@@ -767,7 +786,15 @@ function onTimeItemTime(idx, which, value) {
   runValidation();
 }
 
-/** 对齐 ClassIsland 2：在选中时间点后插入（默认时长：上课 40 / 课间 10 / 分割与行动 0） */
+/** 修改时间点时长（对齐 ClassIsland 2 的“时间点时长”，用于快速创建指定长度的上课/课间） */
+function onDurChange(key, value) {
+  var v = parseInt(value, 10);
+  if (isNaN(v) || v < 0) v = key === 'durClass' ? 40 : 10;
+  uiState[key] = Math.min(v, 600);
+  persistViewState();
+}
+
+/** 对齐 ClassIsland 2：在选中时间点后插入（时长取上方“时间点时长”，上课默认 40 / 课间默认 10，分割与行动 0） */
 function insertTimeItem(type) {
   var tl = selectedTimeLayoutId ? profile.TimeLayouts[selectedTimeLayoutId] : null;
   if (!tl) { alert('请先创建/选择一个时间表'); return; }
@@ -785,7 +812,9 @@ function insertTimeItem(type) {
     alert('这里已经存在一个行动时间点。');
     return;
   }
-  var durMin = DEFAULT_DURATION_MIN[type] || 0;
+  var durMin = type === 0 ? (parseInt(uiState.durClass, 10) || 40)
+    : type === 1 ? (parseInt(uiState.durBreak, 10) || 0)
+    : 0;
   var item = { TimeType: type, IsHideDefault: false, AttachedObjects: {} };
   setItemTimes(item, start, addSeconds(start, durMin));
   if (type === 0) item.DefaultClassId = EMPTY_GUID;
@@ -957,6 +986,20 @@ function renderClassPlanList() {
   if (!list) return;
   var html = '';
   var seen = {};
+  // 临时层课表置顶显示（作为新项，可清除）
+  var overlays = Object.keys(profile.ClassPlans).filter(function (pid) { return profile.ClassPlans[pid] && profile.ClassPlans[pid].IsOverlay; });
+  if (overlays.length) {
+    html += '<div class="ci-plan-group-head"><span>临时层</span><span class="ci-group-count">(' + overlays.length + ')</span></div>';
+    overlays.forEach(function (pid) {
+      var cp = profile.ClassPlans[pid] || {};
+      seen[pid] = true;
+      html += '<div class="ci-list-item ci-temp-item' + (pid === selectedClassPlanId ? ' selected' : '') + '" onclick="selectClassPlan(\'' + pid + '\')">' +
+        '<span>' + escHtml(cp.Name || '未命名临时层') + '</span>' +
+        '<span class="ci-li-meta">' + escHtml(String(profile.TempClassPlanSetupTime || '').slice(0, 10) || '临时') + '</span>' +
+        '<button class="ci-li-del" title="清除临时层" onclick="event.stopPropagation();clearTempLayer()">×</button>' +
+        '</div>';
+    });
+  }
   var groupIds = Object.keys(profile.ClassPlanGroups);
   // 默认课表群置顶（与 ClassIsland 2 一致）
   groupIds.sort(function (a, b) {
@@ -968,7 +1011,7 @@ function renderClassPlanList() {
     var g = profile.ClassPlanGroups[gid] || {};
     var plans = Object.keys(profile.ClassPlans).filter(function (pid) {
       var cp = profile.ClassPlans[pid];
-      return (cp.AssociatedGroup || DEFAULT_GROUP_GUID) === gid;
+      return cp && !cp.IsOverlay && (cp.AssociatedGroup || DEFAULT_GROUP_GUID) === gid;
     });
     plans.forEach(function (p) { seen[p] = true; });
     var isDefault = gid.toLowerCase() === DEFAULT_GROUP_GUID;
@@ -1008,6 +1051,7 @@ function renderClassPlanList() {
 
 function selectClassPlan(id) {
   selectedClassPlanId = id;
+  quickDockTarget = null; // 切换课表后原选中位置失效
   persistViewState();
   renderClassPlanList(); renderClassPlanDetail();
 }
@@ -1024,10 +1068,20 @@ function renderClassPlanDetail() {
   var classPoints = tl && Array.isArray(tl.Layouts) ? tl.Layouts.filter(function (i) { return i.TimeType === 0; }) : [];
   var collapsed = !!uiState.collapse.classplans;
 
-  // 临时层状态
-  var tempEnabled = typeof profile.TempClassPlanId === 'string' && profile.TempClassPlanId && profile.TempClassPlanId !== EMPTY_GUID;
-  var tempPlanName = tempEnabled ? (subjectName(profile.TempClassPlanId) || (profile.ClassPlans[profile.TempClassPlanId] || {}).Name || profile.TempClassPlanId.slice(0, 8)) : '';
+  // 临时层：对齐 ClassIsland 2，当前课表仅保留“创建临时层”按钮（临时层作为新项显示在列表/周视图/月视图中）
+  var isOverlayPlan = !!cp.IsOverlay;
   var tempSetup = typeof profile.TempClassPlanSetupTime === 'string' ? profile.TempClassPlanSetupTime.slice(0, 10) : '';
+  var tempHtml = isOverlayPlan
+    ? '<div class="ci-temp-card">' +
+      '<div class="ci-temp-head"><span class="ci-temp-title"><span class="ci-temp-dot"></span>临时层（当日临时替换正常课表）</span>' +
+      '<span class="ci-temp-active">' + escHtml(tempSetup) + '</span>' +
+      '<button class="ci-btn small danger" onclick="clearTempLayer()">清除临时层</button>' +
+      '</div></div>'
+    : '<div class="ci-temp-card">' +
+      '<div class="ci-temp-head"><span class="ci-temp-title">临时层</span>' +
+      '<span style="font-size:11px;color:var(--ci-text-3)">复制当前课表创建临时层，作为新项显示并在当日临时替换</span>' +
+      '<button class="ci-btn small" onclick="createTempLayer()">创建临时层</button>' +
+      '</div></div>';
 
   var classesHtml = '';
   var rowCount = Math.max(cp.Classes.length, classPoints.length);
@@ -1048,34 +1102,27 @@ function renderClassPlanDetail() {
     if (cls) {
       var sid = cls.SubjectId;
       var subj = sid && profile.Subjects[sid] ? profile.Subjects[sid] : null;
-      chip = '<button class="ci-quick-chip' + (!subj ? ' ci-quick-missing' : '') + '" title="点击打开课程快速选择面板" onclick="openQuickSelect(\'subject\',' + i + ')">' +
+      chip = '<button class="ci-quick-chip' + (!subj ? ' ci-quick-missing' : '') + '" title="点击打开科目选择面板" onclick="event.stopPropagation();openQuickSelect(\'subject\',' + i + ')">' +
         (subj ? escHtml(subj.Initial || subj.Name || '?') + ' ' + escHtml(subj.Name || '') : '未设置') +
         '</button>';
     } else {
       chip = '<span class="ci-class-extra">—</span>';
     }
-    classesHtml += '<div class="ci-class-row">' +
+    // 行点击：选中当前课程（配合右侧常驻快速选择菜单）；科目编辑区保持打开选择面板
+    var isRowSelected = !!(quickDockTarget && quickDockTarget.type === 'lesson' &&
+      quickDockTarget.planId === selectedClassPlanId && quickDockTarget.idx === i);
+    classesHtml += '<div class="ci-class-row' + (isRowSelected ? ' selected' : '') + '" onclick="selectLessonRow(' + i + ')" title="点击选中此课程，在右侧快速选择菜单中选择科目；点击科目块打开选择面板">' +
       '<span class="ci-idx">' + (i + 1) + '</span>' +
       timeCol +
       chip +
       (cls
-        ? '<button class="ci-row-del" title="删除此课程" onclick="removeClass(' + i + ')">×</button>'
+        ? '<button class="ci-row-del" title="删除此课程" onclick="event.stopPropagation();removeClass(' + i + ')">×</button>'
         : '<span></span>') +
       '</div>';
   }
 
   var html = '<h3 class="ci-detail-title">课表设置</h3>' +
-    // 临时层（TempClassPlanId / TempClassPlanSetupTime）
-    '<div class="ci-temp-card">' +
-    '<div class="ci-temp-head"><span class="ci-temp-title"><span class="ci-temp-dot"></span>临时层（当日临时替换）</span>' +
-    (tempEnabled ? '<span class="ci-temp-active">' + escHtml(tempPlanName) + (tempSetup ? ' · ' + escHtml(tempSetup) : '') + '</span>' : '<span style="font-size:11px;color:var(--ci-text-3)">未启用</span>') +
-    '</div>' +
-    '<div class="ci-temp-body">' +
-    '<select id="ciTempPlanSel">' + classPlanOptionsHtml('') + '</select>' +
-    '<input type="date" id="ciTempDate" value="' + escAttr(tempSetup || todayStr()) + '" />' +
-    '<button class="ci-btn small primary" onclick="applyTempPlan()">应用临时层</button>' +
-    (tempEnabled ? '<button class="ci-btn small danger" onclick="clearTempPlan()">清除</button>' : '') +
-    '</div></div>' +
+    tempHtml +
     // 可收起的课表设置（收起/展开状态存于浏览器）
     '<div class="ci-collapse' + (collapsed ? ' ci-collapsed' : '') + '">' +
     '<div class="ci-collapse-head" onclick="toggleCollapse(\'classplans\')">' +
@@ -1098,37 +1145,17 @@ function renderClassPlanDetail() {
     '</div></div>' +
     classesHtml;
   box.innerHTML = html;
-  // 恢复临时层下拉选择
-  if (tempEnabled && $('ciTempPlanSel')) $('ciTempPlanSel').value = profile.TempClassPlanId;
+  renderQuickDock();
 }
 
-function classPlanOptionsHtml(selected) {
+function classPlanOptionsHtml(selected, excludeOverlay) {
   var html = '<option value="">（选择课表）</option>';
   Object.keys(profile.ClassPlans).forEach(function (id) {
-    html += '<option value="' + id + '"' + (id === selected ? ' selected' : '') + '>' + escHtml(profile.ClassPlans[id].Name || id) + '</option>';
+    var cp = profile.ClassPlans[id];
+    if (excludeOverlay && cp && cp.IsOverlay) return;
+    html += '<option value="' + id + '"' + (id === selected ? ' selected' : '') + '>' + escHtml(cp.Name || id) + '</option>';
   });
   return html;
-}
-
-/** 临时层：写入 TempClassPlanId + TempClassPlanSetupTime（ClassIsland 当日生效） */
-function applyTempPlan() {
-  var planId = $('ciTempPlanSel').value;
-  var date = $('ciTempDate').value;
-  if (!planId) { alert('请先选择要临时应用的课表'); return; }
-  if (!date) { alert('请选择临时层生效日期'); return; }
-  profile.TempClassPlanId = planId;
-  profile.TempClassPlanSetupTime = date + 'T00:00:00';
-  dirty = true;
-  commitUndo();
-  renderClassPlanDetail();
-  alert('临时层已设置：' + (profile.ClassPlans[planId].Name || '课表') + ' 将在 ' + date + ' 当日临时替换正常课表。');
-}
-
-function clearTempPlan() {
-  profile.TempClassPlanId = null;
-  dirty = true;
-  commitUndo();
-  renderClassPlanDetail();
 }
 
 function indexOfClassPoint(tl, item) {
@@ -1234,12 +1261,14 @@ function quickPickSubject(id) {
       renderQuickSelect();
       renderClassPlanDetail();
       renderWeekView();
+      renderQuickDock();
       return;
     }
   }
   closeQuickSelect();
   renderClassPlanDetail();
   renderWeekView();
+  renderQuickDock();
 }
 
 function quickPickPlan(id) {
@@ -1263,16 +1292,26 @@ function quickClearPlan() {
 
 // ================= 周视图 =================
 function planForWeekday(weekday) {
-  // 返回该星期启用的课表数组（考虑轮换的课表标注轮换信息）
+  // 返回该星期启用的课表数组（考虑轮换的课表标注轮换信息）；临时层课表单独作为新项展示，不参与轮换
   var result = [];
   Object.keys(profile.ClassPlans).forEach(function (pid) {
     var cp = profile.ClassPlans[pid];
-    if (!cp || cp.IsEnabled === false) return;
+    if (!cp || cp.IsEnabled === false || cp.IsOverlay) return;
     var rule = isPlainObject(cp.TimeRule) ? cp.TimeRule : {};
     if ((rule.WeekDay === undefined ? 1 : rule.WeekDay) !== weekday) return;
     result.push({ id: pid, plan: cp });
   });
   return result;
+}
+
+/** 指定星期的临时层课表（IsOverlay，作为新项显示在周视图列中） */
+function overlaysForWeekday(weekday) {
+  return Object.keys(profile.ClassPlans).filter(function (pid) {
+    var cp = profile.ClassPlans[pid];
+    if (!cp || !cp.IsOverlay) return false;
+    var rule = isPlainObject(cp.TimeRule) ? cp.TimeRule : {};
+    return (rule.WeekDay === undefined ? 1 : rule.WeekDay) === weekday;
+  });
 }
 
 function renderWeekView() {
@@ -1297,44 +1336,34 @@ function renderWeekView() {
     }
     html += '</select>';
   }
+  // 对齐 ClassIsland 2 周视图编辑体验：点击课程选中，再点打开科目面板；支持“选完自动跳到下一节”
+  html += '<label class="ci-week-autonext"><input type="checkbox" ' + (uiState.autoNextLesson ? 'checked' : '') + ' onchange="onAutoNextChange(this.checked)" />选完自动跳到下一节</label>';
   html += '<span>点击课表名可跳转编辑</span></div>';
 
-  var todayDow = new Date().getDay();
-  html += '<div class="ci-week-toolbar">' +
-    '<span>按星期展示各课表的课程安排' + (total > 0 ? '，当前轮换：' : '') + '</span>';
-  if (total > 0) {
-    html += '<select onchange="renderWeekView._rot = parseInt(this.value)||0; renderWeekView()" style="height:26px;padding:0 8px;font-size:11px;background:var(--ci-card);color:var(--ci-text);border:1px solid var(--ci-border);border-radius:6px;outline:none">';
-    html += '<option value="0"' + (rot === 0 ? ' selected' : '') + '>不轮换</option>';
-    for (var w = 1; w < total; w++) {
-      html += '<option value="' + w + '"' + (rot === w ? ' selected' : '') + '>第 ' + (w + 1) + ' 周</option>';
-    }
-    html += '</select>';
-  }
-  // 对齐 ClassIsland 2 周视图编辑体验：点击课程直接选科目，支持“选完自动跳到下一节”
-  html += '<label class="ci-week-autonext"><input type="checkbox" ' + (uiState.autoNextLesson ? 'checked' : '') + ' onchange="onAutoNextChange(this.checked)" />选完自动跳到下一节</label>';
-  html += '</div>';
-
-  var todayDow2 = todayDow;
+  var todayDow2 = new Date().getDay();
   html += '<div class="ci-week-grid">';
   WEEKDAY_ORDER.forEach(function (dow) {
-    var plans = planForWeekday(dow);
+    // 临时层课表作为新项置顶显示在对应星期列
+    var entries = overlaysForWeekday(dow).map(function (pid) {
+      return { id: pid, plan: profile.ClassPlans[pid], overlay: true };
+    }).concat(planForWeekday(dow));
     var isToday = dow === todayDow2;
     html += '<div class="ci-week-col">' +
       '<div class="ci-week-col-head' + (isToday ? ' today' : '') + '"><span>' + WEEKDAY_NAMES[dow] + '</span>' +
       (isToday ? '<span>今天</span>' : '') + '</div>' +
       '<div class="ci-week-col-body">';
-    if (plans.length === 0) {
+    if (entries.length === 0) {
       html += '<div class="ci-week-empty">无课表</div>';
     }
-    plans.forEach(function (entry) {
+    entries.forEach(function (entry) {
       var cp = entry.plan;
       var rule = isPlainObject(cp.TimeRule) ? cp.TimeRule : {};
       var planTotal = rule.WeekCountDivTotal || 0;
       var planDiv = rule.WeekCountDiv || 0;
       var rotLabel = planTotal > 0 ? ('轮换第' + (planDiv + 1) + '周') : '';
-      var dim = planTotal > 0 && rot > 0 && planDiv !== rot - 1;
-      html += '<div class="ci-week-plan' + (dim ? ' dim' : '') + '" onclick="selectClassPlan(\'' + entry.id + '\'); switchClassPlanSubView(\'list\')" title="点击课表名进入列表编辑">';
-      html += '<div class="ci-week-plan-name"><span>' + escHtml(cp.Name || '未命名课表') + '</span><span class="ci-week-rot">' + escHtml(rotLabel) + '</span></div>';
+      var dim = !entry.overlay && planTotal > 0 && rot > 0 && planDiv !== rot - 1;
+      html += '<div class="ci-week-plan' + (dim ? ' dim' : '') + (entry.overlay ? ' overlay' : '') + '" onclick="selectClassPlan(\'' + entry.id + '\'); switchClassPlanSubView(\'list\')" title="点击课表名进入列表编辑">';
+      html += '<div class="ci-week-plan-name"><span>' + escHtml(cp.Name || '未命名课表') + (entry.overlay ? '<em class="ci-week-overlay-badge">临时层</em>' : '') + '</span><span class="ci-week-rot">' + escHtml(rotLabel) + '</span></div>';
       var tl = profile.TimeLayouts[cp.TimeLayoutId];
       var classPoints = tl && Array.isArray(tl.Layouts) ? tl.Layouts.filter(function (x) { return x.TimeType === 0; }) : [];
       if (classPoints.length === 0) {
@@ -1344,11 +1373,13 @@ function renderWeekView() {
           var pt = itemTimes(point);
           var cls = (cp.Classes || [])[i];
           var sName = cls && cls.SubjectId ? (subjectInitial(cls.SubjectId) || '—') : '—';
+          var isSel = quickDockTarget && quickDockTarget.type === 'week' &&
+            quickDockTarget.planId === entry.id && quickDockTarget.idx === i;
           var isEditing = quickSelectCtx && quickSelectCtx.type === 'subject' &&
             quickSelectCtx.planId === entry.id && quickSelectCtx.idx === i;
-          html += '<button class="ci-week-lesson' + (isEditing ? ' editing' : '') + '"' +
-            ' title="点击选择该节次的科目"' +
-            ' onclick="event.stopPropagation(); openQuickSelect(\'subject\', ' + i + ', \'' + entry.id + '\')">' +
+          html += '<button class="ci-week-lesson' + (isSel ? ' selected' : '') + (isEditing ? ' editing' : '') + '"' +
+            ' title="点击选中此节次；再次点击打开科目选择面板"' +
+            ' onclick="event.stopPropagation(); weekLessonClick(\'' + entry.id + '\', ' + i + ')">' +
             '<span class="ci-lesson-time">' + escHtml(shortTime(pt.start)) + '</span>' +
             '<span class="ci-lesson-name">' + escHtml(sName) + '</span>' +
             '</button>';
@@ -1368,6 +1399,13 @@ function dateKeyOf(y, m, d) {
 }
 function planNameForDate(y, m, d) {
   var key = dateKeyOf(y, m, d);
+  // 临时层优先：TempClassPlanSetupTime 匹配当日时显示临时层课表
+  var tempDate = String(profile.TempClassPlanSetupTime || '').slice(0, 10);
+  var tempId = profile.TempClassPlanId;
+  if (tempId && profile.ClassPlans[tempId] && profile.ClassPlans[tempId].IsOverlay &&
+      tempDate && tempDate === key.slice(0, 10)) {
+    return { name: profile.ClassPlans[tempId].Name || '临时层', overlay: true };
+  }
   var ordered = isPlainObject(profile.OrderedSchedules) ? profile.OrderedSchedules[key] : null;
   if (ordered && ordered.ClassPlanId && profile.ClassPlans[ordered.ClassPlanId]) {
     return { name: profile.ClassPlans[ordered.ClassPlanId].Name || '未命名课表', ordered: true };
@@ -1411,10 +1449,10 @@ function renderMonthView() {
     var isToday = y === today.getFullYear() && m === today.getMonth() && day === today.getDate();
     var pn = planNameForDate(y, m, day);
     var key = dateKeyOf(y, m, day);
-    html += '<div class="ci-month-cell' + (isToday ? ' today' : '') + (pn.ordered ? ' ordered' : '') + '"' +
+    html += '<div class="ci-month-cell' + (isToday ? ' today' : '') + (pn.ordered ? ' ordered' : '') + (pn.overlay ? ' overlay' : '') + '"' +
       ' onclick="openQuickSelect(\'plan\', \'' + key + '\')" title="点击预定该日课表">' +
       '<div class="ci-month-day">' + day + '</div>' +
-      (pn.name ? '<div class="ci-month-plan' + (pn.ordered ? ' ordered-tag' : '') + '">' + escHtml(pn.name) + (pn.ordered ? ' ·预定' : '') + '</div>' : '') +
+      (pn.name ? '<div class="ci-month-plan' + (pn.ordered ? ' ordered-tag' : '') + (pn.overlay ? ' overlay-tag' : '') + '">' + escHtml(pn.name) + (pn.overlay ? ' ·临时层' : (pn.ordered ? ' ·预定' : '')) + '</div>' : '') +
       '</div>';
   }
   html += '</div>';
@@ -1564,6 +1602,134 @@ function removeClassPlan(id) {
   if (!confirm('确认删除课表「' + (profile.ClassPlans[id].Name || id) + '」？')) return;
   delete profile.ClassPlans[id];
   if (selectedClassPlanId === id) selectedClassPlanId = null;
+  if (profile.TempClassPlanId === id) { profile.TempClassPlanId = null; profile.TempClassPlanSetupTime = null; }
+  dirty = true;
+  commitUndo();
+  renderAll(); runValidation();
+}
+
+/** 克隆当前选中的课表（含课程、时间规则与所属课表群） */
+function duplicateClassPlan() {
+  var src = selectedClassPlanId ? profile.ClassPlans[selectedClassPlanId] : null;
+  if (!src) { alert('请先选择一个课表'); return; }
+  var id = guid();
+  var copy = JSON.parse(JSON.stringify(src));
+  copy.Name = (src.Name || '未命名课表') + ' 副本';
+  copy.IsOverlay = false;
+  profile.ClassPlans[id] = copy;
+  selectedClassPlanId = id;
+  quickDockTarget = null;
+  dirty = true;
+  commitUndo();
+  renderAll(); runValidation();
+}
+
+// ================= 常驻快速选择菜单（列表 / 周视图右侧，仅科目名称） =================
+/** 列表视图：点击课程行（非科目编辑区）选中当前课程，配合右侧快速选择菜单 */
+function selectLessonRow(i) {
+  if (!selectedClassPlanId) return;
+  quickDockTarget = { type: 'lesson', planId: selectedClassPlanId, idx: i };
+  var rows = document.querySelectorAll('#ciClassPlanDetail .ci-class-row');
+  for (var k = 0; k < rows.length; k++) rows[k].classList.toggle('selected', k === i);
+  renderQuickDock();
+}
+
+/** 周视图：点击单元格选中；再次点击已选中的单元格打开科目选择面板 */
+function weekLessonClick(planId, idx) {
+  var t = quickDockTarget;
+  if (t && t.type === 'week' && t.planId === planId && t.idx === idx) {
+    openQuickSelect('subject', idx, planId);
+    return;
+  }
+  quickDockTarget = { type: 'week', planId: planId, idx: idx };
+  renderWeekView();
+  renderQuickDock();
+}
+
+function updateQuickDock() {
+  var dock = $('ciQuickDock');
+  if (!dock) return;
+  var show = isProfile && view === 'classplans' && (classPlanSubView === 'list' || classPlanSubView === 'week');
+  dock.style.display = show ? 'flex' : 'none';
+  var cb = $('ciDockAutoNext');
+  if (cb) cb.checked = !!uiState.autoNextLesson;
+  if (show) renderQuickDock();
+}
+
+/** 渲染快速选择菜单（仅科目名称；高亮当前目标课程已设置的科目） */
+function renderQuickDock() {
+  var list = $('ciQuickDockList');
+  if (!list || !isProfile || !profile) return;
+  var currentSub = null;
+  if (quickDockTarget) {
+    var cp = profile.ClassPlans[quickDockTarget.planId];
+    var cls = cp && cp.Classes ? cp.Classes[quickDockTarget.idx] : null;
+    currentSub = cls ? cls.SubjectId : null;
+  }
+  var html = '';
+  Object.keys(profile.Subjects).forEach(function (id) {
+    html += '<button class="ci-dock-item' + (id === currentSub ? ' current' : '') + '" onclick="quickDockAssign(\'' + id + '\')" title="应用到选中的课程">' +
+      escHtml(profile.Subjects[id].Name || id) + '</button>';
+  });
+  list.innerHTML = html || '<div class="ci-empty">暂无科目</div>';
+}
+
+/** 应用快速选择：把科目写入当前选中的课程位置（可自动跳到下一节） */
+function quickDockAssign(subjectId) {
+  var t = quickDockTarget;
+  if (!t) { alert('请先在列表或周视图中点击选择一个课程位置'); return; }
+  var cp = profile.ClassPlans[t.planId];
+  if (!cp || !cp.Classes || !cp.Classes[t.idx]) {
+    alert('课程位置已失效，请重新选择');
+    quickDockTarget = null;
+    renderQuickDock();
+    return;
+  }
+  cp.Classes[t.idx].SubjectId = subjectId;
+  dirty = true;
+  commitUndo();
+  runValidation();
+  if (uiState.autoNextLesson && cp.Classes[t.idx + 1]) {
+    quickDockTarget = { type: t.type, planId: t.planId, idx: t.idx + 1 };
+  } else {
+    quickDockTarget = null;
+  }
+  renderClassPlanDetail();
+  renderWeekView();
+  renderQuickDock();
+}
+
+// ================= 临时层（对齐 ClassIsland 2：IsOverlay 课表，作为新项显示） =================
+/** 从当前选中课表创建临时层：复制课表（IsOverlay）并在当日临时替换正常课表 */
+function createTempLayer() {
+  var cp = selectedClassPlanId ? profile.ClassPlans[selectedClassPlanId] : null;
+  if (!cp) { alert('请先选择一个课表'); return; }
+  if (cp.IsOverlay) return;
+  var id = guid();
+  var copy = JSON.parse(JSON.stringify(cp));
+  copy.Name = (cp.Name || '未命名课表') + '（临时层）';
+  copy.IsOverlay = true;
+  copy.IsEnabled = true;
+  profile.ClassPlans[id] = copy;
+  profile.TempClassPlanId = id;
+  profile.TempClassPlanSetupTime = todayStr() + 'T00:00:00';
+  selectedClassPlanId = id;
+  quickDockTarget = null;
+  dirty = true;
+  commitUndo();
+  renderAll(); runValidation();
+}
+
+/** 清除临时层：删除 IsOverlay 课表并复位临时课表字段 */
+function clearTempLayer() {
+  if (!profile) return;
+  var tempId = profile.TempClassPlanId;
+  if (tempId && profile.ClassPlans[tempId] && profile.ClassPlans[tempId].IsOverlay) {
+    delete profile.ClassPlans[tempId];
+    if (selectedClassPlanId === tempId) selectedClassPlanId = null;
+  }
+  profile.TempClassPlanId = null;
+  profile.TempClassPlanSetupTime = null;
   dirty = true;
   commitUndo();
   renderAll(); runValidation();
@@ -1576,10 +1742,53 @@ function addGroup() {
   if (!name || !name.trim()) return;
   var id = guid();
   profile.ClassPlanGroups[id] = { Name: name.trim(), IsGlobal: false };
+  profile.SelectedClassPlanGroupId = id;
   dirty = true;
   commitUndo();
-  switchView('classplans');
-  switchClassPlanSubView('list');
+  renderGroupModal();
+  renderAll();
+}
+
+/** 课表群选择模态框（编辑器右上角「课表群」按钮） */
+function openGroupModal() {
+  if (!isProfile) { alert('当前文件未识别为 ClassIsland 档案'); return; }
+  $('ciGroupModal').style.display = '';
+  renderGroupModal();
+}
+
+function closeGroupModal() {
+  $('ciGroupModal').style.display = 'none';
+}
+
+function renderGroupModal() {
+  var list = $('ciGroupList');
+  if (!list || !profile) return;
+  var html = '';
+  Object.keys(profile.ClassPlanGroups).forEach(function (gid) {
+    var g = profile.ClassPlanGroups[gid] || {};
+    var count = Object.keys(profile.ClassPlans).filter(function (pid) {
+      var cp = profile.ClassPlans[pid];
+      return cp && !cp.IsOverlay && (cp.AssociatedGroup || DEFAULT_GROUP_GUID) === gid;
+    }).length;
+    var selected = profile.SelectedClassPlanGroupId === gid;
+    html += '<div class="ci-group-item' + (selected ? ' selected' : '') + '" onclick="selectClassPlanGroup(\'' + gid + '\')">' +
+      '<span class="ci-group-name">' + escHtml(g.Name || gid) + (selected ? '<em>当前</em>' : '') + '</span>' +
+      '<span class="ci-li-meta">' + count + ' 课表</span>' +
+      '<span class="ci-group-ops" onclick="event.stopPropagation()">' +
+        '<button class="ci-group-op" onclick="renameGroup(\'' + gid + '\');renderGroupModal();renderAll()">重命名</button>' +
+        (gid.toLowerCase() === DEFAULT_GROUP_GUID ? '' : '<button class="ci-group-op danger" onclick="removeGroup(\'' + gid + '\');renderGroupModal();renderAll()">删除</button>') +
+      '</span>' +
+    '</div>';
+  });
+  list.innerHTML = html || '<div class="ci-empty">暂无课表群</div>';
+}
+
+function selectClassPlanGroup(gid) {
+  if (!profile || !profile.ClassPlanGroups[gid]) return;
+  profile.SelectedClassPlanGroupId = gid;
+  dirty = true;
+  queueUndo();
+  renderGroupModal();
   renderAll();
 }
 
@@ -1604,6 +1813,104 @@ function removeGroup(id) {
   dirty = true;
   commitUndo();
   renderAll();
+}
+
+// ================= 当前启用的课表（对齐客户端：临时层 > 临时课表 > 星期轮换） =================
+/** 解析当前生效的课表：临时层优先，其次临时课表，最后按今天星期轮换 */
+function activePlanInfo() {
+  if (!isProfile || !profile) return null;
+  var tempId = profile.TempClassPlanId;
+  if (tempId && profile.ClassPlans[tempId]) {
+    return {
+      id: tempId,
+      plan: profile.ClassPlans[tempId],
+      kind: profile.ClassPlans[tempId].IsOverlay ? 'overlay' : 'temp',
+    };
+  }
+  var dow = new Date().getDay();
+  var plans = planForWeekday(dow);
+  if (plans.length) return { id: plans[0].id, plan: plans[0].plan, kind: 'weekday' };
+  return null;
+}
+
+/** 渲染顶栏右侧「当前启用的课表」（点击展开临时课表与多周轮换设定） */
+function renderActivePlanBar() {
+  var bar = $('ciActivePlan');
+  if (!bar) return;
+  if (!isProfile || !profile) { bar.innerHTML = ''; return; }
+  var info = activePlanInfo();
+  var name = info ? (info.plan.Name || '未命名课表') : '无启用的课表';
+  var kindTag = !info ? '' : info.kind === 'overlay' ? '临时层' : (info.kind === 'temp' ? '临时课表' : '按星期');
+  var rule = info && isPlainObject(info.plan.TimeRule) ? info.plan.TimeRule : { WeekDay: 1, WeekCountDiv: 0, WeekCountDivTotal: 0 };
+  var html = '<button class="ci-active-plan-btn' + (info && info.kind !== 'weekday' ? ' temp' : '') + '" onclick="toggleActivePlanPanel()" title="查看/修改临时课表与多周轮换">' +
+    '<span class="ci-active-plan-label">当前启用的课表</span>' +
+    '<span class="ci-active-plan-name">' + escHtml(name) + (kindTag ? '<em>' + kindTag + '</em>' : '') + '</span>' +
+    '<span class="ci-active-plan-chevron">&#9662;</span>' +
+    '</button>' +
+    '<div class="ci-active-plan-panel" id="ciActivePlanPanel" style="display:none">' +
+      '<div class="ci-ap-row">' +
+        '<span class="ci-ap-label">临时课表</span>' +
+        '<select id="ciBarTempPlanSel">' + classPlanOptionsHtml('', true) + '</select>' +
+        '<input type="date" id="ciBarTempDate" value="' + escAttr(todayStr()) + '" />' +
+        '<button class="ci-btn small primary" onclick="applyTempPlanBar()">启用</button>' +
+        (info && info.kind === 'temp' ? '<button class="ci-btn small danger" onclick="clearTempPlanBar()">清除</button>' : '') +
+      '</div>' +
+      (info
+        ? '<div class="ci-ap-row">' +
+          '<span class="ci-ap-label">多周轮换</span>' +
+          '<select onchange="onActiveRuleChange(\'WeekCountDivTotal\', parseInt(this.value) || 0)">' + rotateTotalOptions(rule.WeekCountDivTotal || 0) + '</select>' +
+          '<select ' + ((rule.WeekCountDivTotal || 0) > 0 ? '' : 'disabled') + ' onchange="onActiveRuleChange(\'WeekCountDiv\', parseInt(this.value) || 0)">' + rotateDivOptions(rule) + '</select>' +
+          '<span class="ci-ap-hint">作用于「' + escHtml(name) + '」</span>' +
+        '</div>'
+        : '') +
+    '</div>';
+  bar.innerHTML = html;
+}
+
+function toggleActivePlanPanel() {
+  var p = $('ciActivePlanPanel');
+  if (p) p.style.display = p.style.display === 'none' ? '' : 'none';
+}
+
+/** 顶栏临时课表：写入 TempClassPlanId + TempClassPlanSetupTime（与客户端字段一致） */
+function applyTempPlanBar() {
+  var sel = $('ciBarTempPlanSel');
+  var date = $('ciBarTempDate');
+  if (!sel || !sel.value) { alert('请选择要临时启用的课表'); return; }
+  if (!date || !date.value) { alert('请选择生效日期'); return; }
+  profile.TempClassPlanId = sel.value;
+  profile.TempClassPlanSetupTime = date.value + 'T00:00:00';
+  dirty = true;
+  commitUndo();
+  renderActivePlanBar();
+  renderClassPlanDetail();
+  renderWeekView();
+  renderMonthView();
+}
+
+function clearTempPlanBar() {
+  profile.TempClassPlanId = null;
+  profile.TempClassPlanSetupTime = null;
+  dirty = true;
+  commitUndo();
+  renderActivePlanBar();
+  renderClassPlanDetail();
+  renderWeekView();
+  renderMonthView();
+}
+
+/** 顶栏多周轮换：修改当前启用课表的 TimeRule（与课表设置区同步） */
+function onActiveRuleChange(field, value) {
+  var info = activePlanInfo();
+  if (!info) return;
+  if (!isPlainObject(info.plan.TimeRule)) info.plan.TimeRule = {};
+  info.plan.TimeRule[field] = value;
+  dirty = true;
+  queueUndo();
+  renderActivePlanBar();
+  if (selectedClassPlanId === info.id) renderClassPlanDetail();
+  renderWeekView();
+  renderMonthView();
 }
 
 // ================= 校验 =================

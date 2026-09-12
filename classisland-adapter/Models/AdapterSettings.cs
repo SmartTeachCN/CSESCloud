@@ -176,6 +176,16 @@ public class AdapterSettings
 }
 
 /// <summary>
+/// 最近一次应用的档案标识（持久化在插件目录，客户端重启后仍能正确上报档案关联，避免平台侧关联丢失）。
+/// </summary>
+public class AppliedProfileRecord
+{
+    public string Name { get; set; } = "";
+    public string Version { get; set; } = "";
+    public string ConfigId { get; set; } = "";
+}
+
+/// <summary>
 /// 设备凭证（注册成功后持久化在 credentials.json，注册码只在首次绑定时使用）。
 /// </summary>
 public class DeviceCredentials

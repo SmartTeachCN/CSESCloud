@@ -6,7 +6,7 @@
   "extensions": [
     "ea2"
   ],
-  "icon": "ri-file-settings-line",
+  "icon": "asset:icon.png",
   "ribbon": [
     {
       "label": "场次",

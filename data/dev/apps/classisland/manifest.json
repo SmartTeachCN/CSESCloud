@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "ClassIsland 档案集中管理：维护 ClassIsland 档案（科目/时间表/课表）、通过注册码接入 ClassIsland 客户端（CSES Cloud 适配器）、将档案一键部署到教室设备并远程下发广播与设置。",
   "category": "课表管理",
-  "icon": "ri-slideshow-3-line",
+  "icon": "asset:icon.png",
   "status": "published",
   "developer_username": "system",
   "is_shared": true,

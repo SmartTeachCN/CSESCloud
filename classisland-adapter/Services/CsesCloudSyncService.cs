@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using ClassIsland.Shared;
+using ClassIsland.Shared.Helpers;
 using CsesCloudAdapter.Models;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -26,6 +27,9 @@ public class CsesCloudSyncService : BackgroundService
     private readonly object _stateLock = new();
     private DeviceCredentials _credentials = new();
     private AdapterSettings _settings = new();
+
+    /// <summary>已处理命令 ID 集合（去重，防止重复投递导致重复执行）</summary>
+    private readonly HashSet<string> _handledCommandIds = new(StringComparer.Ordinal);
 
     /// <summary>最近一次状态描述（设置页展示）</summary>
     public string StatusText { get; private set; } = "尚未连接";
@@ -86,6 +90,45 @@ public class CsesCloudSyncService : BackgroundService
         _plugin = plugin;
         _settings = plugin.LoadSettings();
         _credentials = DeviceCredentials.Load(plugin.CredentialsPath, _settings.ServerUrl);
+        // 恢复最近应用的档案标识：客户端重启后心跳仍能上报正确的档案关联
+        RestoreAppliedProfile();
+    }
+
+    /// <summary>已应用档案标识的持久化路径（applied-profile.json）。</summary>
+    private string AppliedProfileStatePath => Path.Combine(_plugin.PluginConfigFolder, "applied-profile.json");
+
+    private void PersistAppliedProfile()
+    {
+        try
+        {
+            ConfigureFileHelper.SaveConfig(AppliedProfileStatePath, new AppliedProfileRecord
+            {
+                Name = AppliedProfileName ?? "",
+                Version = AppliedProfileVersion ?? "",
+                ConfigId = AppliedProfileConfigId ?? "",
+            });
+        }
+        catch (Exception e)
+        {
+            _logger.LogDebug(e, "持久化已应用档案标识失败");
+        }
+    }
+
+    private void RestoreAppliedProfile()
+    {
+        try
+        {
+            if (!File.Exists(AppliedProfileStatePath)) return;
+            var rec = ConfigureFileHelper.LoadConfig<AppliedProfileRecord>(AppliedProfileStatePath);
+            if (rec == null) return;
+            AppliedProfileName = string.IsNullOrWhiteSpace(rec.Name) ? AppliedProfileName : rec.Name;
+            AppliedProfileVersion = string.IsNullOrWhiteSpace(rec.Version) ? AppliedProfileVersion : rec.Version;
+            AppliedProfileConfigId = string.IsNullOrWhiteSpace(rec.ConfigId) ? AppliedProfileConfigId : rec.ConfigId;
+        }
+        catch (Exception e)
+        {
+            _logger.LogDebug(e, "恢复已应用档案标识失败");
+        }
     }
 
     /// <summary>
@@ -420,6 +463,23 @@ public class CsesCloudSyncService : BackgroundService
             return;
         }
 
+        // 命令去重：同一命令 ID 只执行一次，防止重复投递（WS 推送与轮询重叠、重连重放等）导致重复执行
+        lock (_handledCommandIds)
+        {
+            if (!_handledCommandIds.Add(envelope.CommandId))
+            {
+                _logger.LogWarning("命令 {Type} ({Id}) 重复投递，已忽略", command.Type, envelope.CommandId);
+                return;
+            }
+            if (_handledCommandIds.Count > 500)
+            {
+                // 简单裁剪：保留最近一半
+                var keep = _handledCommandIds.Skip(_handledCommandIds.Count / 2).ToList();
+                _handledCommandIds.Clear();
+                foreach (var id in keep) _handledCommandIds.Add(id);
+            }
+        }
+
         _logger.LogInformation("收到命令 {Type} ({Id})", command.Type, envelope.CommandId);
         try
         {
@@ -496,6 +556,7 @@ public class CsesCloudSyncService : BackgroundService
         }
         AppliedProfileVersion = GetString(payload, "profile_version_id") ?? GetString(payload, "deployment_id");
         AppliedProfileConfigId = GetString(payload, "profile_config_id");
+        PersistAppliedProfile();
         _logger.LogInformation("档案已应用：{Profile}", AppliedProfileName);
 
         await ReportAsync(cred, envelope.CommandId, "succeeded", state: BuildState());

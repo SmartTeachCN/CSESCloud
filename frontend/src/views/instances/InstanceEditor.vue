@@ -420,7 +420,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { instancesApi, storageApi, instanceFilesApi, pluginApi } from '../../api';
 import { useAuth } from '../../composables/useAuth';
@@ -633,8 +633,7 @@ const viewRibbonGroup: any = {
   label: '视图',
   tools: [
     { id: 'view-fresh', label: '刷新', icon: 'ri-refresh-line', command: 'refresh' },
-    { id: 'view-fullscreen', label: '全屏', icon: 'ri-fullscreen-line', command: 'fullscreen' },
-    { id: 'view-immersive', label: '沉浸模式', icon: 'ri-focus-2-line', command: 'immersive', type: 'select' },
+    { id: 'view-fullscreen', label: '全屏', icon: 'ri-fullscreen-line', command: 'fullscreen' }
   ],
 };
 
@@ -759,9 +758,18 @@ const iconName = computed(() => {
   if (t.includes('web')) return 'ri-globe-line'; if (t.includes('数据库')) return 'ri-database-2-line';
   if (t.includes('ai')) return 'ri-brain-line'; return 'ri-cloud-line';
 });
+/** 绑定应用自带真实图标（icon 为 asset: 前缀）时，Ribbon 区展示应用真实图标 */
+const appIconAssetUrl = computed(() => {
+  const icon = instance.value?.app_info_manifest?.icon;
+  if (typeof icon === 'string' && icon.startsWith('asset:') && instance.value?.app_key) {
+    return `/api/dev/apps?action=icon&app_key=${encodeURIComponent(instance.value.app_key)}`;
+  }
+  return '';
+});
 const editorInfo = computed(() => ({
   title: instance.value?.name || '加载中...', type: instance.value?.app_name || '实例配置',
-  icon: iconName.value, lastUpdated: instance.value?.updated_at || '', lastEditor: instance.value?.owner_name || '', editButtonLabel: '编辑属性',
+  icon: iconName.value, iconAssetUrl: appIconAssetUrl.value,
+  lastUpdated: instance.value?.updated_at || '', lastEditor: instance.value?.owner_name || '', editButtonLabel: '编辑属性',
 }));
 
 // 实例右侧操作区按钮
@@ -844,12 +852,13 @@ async function syncProfileToDeployedDevices(fileId: number, fileName: string) {
       })
       .map((d) => d.device_id);
     if (!targets.length) return;
-    const res = await callControlApi('profile_deploy', {
+    await callControlApi('profile_deploy', {
       profile_config_id: String(fileId),
       device_ids: targets,
       profile_name: fileName,
     });
-    alert(`档案已保存，并已向 ${res?.device_count || targets.length} 台已部署设备发送同步命令`);
+    // 静默同步：保存时不再弹框提示
+    console.log(`[InstanceEditor] 档案已保存，已向 ${targets.length} 台已部署设备发送同步命令`);
   } catch (e: any) {
     console.error('同步档案到已部署设备失败', e);
   }
@@ -956,8 +965,24 @@ watch(activeCollection, () => { loadRecords(); });
 function onIframeLoad() {
   iframeReady.value = true;
   editorFrame.value?.contentWindow?.postMessage(JSON.parse(JSON.stringify({ __ceseInit: true, instance: { id: instanceId.value, name: instance.value?.name, uid: instance.value?.instance_uid }, config: instance.value?.config || {}, storageManifest: instance.value?.storage_manifest || {}, interfaceSchema: instance.value?.interface_schema || {} })), '*');
+  // 同步自动保存开关状态给实例应用（应用据此决定是否即时保存/下发配置）
+  editorFrame.value?.contentWindow?.postMessage({ __ceseAutoSave: autoSave.value }, '*');
 }
-window.addEventListener('message', async (e) => {
+
+/** 通知实例应用当前的自动保存开关状态 */
+function notifyAutoSaveState() {
+  if (iframeReady.value && editorFrame.value) {
+    editorFrame.value.contentWindow?.postMessage({ __ceseAutoSave: autoSave.value }, '*');
+  }
+}
+watch(autoSave, notifyAutoSaveState);
+
+/**
+ * iframe/插件编辑器消息处理。
+ * 注意：必须随组件挂载/卸载注册与移除——若在 setup 顶层直接 addEventListener，
+ * 组件每次挂载都会叠加一个监听器，同一条请求会被处理多次，导致指令重复创建。
+ */
+async function onCsesMessage(e: MessageEvent) {
   if (!e.data) return;
   // 监听 iframe 页面切换
   if (e.data.__ceseReportPage) {
@@ -989,6 +1014,13 @@ window.addEventListener('message', async (e) => {
     else throw new Error('未知 action: ' + action);
     editorFrame.value?.contentWindow?.postMessage({ __ceseResponse: id, result }, '*');
   } catch (err: any) { editorFrame.value?.contentWindow?.postMessage({ __ceseResponse: id, error: err.message }, '*'); }
+}
+
+onMounted(() => {
+  window.addEventListener('message', onCsesMessage);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('message', onCsesMessage);
 });
 
 function onRibbonTool(tool: any) {

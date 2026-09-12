@@ -70,8 +70,12 @@
                   :class="{ selected: form.app_id === app.id }"
                   @click="selectApp(app)"
                 >
-                  <div class="app-card-icon" :style="getCatStyle(app.category)">
-                    <Icon :icon="app.icon || 'ri-apps-2-line'" :size="22" />
+                  <div
+                    class="app-card-icon"
+                    :class="{ asset: isAssetIcon(app.icon) }"
+                    :style="isAssetIcon(app.icon) ? undefined : getCatStyle(app.category)"
+                  >
+                    <AppIcon :icon="app.icon" :app-key="app.app_key" :size="26" fallback="ri-apps-2-line" />
                   </div>
                   <div class="app-card-name-row">
                     <span class="app-card-name">{{ app.name }}</span>
@@ -172,6 +176,11 @@ function getCatStyle(category?: string): Record<string, string> {
   if (c.includes('评测')) return { background: 'rgba(202, 143, 4, 0.1)', color: '#CA8F04' };
   if (c.includes('ai')) return { background: 'rgba(120, 90, 240, 0.1)', color: '#785AF0' };
   return { background: 'rgba(16, 124, 16, 0.1)', color: '#107C10' };
+}
+
+/** icon 值以 asset: 开头表示应用自带真实图标（由 AppIcon 渲染） */
+function isAssetIcon(icon?: string): boolean {
+  return !!icon && icon.startsWith('asset:');
 }
 
 async function loadApps() {
@@ -396,6 +405,12 @@ onMounted(() => {
   background: var(--subtle-secondary);
   color: var(--text-secondary);
   border: 1px dashed var(--divider-stroke);
+}
+
+/* 应用自带真实图标时不使用分类底色 */
+.app-card-icon.asset {
+  background: transparent;
+  overflow: hidden;
 }
 
 .app-card-name-row {

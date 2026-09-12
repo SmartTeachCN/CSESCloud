@@ -77,8 +77,12 @@
         <!-- 应用卡片 -->
         <div v-if="item._type === 'app' || activeCategory === 'apps'" class="item-card">
           <div class="card-head">
-            <div class="item-icon" :class="item.is_official ? 'official' : ''" :style="getCatStyle(item.category)">
-              <Icon :icon="item.icon || 'ri-apps-2-line'" :size="20" />
+            <div
+              class="item-icon"
+              :class="[{ official: item.is_official }, { asset: isAssetIcon(item.icon) }]"
+              :style="isAssetIcon(item.icon) ? undefined : getCatStyle(item.category)"
+            >
+              <AppIcon :icon="item.icon" :app-key="item.app_key" :size="26" fallback="ri-apps-2-line" />
             </div>
             <div class="head-meta">
               <div class="head-title">
@@ -264,6 +268,11 @@ function getCatStyle(category?: string): Record<string, string> {
   if (c.includes('评测')) return { background: 'rgba(202, 143, 4, 0.1)', color: '#CA8F04' };
   if (c.includes('ai')) return { background: 'rgba(120, 90, 240, 0.1)', color: '#785AF0' };
   return { background: 'rgba(16, 124, 16, 0.1)', color: '#107C10' };
+}
+
+/** icon 值以 asset: 开头表示应用自带真实图标（由 AppIcon 渲染） */
+function isAssetIcon(icon?: string): boolean {
+  return !!icon && icon.startsWith('asset:');
 }
 
 function formatJson(obj: any): string {
@@ -498,6 +507,12 @@ onMounted(() => {
 
 .item-icon.official {
   box-shadow: 0 0 0 2px var(--accent-base);
+}
+
+/* 应用自带真实图标时不使用分类底色 */
+.item-icon.asset {
+  background: transparent;
+  overflow: hidden;
 }
 
 .head-meta { flex: 1; min-width: 0; }

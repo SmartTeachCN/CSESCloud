@@ -8,6 +8,7 @@
  *  - GET  action=published         列出已发布应用（供实例创建选择）
  *  - GET  action=shared-list       列出共享市场中的应用
  *  - GET  action=shared-get&app_key=X  获取共享市场应用详情（只读）
+ *  - GET  action=icon&app_key=X    输出应用真实图标 PNG（icon 值为 asset:icon.png 时引用）
  *
  * 需要智教联盟登录：
  *  - GET  action=list              列出当前开发者的应用
@@ -23,7 +24,8 @@
  */
 const crypto = require('crypto');
 const fs = require('fs');
-const { nowStr } = require('../../lib/response');
+const path = require('path');
+const { nowStr, HttpSent } = require('../../lib/response');
 const { AppFS } = require('../../lib/dev-fs');
 
 /** 按 app_key 查找应用（支持 id 兼容） */
@@ -63,11 +65,14 @@ module.exports = async (ctx) => {
 
   // ===== [公开] 列出已发布应用（供实例创建时选择） =====
   if (method === 'GET' && action === 'published') {
-    const apps = AppFS.listPublished().map(a => ({
-      _id: a._id, app_key: a.app_key, name: a.name,
-      version: a.version, description: a.description, category: a.category, icon: a.icon,
-      is_official: a.is_official,
-    }));
+    const apps = AppFS.listPublished()
+      // 演示应用不进入“新建实例”的应用选择列表
+      .filter(a => a.app_info_manifest?.hide_from_instances !== true)
+      .map(a => ({
+        _id: a._id, app_key: a.app_key, name: a.name,
+        version: a.version, description: a.description, category: a.category, icon: a.icon,
+        is_official: a.is_official,
+      }));
     Response.success(apps);
   }
 
@@ -91,6 +96,21 @@ module.exports = async (ctx) => {
       control_enabled: a.control_manifest?.enabled === true,
     }));
     Response.success(result);
+  }
+
+  // ===== [公开] 输出应用真实图标资源（icon 以 asset: 前缀引用） =====
+  if (method === 'GET' && action === 'icon') {
+    const app = findApp(AppFS, query);
+    const dir = app ? AppFS.findDir(app.app_key) : null;
+    const iconFile = dir ? path.join(dir, 'icon.png') : null;
+    if (!iconFile || !fs.existsSync(iconFile)) {
+      res.status(404).json({ code: 404, message: '图标不存在', data: null });
+      return;
+    }
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'public, max-age=300');
+    res.send(fs.readFileSync(iconFile));
+    throw new HttpSent();
   }
 
   // ===== [公开] 获取共享市场应用详情（只读） =====

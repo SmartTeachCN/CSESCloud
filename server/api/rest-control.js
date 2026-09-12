@@ -57,6 +57,17 @@ function toMs(d) {
   try { return parseDate(d).getTime(); } catch (_) { return Date.now(); }
 }
 
+/**
+ * 计算设备在线状态：按连接协议放宽判定窗口——
+ * WS 设备心跳约 30 秒；长轮询设备按实例轮询间隔自适应（60 秒的固定窗口会误判离线）。
+ */
+function computeOnline(d, pollIntervalSeconds) {
+  const lastMs = d.last_seen_at ? toMs(d.last_seen_at) : 0;
+  if (!lastMs) return false;
+  const thresholdSeconds = d.protocol === 'ws' ? 90 : Math.max(90, (pollIntervalSeconds || 300) * 2 + 30);
+  return (Date.now() - lastMs) < thresholdSeconds * 1000;
+}
+
 // ===== 辅助函数 =====
 
 const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
@@ -212,10 +223,12 @@ module.exports = async (ctx) => {
         'SELECT * FROM ea2_devices WHERE instance_id = ? ORDER BY updated_at DESC',
         [instanceId]
       );
+      const pollInterval = wsControl() ? wsControl().getPollInterval(instanceId) : 300;
       for (const d of devices) {
         d.labels = jsonDecodeOr(d.labels ?? '[]', []);
         d.last_reported_state = jsonDecodeOr(d.last_reported_state ?? '{}', []);
         d.protocol = d.protocol || 'poll';
+        d.is_online = computeOnline(d, pollInterval);
       }
       Response.success(devices);
     }
@@ -230,6 +243,8 @@ module.exports = async (ctx) => {
       if (!d) Response.error('设备不存在', 404, 404);
       d.labels = jsonDecodeOr(d.labels ?? '[]', []);
       d.last_reported_state = jsonDecodeOr(d.last_reported_state ?? '{}', []);
+      d.protocol = d.protocol || 'poll';
+      d.is_online = computeOnline(d, wsControl() ? wsControl().getPollInterval(instanceId) : 300);
       Response.success(d);
     }
 

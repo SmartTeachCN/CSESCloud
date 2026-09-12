@@ -146,7 +146,9 @@
             class="table-row"
           >
             <div class="col-name">
-              <div class="name-icon"><Icon icon="ri-apps-2-line" :size="18" /></div>
+              <div class="name-icon" :class="{ asset: item.icon?.startsWith('asset:') }">
+                <AppIcon :icon="item.icon" :app-key="item.app_key" :size="20" fallback="ri-apps-2-line" />
+              </div>
               <div class="name-text">
                 <div class="name-title">
                   {{ item.name }}
@@ -1053,6 +1055,12 @@ onMounted(() => {
   border-radius: var(--radius-sm);
   color: var(--accent-base);
   flex-shrink: 0;
+}
+
+/* 应用自带真实图标时不使用底色 */
+.name-icon.asset {
+  background: transparent;
+  overflow: hidden;
 }
 
 .name-text { min-width: 0; }

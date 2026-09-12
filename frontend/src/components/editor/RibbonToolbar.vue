@@ -4,8 +4,9 @@
     <div class="ribbon-left" :class="{ 'no-sub': !hasSubInfo }">
       <!-- 大行1：图标 + 标题/类型 + 编辑按钮 -->
       <div class="left-row-main">
-        <div class="info-icon" v-if="editorInfo">
-          <Icon :icon="editorInfo.icon || 'ri-file-edit-line'" :size="26" />
+        <div class="info-icon" v-if="editorInfo" :class="{ asset: editorInfo.iconAssetUrl }">
+          <img v-if="editorInfo.iconAssetUrl" :src="editorInfo.iconAssetUrl" class="info-icon-img" alt="" />
+          <Icon v-else :icon="editorInfo.icon || 'ri-file-edit-line'" :size="26" />
         </div>
         <div class="info-texts" v-if="editorInfo">
           <span class="info-title" :title="editorInfo.title">{{ editorInfo.title }}</span>
@@ -198,6 +199,8 @@ interface EditorInfo {
   title: string;
   type: string;
   icon: string;
+  /** 应用真实图标资源地址，存在时优先于 icon 渲染 */
+  iconAssetUrl?: string;
   lastUpdated?: string;
   lastEditor?: string;
   editButtonLabel?: string;
@@ -374,6 +377,20 @@ function emitSave() {
   border-radius: var(--radius-md);
   color: var(--accent-base);
   flex-shrink: 0;
+}
+
+/* 应用自带真实图标时不使用底色 */
+.info-icon.asset {
+  background: transparent;
+  overflow: hidden;
+}
+
+.info-icon-img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  border-radius: 4px;
+  display: block;
 }
 
 .info-texts {

@@ -26,7 +26,8 @@ public class BroadcastNotificationProvider : NotificationProviderBase
     /// </summary>
     public void ShowBroadcast(string title, string body, int durationSeconds = 10)
     {
-        var text = string.IsNullOrWhiteSpace(body) ? title : title + "\n" + body;
+        // 正文不拼接标题：优先显示正文内容，仅正文为空时回退显示标题
+        var text = string.IsNullOrWhiteSpace(body) ? title : body;
         var duration = TimeSpan.FromSeconds(Math.Clamp(durationSeconds, 3, 120));
         var request = new NotificationRequest
         {
