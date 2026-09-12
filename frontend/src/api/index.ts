@@ -11,6 +11,8 @@ export const authApi = {
     api.post('/auth/login', { instance_uid: instanceUid, username, password, remember_in_list: rememberInList }),
   loginAlliance: (username: string) =>
     api.post('/auth/alliance-login', { username }),
+  allianceLoginConfig: (redirect?: string) =>
+    api.get<any>(`/auth/alliance-login-config${redirect ? `?redirect=${encodeURIComponent(redirect)}` : ''}`),
   loginTempAdmin: (username: string, password: string) =>
     api.post('/auth/temp-admin-login', { username, password }),
   logout: () => api.post('/auth/logout'),

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("CsesCloudAdapter")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e8d61a679294b0e726a7117e0020d5fa92f224a4")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+00e695b2cdbb03bee5302fcf06059be19f91be36")]
 [assembly: System.Reflection.AssemblyProductAttribute("CsesCloudAdapter")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CsesCloudAdapter")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

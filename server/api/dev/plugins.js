@@ -8,6 +8,7 @@
  *  - GET  action=resolver&ext=xxx        根据文件后缀解析对应的编辑器插件
  *  - GET  action=published               列出已发布插件
  *  - GET  action=shared-list             列出共享市场插件
+ *  - GET  action=icon&plugin_key=X       输出插件真实图标 PNG（icon 值为 asset:icon.png 时引用）
  *
  * 需要智教联盟登录：
  *  - GET  action=list                    列出当前开发者的插件
@@ -19,7 +20,9 @@
  *  - POST action=delete                  删除插件
  */
 const crypto = require('crypto');
-const { nowStr } = require('../../lib/response');
+const fs = require('fs');
+const path = require('path');
+const { nowStr, HttpSent } = require('../../lib/response');
 const { PluginFS } = require('../../lib/dev-fs');
 
 /** 按 plugin_key 查找插件（支持 id 兼容） */
@@ -69,6 +72,21 @@ module.exports = async (ctx) => {
       );
     }
     Response.success(plugins);
+  }
+
+  // ===== [公开] 输出插件真实图标资源（icon 以 asset: 前缀引用） =====
+  if (method === 'GET' && action === 'icon') {
+    const plugin = findPlugin(PluginFS, query);
+    const dir = plugin ? PluginFS.findDir(plugin.plugin_key) : null;
+    const iconFile = dir ? path.join(dir, 'icon.png') : null;
+    if (!iconFile || !fs.existsSync(iconFile)) {
+      res.status(404).json({ code: 404, message: '图标不存在', data: null });
+      return;
+    }
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'public, max-age=300');
+    res.send(fs.readFileSync(iconFile));
+    throw new HttpSent();
   }
 
   // ===== 以下需要联盟登录 =====

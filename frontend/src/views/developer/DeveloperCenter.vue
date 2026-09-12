@@ -251,7 +251,9 @@
             class="table-row"
           >
             <div class="col-name">
-              <div class="name-icon"><Icon :icon="item.icon || 'ri-plug-line'" :size="18" /></div>
+              <div class="name-icon" :class="{ asset: item.icon?.startsWith('asset:') }">
+                <AppIcon :icon="item.icon" :plugin-key="item.plugin_key" :size="20" fallback="ri-plug-line" />
+              </div>
               <div class="name-text">
                 <div class="name-title">{{ item.name }}</div>
                 <div class="name-desc">{{ item.description || '暂无描述' }}</div>

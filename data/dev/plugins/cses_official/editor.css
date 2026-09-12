@@ -1,424 +1,356 @@
+/* ===== CSES 编辑器（对齐平台 Fluent 设计体系，UI 样板：ClassIsland 档案编辑器） ===== */
 :root {
-  --cses-bg: #1e1e1e;
-  --cses-bg2: #252526;
-  --cses-bg3: #2d2d2d;
-  --cses-border: #3c3c3c;
-  --cses-text: #d4d4d4;
-  --cses-text2: #999;
-  --cses-text3: #666;
-  --cses-accent: #0067C0;
-  --cses-accent-hover: #005aaf;
-  --cses-accent-soft: #1a3a5c;
-  --cses-error: #f48771;
-  --cses-warning: #d4a72c;
-  --cses-success: #4caf50;
-  --cses-font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
+  --cs-bg: #F3F3F3;
+  --cs-card: rgba(255, 255, 255, 0.70);
+  --cs-card-stroke: rgba(0, 0, 0, 0.06);
+  --cs-text: rgba(0, 0, 0, 0.89);
+  --cs-text-2: rgba(0, 0, 0, 0.62);
+  --cs-text-3: rgba(0, 0, 0, 0.45);
+  --cs-subtle: rgba(0, 0, 0, 0.04);
+  --cs-subtle-2: rgba(0, 0, 0, 0.02);
+  --cs-border: rgba(0, 0, 0, 0.06);
+  --cs-accent: #0067C0;
+  --cs-accent-bg: rgba(0, 103, 192, 0.08);
+  --cs-ok: #107C10;
+  --cs-warn: #CA8F04;
+  --cs-err: #C42B1C;
+  --cs-radius: 8px;
+  --cs-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cs-bg: #202020;
+    --cs-card: rgba(255, 255, 255, 0.0512);
+    --cs-card-stroke: rgba(0, 0, 0, 0.10);
+    --cs-text: #FFFFFF;
+    --cs-text-2: rgba(255, 255, 255, 0.77);
+    --cs-text-3: rgba(255, 255, 255, 0.53);
+    --cs-subtle: rgba(255, 255, 255, 0.0605);
+    --cs-subtle-2: rgba(255, 255, 255, 0.0419);
+    --cs-border: rgba(255, 255, 255, 0.0706);
+    --cs-accent: #4CC2FF;
+    --cs-accent-bg: rgba(76, 194, 255, 0.10);
+    --cs-ok: #6CCB5F;
+    --cs-warn: #FAD02C;
+    --cs-err: #FF9964;
+    color-scheme: dark;
+  }
 }
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
-html, body {
-  height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  background: var(--cses-bg);
-  color: var(--cses-text);
-  font-size: 13px;
-  overflow: hidden;
-}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body { overflow: hidden; font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif; font-size: 13px; }
 
-.cses-editor {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  width: 100%;
-  overflow: hidden;
-}
+.cs-app { display: flex; flex-direction: column; height: 100%; background: var(--cs-bg); color: var(--cs-text); }
 
-/* ---------------- 顶部工具栏 ---------------- */
-.cses-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: var(--cses-bg2);
-  border-bottom: 1px solid var(--cses-border);
-  flex-shrink: 0;
+/* ---- 顶栏 ---- */
+.cs-topbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; background: var(--cs-card);
+  border-bottom: 1px solid var(--cs-card-stroke); flex-shrink: 0;
 }
-.cses-brand {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
+.cs-badge {
+  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+  padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: var(--cs-subtle); color: var(--cs-text-2); border: 1px solid var(--cs-border);
 }
-.cses-brand i { color: var(--cses-accent); font-size: 15px; }
-.cses-brand-sub {
-  font-size: 10px;
-  font-weight: 400;
-  color: var(--cses-accent);
-  background: rgba(0, 103, 192, 0.15);
-  padding: 1px 6px;
-  border-radius: 8px;
+.cs-badge.cs-is-cses { background: rgba(16, 124, 16, 0.10); color: var(--cs-ok); border-color: rgba(16, 124, 16, 0.2); }
+.cs-badge.cs-not-cses { background: rgba(202, 143, 4, 0.10); color: var(--cs-warn); border-color: rgba(202, 143, 4, 0.2); }
+.cs-badge-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.cs-name-input {
+  width: 220px; height: 30px; padding: 0 10px; font-size: 13px; font-family: inherit;
+  background: var(--cs-card); color: var(--cs-text);
+  border: 1px solid var(--cs-border); border-radius: 6px; outline: none;
 }
-.cses-toolbar-spacer { flex: 1; }
-.cses-mode-label { font-size: 11px; color: var(--cses-text2); }
+.cs-name-input:focus { border-color: var(--cs-accent); }
+.cs-stats { flex: 1; font-size: 11px; color: var(--cs-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-topbar-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
-/* ---------------- 通用控件 ---------------- */
-.cses-btn {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 12px;
-  background: #3c3c3c;
-  color: #ccc;
-  border: 1px solid #555;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  font-family: inherit;
-  white-space: nowrap;
+/* ---- 按钮 ---- */
+.cs-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  padding: 5px 14px; background: var(--cs-card); color: var(--cs-text);
+  border: 1px solid var(--cs-border); border-radius: 6px;
+  font-size: 12px; font-weight: 500; cursor: pointer; font-family: inherit;
+  transition: background 0.167s, border-color 0.167s;
 }
-.cses-btn:hover { background: #4c4c4c; }
-.cses-btn.primary { background: var(--cses-accent); color: white; border-color: var(--cses-accent); }
-.cses-btn.primary:hover { background: var(--cses-accent-hover); }
-.cses-btn.small { padding: 2px 8px; font-size: 11px; }
-.cses-btn.danger { color: var(--cses-error); border-color: #5a2a2a; }
-.cses-btn.danger:hover { background: #5a2a2a; }
-.cses-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.cs-btn:hover { background: var(--cs-subtle); }
+.cs-btn:active { transform: scale(0.98); }
+.cs-btn.primary { background: var(--cs-accent); color: #fff; border-color: transparent; }
+.cs-btn.small { padding: 3px 10px; font-size: 11px; }
+.cs-btn.danger { color: var(--cs-err); }
+.cs-btn.danger:hover { background: rgba(196, 43, 28, 0.08); }
 
-.cses-select, .cses-input {
-  padding: 4px 8px;
-  background: var(--cses-bg);
-  color: var(--cses-text);
-  border: 1px solid var(--cses-border);
-  border-radius: 3px;
-  font-size: 12px;
-  font-family: inherit;
-  outline: none;
+/* ---- 视图标签 ---- */
+.cs-view-tabs {
+  display: flex; gap: 2px; padding: 0 14px; flex-shrink: 0;
+  background: var(--cs-subtle-2); border-bottom: 1px solid var(--cs-card-stroke); overflow-x: auto;
 }
-.cses-select:focus, .cses-input:focus { border-color: var(--cses-accent); }
-.cses-input[type="date"], .cses-input[type="time"] { color-scheme: dark; }
+.cs-view-tab {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 8px 14px; background: transparent; border: none; border-bottom: 2px solid transparent;
+  font-size: 12px; color: var(--cs-text-3); cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.cs-view-tab:hover { color: var(--cs-text); }
+.cs-view-tab.active { color: var(--cs-text); border-bottom-color: var(--cs-accent); font-weight: 600; }
+.cs-view-tab.disabled { opacity: 0.4; cursor: not-allowed; }
+.cs-view-tab svg { width: 14px; height: 14px; flex-shrink: 0; }
 
-.cses-field label {
-  display: block;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--cses-text2);
-  margin-bottom: 2px;
-}
-.cses-field .required { color: var(--cses-error); }
-.cses-hint { font-size: 11px; color: var(--cses-text3); line-height: 1.6; margin-top: 10px; }
-.cses-empty-hint { padding: 14px; text-align: center; color: var(--cses-text3); font-size: 11px; }
+/* ---- 主体 ---- */
+.cs-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.cs-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 10px 14px 0; }
 
-/* ---------------- 主体布局 ---------------- */
-.cses-body {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-  overflow: hidden;
-}
-.cses-explorer {
-  flex: 0 0 240px;
-  display: flex;
-  flex-direction: column;
-  background: var(--cses-bg2);
-  border-right: 1px solid var(--cses-border);
-  min-height: 0;
-}
-.cses-editor-area {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.cses-editor-view {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 14px;
-}
+.cs-panel-bar { display: flex; align-items: center; justify-content: space-between; padding: 0 0 8px; flex-shrink: 0; }
+.cs-panel-title { font-size: 11px; font-weight: 600; color: var(--cs-text-3); letter-spacing: 0.02em; }
 
-/* ---------------- 左栏视图切换 ---------------- */
-.cses-explorer-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--cses-border);
-  flex-shrink: 0;
+/* ---- 表格 ---- */
+.cs-table-wrap { flex: 1; overflow: auto; background: var(--cs-card); border: 1px solid var(--cs-card-stroke); border-radius: var(--cs-radius); margin-bottom: 10px; }
+.cs-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.cs-table th, .cs-table td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--cs-border); vertical-align: middle; }
+.cs-table th { color: var(--cs-text-3); font-weight: 500; white-space: nowrap; position: sticky; top: 0; background: var(--cs-card); z-index: 1; }
+.cs-table tr:hover td { background: var(--cs-subtle-2); }
+.cs-cell-input {
+  width: 100%; padding: 4px 8px; font-size: 12px; font-family: inherit;
+  background: transparent; color: var(--cs-text); border: 1px solid transparent; border-radius: 4px; outline: none;
 }
-.cses-view-tab {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: 7px 2px;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--cses-text2);
-  font-size: 10px;
-  cursor: pointer;
-  font-family: inherit;
-}
-.cses-view-tab i { font-size: 14px; }
-.cses-view-tab:hover { color: var(--cses-text); background: #2a2a2a; }
-.cses-view-tab.active { color: var(--cses-text); border-bottom-color: var(--cses-accent); }
-.cses-view-tab.active i { color: var(--cses-accent); }
+.cs-cell-input:hover { border-color: var(--cs-border); }
+.cs-cell-input:focus { border-color: var(--cs-accent); background: var(--cs-card); }
 
-.cses-explorer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--cses-text2);
-  background: var(--cses-bg3);
-  border-bottom: 1px solid var(--cses-border);
-  flex-shrink: 0;
+/* ---- 列表 + 详情 双栏 ---- */
+.cs-split { flex: 1; display: flex; gap: 10px; overflow: hidden; margin-bottom: 10px; min-height: 0; }
+.cs-list-pane {
+  width: 240px; flex-shrink: 0; display: flex; flex-direction: column;
+  background: var(--cs-card); border: 1px solid var(--cs-card-stroke); border-radius: var(--cs-radius); overflow: hidden;
 }
-.cses-explorer-actions { display: flex; }
+.cs-list-pane .cs-panel-bar { padding: 8px 10px; margin: 0; background: var(--cs-subtle-2); border-bottom: 1px solid var(--cs-border); }
+.cs-list { flex: 1; overflow-y: auto; padding: 4px; }
+.cs-list-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px; cursor: pointer;
+  color: var(--cs-text-2); font-size: 12px; transition: background 0.15s;
+}
+.cs-list-item:hover { background: var(--cs-subtle); color: var(--cs-text); }
+.cs-list-item.selected { background: var(--cs-accent-bg); color: var(--cs-accent); font-weight: 600; }
+.cs-list-item .cs-li-meta { margin-left: auto; font-size: 10px; color: var(--cs-text-3); font-weight: 400; white-space: nowrap; }
+.cs-list-item .cs-li-del { visibility: hidden; border: none; background: none; color: var(--cs-text-3); cursor: pointer; font-size: 13px; padding: 0 2px; }
+.cs-list-item:hover .cs-li-del { visibility: visible; }
+.cs-list-item .cs-li-del:hover { color: var(--cs-err); }
 
-.cses-explorer-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 4px 0;
+.cs-detail-pane { flex: 1; overflow-y: auto; background: var(--cs-card); border: 1px solid var(--cs-card-stroke); border-radius: var(--cs-radius); padding: 12px 14px; min-width: 0; }
+.cs-detail-title { font-size: 14px; font-weight: 600; margin: 0 0 10px; }
+.cs-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.cs-field label { display: block; font-size: 11px; color: var(--cs-text-3); margin-bottom: 3px; }
+.cs-field input, .cs-field select {
+  width: 100%; height: 30px; padding: 0 8px; font-size: 12px; font-family: inherit;
+  background: var(--cs-card); color: var(--cs-text); border: 1px solid var(--cs-border); border-radius: 6px; outline: none;
 }
-.cses-explorer-list::-webkit-scrollbar { width: 6px; }
-.cses-explorer-list::-webkit-scrollbar-track { background: transparent; }
-.cses-explorer-list::-webkit-scrollbar-thumb { background: #424242; border-radius: 3px; }
+.cs-field input:focus, .cs-field select:focus { border-color: var(--cs-accent); }
 
-.cses-explorer-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 12px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--cses-text);
-  border-left: 3px solid transparent;
-  user-select: none;
+/* ---- 启用日 chips（V2 enable_day 多选） ---- */
+.cs-day-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cs-day-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px;
+  background: var(--cs-card); border: 1px solid var(--cs-border); border-radius: 999px;
+  font-size: 11px; color: var(--cs-text-2); cursor: pointer; font-family: inherit; user-select: none;
+  transition: all 0.15s;
 }
-.cses-explorer-item:hover { background: #2a2a2a; }
-.cses-explorer-item.selected { background: var(--cses-accent-soft); border-left-color: var(--cses-accent); }
-.cses-explorer-item i { color: var(--cses-text3); flex-shrink: 0; }
-.cses-explorer-item.selected i { color: var(--cses-accent); }
-.cses-item-label {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.cses-item-sub { font-size: 10px; color: var(--cses-text3); flex-shrink: 0; }
-.cses-item-tag {
-  font-size: 10px;
-  color: var(--cses-accent);
-  background: rgba(0, 103, 192, 0.15);
-  padding: 0 5px;
-  border-radius: 8px;
-  flex-shrink: 0;
-}
+.cs-day-chip:hover { border-color: var(--cs-accent); color: var(--cs-text); }
+.cs-day-chip.on { background: var(--cs-accent-bg); border-color: var(--cs-accent); color: var(--cs-accent); font-weight: 600; }
+.cs-day-chip input { display: none; }
 
-/* ---------------- 课程表编辑器 ---------------- */
-.cses-schedule-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 10px;
-  margin-bottom: 14px;
+/* ---- 课程行（classes：# / 开始 / 结束 / 科目 / 操作） ---- */
+.cs-items-head { display: flex; align-items: center; justify-content: space-between; margin: 6px 0; }
+.cs-items-head .cs-panel-title { margin: 0; }
+.cs-items-actions { display: flex; gap: 5px; align-items: center; }
+.cs-class-row { display: grid; grid-template-columns: 24px 108px 108px 1fr 76px; gap: 6px; align-items: center; padding: 4px 2px; border-radius: 6px; cursor: default; }
+.cs-class-row:hover { background: var(--cs-subtle-2); }
+.cs-class-row.selected { background: var(--cs-accent-bg); outline: 1px solid var(--cs-accent); }
+.cs-class-row .cs-idx { font-size: 11px; color: var(--cs-text-3); text-align: center; font-family: var(--cs-mono); cursor: pointer; }
+.cs-class-row input, .cs-class-row select {
+  height: 28px; padding: 0 6px; font-size: 12px; font-family: inherit;
+  background: var(--cs-card); color: var(--cs-text); border: 1px solid var(--cs-border); border-radius: 5px; outline: none; width: 100%;
 }
-.cses-schedule-grid .cses-name-field { grid-column: 1 / -1; }
-.cses-schedule-grid select, .cses-schedule-grid input { width: 100%; }
+.cs-class-row input:focus, .cs-class-row select:focus { border-color: var(--cs-accent); }
+.cs-class-row select.cs-missing-subject { color: var(--cs-warn); }
+.cs-row-del { width: 22px; height: 24px; display: inline-flex; align-items: center; justify-content: center; background: none; border: none; border-radius: 4px; color: var(--cs-text-3); cursor: pointer; font-size: 12px; }
+.cs-row-del:hover { background: rgba(196, 43, 28, 0.08); color: var(--cs-err); }
+.cs-dur-field { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--cs-text-3); }
+.cs-dur-field input {
+  width: 52px; height: 24px; padding: 0 4px; font-size: 11px; font-family: inherit;
+  background: var(--cs-card); color: var(--cs-text); border: 1px solid var(--cs-border); border-radius: 5px; outline: none;
+}
+.cs-dur-field input:focus { border-color: var(--cs-accent); }
 
-.cses-section-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: 10px 0 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--cses-text2);
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--cses-border);
+/* ---- 可收起设置区（课程表信息 / 基本信息） ---- */
+.cs-collapse-head {
+  display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none;
+  padding: 8px 10px; margin-bottom: 8px; border-radius: var(--cs-radius);
+  background: var(--cs-subtle-2); border: 1px solid var(--cs-border);
 }
-.cses-section-actions { display: flex; gap: 4px; }
+.cs-collapse-head:hover { background: var(--cs-subtle); }
+.cs-collapse-title { font-size: 12px; font-weight: 600; color: var(--cs-text-2); }
+.cs-collapse-chevron { font-size: 11px; color: var(--cs-text-3); transition: transform 0.15s; }
+.cs-collapse-body { padding: 0 2px 10px; }
+.cs-collapsed .cs-collapse-body { display: none; }
+.cs-collapsed .cs-collapse-chevron { transform: rotate(-90deg); }
 
-.cses-class-list {
-  max-height: 220px;
-  overflow-y: auto;
-  border: 1px solid var(--cses-border);
-  border-radius: 4px;
-  background: var(--cses-bg2);
-}
-.cses-class-list::-webkit-scrollbar { width: 6px; }
-.cses-class-list::-webkit-scrollbar-thumb { background: #424242; border-radius: 3px; }
-.cses-class-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid #333;
-  cursor: pointer;
-  font-size: 12px;
-}
-.cses-class-item:last-child { border-bottom: none; }
-.cses-class-item:hover { background: #2a2a2a; }
-.cses-class-item.selected { background: var(--cses-accent-soft); }
-.cses-class-idx {
-  width: 20px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #3c3c3c;
-  color: var(--cses-text2);
-  border-radius: 3px;
-  font-size: 11px;
-  flex-shrink: 0;
-}
-.cses-class-item.selected .cses-class-idx { background: var(--cses-accent); color: white; }
-.cses-class-subject { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cses-class-time { font-size: 11px; color: var(--cses-text2); font-family: var(--cses-font-mono); flex-shrink: 0; }
+/* ---- 科目：左表格右详情 ---- */
+.cs-subjects-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.cs-subjects-pane .cs-table-wrap { flex: 1; margin-bottom: 0; }
+.cs-subject-detail { max-width: 440px; flex: 0 0 380px; }
+.cs-subject-row { cursor: pointer; }
+.cs-subject-row.selected td { background: var(--cs-accent-bg) !important; }
+.cs-subject-row.selected td:first-child { font-weight: 600; color: var(--cs-accent); }
 
-.cses-class-editor {
-  display: grid;
-  grid-template-columns: 2fr 1fr 1fr auto;
-  gap: 10px;
-  margin-top: 12px;
-  padding: 12px;
-  background: var(--cses-bg2);
-  border: 1px solid var(--cses-border);
-  border-radius: 4px;
+/* ---- 预设科目面板 ---- */
+.cs-preset-wrap { margin-top: 10px; border-top: 1px solid var(--cs-border); padding-top: 10px; }
+.cs-preset-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cs-preset-chip {
+  display: inline-flex; flex-direction: column; align-items: center; gap: 1px;
+  width: 64px; padding: 7px 0 5px; border-radius: var(--cs-radius); cursor: pointer;
+  background: var(--cs-card); border: 1px solid var(--cs-border); font-family: inherit;
+  transition: all 0.15s; position: relative;
 }
-.cses-class-editor select, .cses-class-editor input { width: 100%; }
-.cses-ops-field { display: flex; flex-direction: column; }
-.cses-ops-btns { display: flex; gap: 4px; }
+.cs-preset-chip:hover { border-color: var(--cs-accent); background: var(--cs-accent-bg); }
+.cs-preset-chip.added { opacity: 0.38; cursor: default; }
+.cs-preset-chip .p-name { font-size: 11px; color: var(--cs-text); }
+.cs-preset-chip .p-init { font-size: 13px; font-weight: 700; color: var(--cs-accent); }
+.cs-preset-chip .p-added { position: absolute; top: 2px; right: 4px; font-size: 9px; color: var(--cs-ok); }
 
-.cses-schedule-ops {
-  display: flex;
-  gap: 8px;
-  margin-top: 14px;
+/* ---- 配置（V2 configuration / cycle / spans） ---- */
+.cs-config-scroll { flex: 1; overflow-y: auto; padding-bottom: 10px; }
+.cs-span-row { display: grid; grid-template-columns: 30px 1fr 110px 28px; gap: 6px; align-items: center; padding: 4px 2px; border-radius: 6px; }
+.cs-span-row:hover { background: var(--cs-subtle-2); }
+.cs-span-row .cs-idx { font-size: 11px; color: var(--cs-text-3); text-align: center; font-family: var(--cs-mono); }
+.cs-span-row input, .cs-span-row select {
+  height: 28px; padding: 0 6px; font-size: 12px; font-family: inherit;
+  background: var(--cs-card); color: var(--cs-text); border: 1px solid var(--cs-border); border-radius: 5px; outline: none; width: 100%;
 }
+.cs-span-row input:focus, .cs-span-row select:focus { border-color: var(--cs-accent); }
+.cs-span-act { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; }
+.cs-span-act.work { background: rgba(0, 103, 192, 0.10); color: var(--cs-accent); }
+.cs-span-act.rest { background: rgba(16, 124, 16, 0.10); color: var(--cs-ok); }
+.cs-hint { font-size: 11px; color: var(--cs-text-3); line-height: 1.6; padding: 4px 2px; }
+.cs-hint.warn { color: var(--cs-warn); }
 
-/* ---------------- 科目编辑器 ---------------- */
-.cses-subject-card {
-  max-width: 560px;
-  background: var(--cses-bg2);
-  border: 1px solid var(--cses-border);
-  border-radius: 6px;
-  padding: 14px;
+/* ---- 周视图 ---- */
+.cs-cp-week { flex: 1; overflow: auto; }
+.cs-week-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; min-height: 260px; }
+.cs-week-col { background: var(--cs-card); border: 1px solid var(--cs-card-stroke); border-radius: var(--cs-radius); overflow: hidden; display: flex; flex-direction: column; }
+.cs-week-col-head { padding: 6px 10px; font-size: 11px; font-weight: 600; color: var(--cs-text-2); background: var(--cs-subtle-2); border-bottom: 1px solid var(--cs-border); display: flex; justify-content: space-between; align-items: center; }
+.cs-week-col-head.today { color: var(--cs-accent); }
+.cs-week-col-body { flex: 1; padding: 6px; overflow-y: auto; }
+.cs-week-plan { padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; color: var(--cs-text-2); }
+.cs-week-plan:hover { background: var(--cs-subtle); }
+.cs-week-plan-name { font-weight: 600; color: var(--cs-text); margin-bottom: 4px; display: flex; justify-content: space-between; }
+.cs-week-plan-name .cs-week-rot { font-weight: 400; font-size: 10px; color: var(--cs-text-3); }
+.cs-week-plan.dim { opacity: 0.45; }
+.cs-week-empty { color: var(--cs-text-3); font-size: 11px; padding: 4px 8px; }
+.cs-week-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 11px; color: var(--cs-text-3); flex-wrap: wrap; }
+.cs-week-toolbar select { height: 26px; padding: 0 8px; font-size: 11px; background: var(--cs-card); color: var(--cs-text); border: 1px solid var(--cs-border); border-radius: 6px; outline: none; font-family: inherit; }
+.cs-week-autonext, .cs-quick-autonext { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--cs-text-2); cursor: pointer; user-select: none; }
+.cs-week-autonext input, .cs-quick-autonext input { accent-color: var(--cs-accent); }
+.cs-quick-autonext { grid-column: 1 / -1; padding: 2px 2px 0; }
+/* 周视图课程按钮（点击选中，再点打开科目面板） */
+.cs-week-lesson {
+  display: flex; gap: 5px; padding: 3px 6px; align-items: baseline; width: 100%;
+  background: transparent; border: 1px solid transparent; border-radius: 5px;
+  cursor: pointer; font-family: inherit; text-align: left; transition: background 0.15s, border-color 0.15s;
 }
-.cses-subject-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-.cses-subject-grid .cses-field:first-child { grid-column: 1 / -1; }
-.cses-subject-grid input { width: 100%; }
-.cses-subject-ops { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.cs-week-lesson:hover { background: var(--cs-subtle); border-color: var(--cs-border); }
+.cs-week-lesson.selected { background: var(--cs-accent-bg); border-color: var(--cs-accent); }
+.cs-week-lesson.selected .cs-lesson-name { color: var(--cs-accent); font-weight: 700; }
+.cs-week-lesson .cs-lesson-time { font-family: var(--cs-mono); font-size: 9px; color: var(--cs-text-3); }
+.cs-week-lesson .cs-lesson-name { color: var(--cs-text-2); font-size: 12px; }
 
-/* ---------------- 表格视图 ---------------- */
-.cses-change-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
+/* ---- YAML 源码 / 通用回退 ---- */
+.cs-raw {
+  flex: 1; width: 100%; margin-bottom: 10px; padding: 12px; resize: none; outline: none;
+  background: var(--cs-card); color: var(--cs-text); border: 1px solid var(--cs-card-stroke); border-radius: var(--cs-radius);
+  font-family: var(--cs-mono); font-size: 12px; line-height: 1.6; tab-size: 2;
 }
-.cses-change-toolbar > span:first-child { font-size: 12px; color: var(--cses-text2); }
-.cses-change-mode-btns { display: flex; gap: 4px; }
-.cses-change-mode-btn { color: var(--cses-text2); }
-.cses-change-hint { font-size: 11px; color: var(--cses-text3); margin-left: 6px; }
-.change-mode-btn.active { background: var(--cses-accent); border-color: var(--cses-accent); color: white; }
+.cs-raw:focus { border-color: var(--cs-accent); }
+.cs-generic-tip {
+  margin-bottom: 8px; padding: 8px 12px; font-size: 12px; line-height: 1.6;
+  background: rgba(202, 143, 4, 0.08); border: 1px solid rgba(202, 143, 4, 0.2); border-radius: var(--cs-radius); color: var(--cs-text-2); flex-shrink: 0;
+}
+.cs-generic-tip code { font-family: var(--cs-mono); background: var(--cs-subtle); padding: 0 4px; border-radius: 3px; font-size: 11px; }
 
-.cses-change-wrap { overflow: auto; flex: 1; }
-.cses-change-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
-.cses-change-wrap::-webkit-scrollbar-thumb { background: #424242; border-radius: 3px; }
-.cses-change-table {
-  border-collapse: collapse;
-  width: 100%;
-  min-width: 640px;
-  background: var(--cses-bg2);
-}
-.cses-change-table th, .cses-change-table td {
-  border: 1px solid var(--cses-border);
-  padding: 8px 10px;
-  text-align: center;
-  font-size: 12px;
-}
-.cses-change-table thead th { background: var(--cses-bg3); color: var(--cses-text2); font-weight: 600; }
-.cses-change-table td.clickable { cursor: pointer; }
-.cses-change-table td.clickable:hover { background: var(--cses-accent-soft); }
-.cses-change-corner, .cses-change-table th:first-child { background: var(--cses-bg3); color: var(--cses-text2); font-weight: 600; }
-.cses-change-empty { color: var(--cses-text3); padding: 24px !important; }
+/* ---- 空态 ---- */
+.cs-empty { padding: 28px 12px; text-align: center; color: var(--cs-text-3); font-size: 12px; }
 
-.cses-cell-picker {
-  position: fixed;
-  z-index: 1000;
-  display: none;
-  flex-wrap: wrap;
-  gap: 4px;
-  width: 200px;
-  max-height: 260px;
-  overflow-y: auto;
-  padding: 8px;
-  background: var(--cses-bg2);
-  border: 1px solid var(--cses-border);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+/* ---- 问题面板 ---- */
+.cs-issues { border-top: 1px solid var(--cs-card-stroke); background: var(--cs-card); flex-shrink: 0; }
+.cs-issues-head {
+  display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+  padding: 6px 14px; font-size: 11px; color: var(--cs-text-2); user-select: none;
 }
-.cses-cell-picker .cses-btn { width: 100%; justify-content: flex-start; }
+.cs-issues-head b { color: var(--cs-accent); }
+.cs-issues-body { max-height: 140px; overflow-y: auto; padding: 0 14px 8px; }
+.cs-issues.collapsed .cs-issues-body { display: none; }
+.cs-issues.collapsed .cs-issues-toggle { transform: rotate(180deg); }
+.cs-issues-toggle { font-size: 11px; color: var(--cs-text-3); }
+.cs-issue-item { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 11px; }
+.cs-issue-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: currentColor; }
+.cs-issue-item.error { color: var(--cs-err); }
+.cs-issue-item.warning { color: var(--cs-warn); }
+.cs-issue-none { padding: 2px 0 4px; font-size: 11px; color: var(--cs-text-3); }
 
-/* ---------------- 文件预览 ---------------- */
-.cses-source-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-  flex-wrap: wrap;
+/* ---- 子页签（列表/周视图） ---- */
+.cs-subtabs { display: flex; gap: 4px; padding-bottom: 8px; flex-shrink: 0; }
+.cs-subtab {
+  padding: 4px 14px; background: var(--cs-card); color: var(--cs-text-2);
+  border: 1px solid var(--cs-border); border-radius: 999px;
+  font-size: 11px; cursor: pointer; font-family: inherit; transition: all 0.15s;
 }
-.cses-source-toolbar > span { font-size: 12px; color: var(--cses-text2); }
-.cses-source-textarea {
-  width: 100%;
-  height: calc(100% - 40px);
-  min-height: 300px;
-  background: var(--cses-bg2);
-  color: var(--cses-text);
-  border: 1px solid var(--cses-border);
-  border-radius: 4px;
-  padding: 12px;
-  font-family: var(--cses-font-mono);
-  font-size: 12px;
-  line-height: 1.6;
-  resize: none;
-  outline: none;
-  tab-size: 2;
-}
+.cs-subtab:hover { color: var(--cs-text); }
+.cs-subtab.active { background: var(--cs-accent); color: #fff; border-color: transparent; font-weight: 600; }
 
-/* ---------------- 状态栏 ---------------- */
-.cses-statusbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 4px 12px;
-  background: var(--cses-bg2);
-  border-top: 1px solid var(--cses-border);
-  font-size: 11px;
-  color: var(--cses-text2);
-  flex-shrink: 0;
-}
-.cses-status-spacer { flex: 1; }
-.cses-status-msg { color: var(--cses-text2); }
-.cses-status-msg.success { color: var(--cses-success); }
-.cses-status-msg.error { color: var(--cses-error); }
-.cses-status-msg.warn { color: var(--cses-warning); }
-.cses-stats { font-family: var(--cses-font-mono); color: var(--cses-text3); }
+/* ---- 课程表视图三栏布局：列表/周视图 + 右侧快速选择 ---- */
+.cs-cp-body { flex: 1; display: flex; gap: 10px; min-height: 0; }
+.cs-cp-list { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
-/* ---------------- 滚动条 ---------------- */
-.cses-editor-view::-webkit-scrollbar { width: 6px; }
-.cses-editor-view::-webkit-scrollbar-track { background: transparent; }
-.cses-editor-view::-webkit-scrollbar-thumb { background: #424242; border-radius: 3px; }
-
-@media (max-width: 720px) {
-  .cses-explorer { flex-basis: 190px; }
-  .cses-schedule-grid { grid-template-columns: 1fr 1fr; }
-  .cses-class-editor { grid-template-columns: 1fr 1fr; }
-  .cses-subject-grid { grid-template-columns: 1fr; }
+/* ---- 常驻快速选择菜单（仅科目名称） ---- */
+.cs-quick-dock {
+  width: 168px; flex-shrink: 0; display: none; flex-direction: column;
+  background: var(--cs-card); border: 1px solid var(--cs-card-stroke);
+  border-radius: var(--cs-radius); overflow: hidden; margin-bottom: 10px;
 }
+.cs-quick-dock-head {
+  padding: 8px 10px; border-bottom: 1px solid var(--cs-border);
+  background: var(--cs-subtle-2); display: flex; flex-direction: column; gap: 4px;
+}
+.cs-quick-dock-list { flex: 1; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 3px; }
+.cs-dock-item {
+  padding: 6px 10px; text-align: left; background: transparent; border: 1px solid transparent;
+  border-radius: 6px; color: var(--cs-text); font-size: 12px; cursor: pointer; font-family: inherit;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background 0.15s, border-color 0.15s;
+}
+.cs-dock-item:hover { background: var(--cs-subtle); }
+.cs-dock-item.current { background: var(--cs-accent-bg); border-color: var(--cs-accent); color: var(--cs-accent); font-weight: 600; }
+
+/* ---- 课程快速选择面板 ---- */
+.cs-quick-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 2000; }
+.cs-quick-panel {
+  width: 420px; max-height: 70vh; display: flex; flex-direction: column;
+  background: var(--cs-bg); border: 1px solid var(--cs-border); border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.2); overflow: hidden;
+}
+.cs-quick-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; font-size: 13px; font-weight: 600; color: var(--cs-text); border-bottom: 1px solid var(--cs-border); }
+.cs-quick-search { margin: 10px 14px 0; height: 30px; padding: 0 10px; font-size: 12px; font-family: inherit; background: var(--cs-card); color: var(--cs-text); border: 1px solid var(--cs-border); border-radius: 6px; outline: none; }
+.cs-quick-search:focus { border-color: var(--cs-accent); }
+.cs-quick-grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 6px; padding: 12px 14px 14px; }
+.cs-quick-item {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 4px 8px;
+  background: var(--cs-card); border: 1px solid var(--cs-border); border-radius: var(--cs-radius);
+  cursor: pointer; font-family: inherit; transition: all 0.15s; position: relative;
+}
+.cs-quick-item:hover { border-color: var(--cs-accent); background: var(--cs-accent-bg); }
+.cs-quick-item.current { border-color: var(--cs-accent); }
+.cs-quick-item .q-init { font-size: 18px; font-weight: 700; color: var(--cs-accent); }
+.cs-quick-item .q-name { font-size: 11px; color: var(--cs-text); max-width: 80px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- 滚动条 ---- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--cs-subtle); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--cs-border); }

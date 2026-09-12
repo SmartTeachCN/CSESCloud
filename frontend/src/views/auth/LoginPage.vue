@@ -26,30 +26,47 @@
 
         <!-- 智教联盟账户 -->
         <form v-if="activeTab === 'alliance'" @submit.prevent="handleAllianceLogin" class="login-form">
-          <div class="form-group">
-            <label for="alliance-username">联盟用户名</label>
-            <div class="input-wrapper">
-              <Icon icon="ri-shield-user-line" class="input-icon" />
-              <input
-                id="alliance-username"
-                v-model="allianceUsername"
-                type="text"
-                placeholder="请输入智教联盟账户用户名"
-                autocomplete="username"
-              />
+          <!-- 非 dev 模式：跳转智教联盟 SSO 授权 -->
+          <template v-if="allianceMode === 'oauth'">
+            <div class="alliance-tip">
+              <Icon icon="ri-information-line" :size="14" />
+              <span>点击下方按钮将跳转至智教联盟平台完成授权，授权后自动返回并登录。</span>
             </div>
-          </div>
-          <div class="alliance-tip">
-            <Icon icon="ri-information-line" :size="14" />
-            <span>通过智教联盟平台授权登录，登录后可在控制台将子用户绑定至本账户。</span>
-          </div>
-          <button type="submit" class="login-btn" :disabled="loading">
-            <template v-if="!loading">
-              <Icon icon="ri-login-box-line" :size="18" />
-              <span>授权登录</span>
-            </template>
-            <span v-else class="loading-spinner"></span>
-          </button>
+            <button type="button" class="login-btn" :disabled="loading || !authorizeUrl" @click="goAllianceOauth">
+              <template v-if="!loading">
+                <Icon icon="ri-shield-check-line" :size="18" />
+                <span>授权登录</span>
+              </template>
+              <span v-else class="loading-spinner"></span>
+            </button>
+          </template>
+          <!-- dev 模式（debug.flag）：仅输入用户名的本地模拟登录 -->
+          <template v-else>
+            <div class="form-group">
+              <label for="alliance-username">联盟用户名</label>
+              <div class="input-wrapper">
+                <Icon icon="ri-shield-user-line" class="input-icon" />
+                <input
+                  id="alliance-username"
+                  v-model="allianceUsername"
+                  type="text"
+                  placeholder="请输入智教联盟账户用户名"
+                  autocomplete="username"
+                />
+              </div>
+            </div>
+            <div class="alliance-tip">
+              <Icon icon="ri-information-line" :size="14" />
+              <span>开发模式：输入联盟用户名直接登录。删除项目根目录 debug.flag 可启用真实联盟授权登录。</span>
+            </div>
+            <button type="submit" class="login-btn" :disabled="loading">
+              <template v-if="!loading">
+                <Icon icon="ri-login-box-line" :size="18" />
+                <span>登录</span>
+              </template>
+              <span v-else class="loading-spinner"></span>
+            </button>
+          </template>
         </form>
 
         <!-- 子用户登录 -->
@@ -246,7 +263,9 @@ const activeTab = ref<'alliance' | 'sub' | 'temp_admin'>('alliance');
 const loading = ref(false);
 const errorMessage = ref('');
 
-// 联盟登录
+// 联盟登录（oauth：非 dev 模式真实 SSO；local：dev 模式模拟登录）
+const allianceMode = ref<'oauth' | 'local'>('local');
+const authorizeUrl = ref('');
 const allianceUsername = ref('');
 
 // 子用户登录
@@ -295,7 +314,47 @@ async function loadInitData() {
   }
 }
 
-onMounted(loadInitData);
+async function loadAllianceMode() {
+  try {
+    const cfg: any = await authApi.allianceLoginConfig((route.query.redirect as string) || '');
+    if (cfg?.mode === 'oauth' && cfg?.authorize_url) {
+      allianceMode.value = 'oauth';
+      authorizeUrl.value = cfg.authorize_url;
+    } else {
+      allianceMode.value = 'local';
+    }
+  } catch {
+    // 配置接口异常时回退本地登录
+    allianceMode.value = 'local';
+  }
+}
+
+onMounted(() => {
+  loadInitData();
+  loadAllianceMode();
+  // SSO 回调失败时带回的错误提示
+  const oauthError = route.query.alliance_error as string;
+  if (oauthError) {
+    errorMessage.value = `智教联盟登录失败：${oauthError}`;
+  }
+});
+
+function goAllianceOauth() {
+  if (authorizeUrl.value) {
+    window.location.href = authorizeUrl.value;
+    return;
+  }
+  // 配置未就绪（或首次加载失败）时重取一次
+  loading.value = true;
+  loadAllianceMode().finally(() => {
+    loading.value = false;
+    if (authorizeUrl.value) {
+      window.location.href = authorizeUrl.value;
+    } else {
+      errorMessage.value = '联盟登录配置加载失败，请刷新重试';
+    }
+  });
+}
 
 async function handleAllianceLogin() {
   if (!allianceUsername.value.trim()) {

@@ -1,182 +1,170 @@
-<div class="cses-editor">
-  <!-- 顶部工具栏 -->
-  <div class="cses-toolbar">
-    <div class="cses-brand">
-      <i class="ri-calendar-schedule-line"></i>
-      <span>CSES 编辑器</span>
-      <span class="cses-brand-sub">官方版</span>
-    </div>
-    <div class="cses-toolbar-spacer"></div>
-    <label class="cses-mode-label" title="输出文件格式">输出</label>
-    <select id="csesOutputMode" class="cses-select" onchange="onOutputModeChange()" title="输出文件格式">
-      <option value="cy">YAML</option>
-      <option value="cj">JSON</option>
-      <option value="ci">ClassIsland</option>
-      <option value="es">ExamSchedule</option>
-    </select>
-  </div>
-
-  <!-- 主体区域 -->
-  <div class="cses-body">
-    <!-- 左栏：视图切换 + 列表 -->
-    <div class="cses-explorer">
-      <div class="cses-explorer-tabs">
-        <button class="cses-view-tab active" data-view="schedule" onclick="switchView('schedule')"><i class="ri-calendar-line"></i>课程表</button>
-        <button class="cses-view-tab" data-view="subject" onclick="switchView('subject')"><i class="ri-bookmark-line"></i>科目</button>
-        <button class="cses-view-tab" data-view="change" onclick="switchView('change')"><i class="ri-table-line"></i>表格视图</button>
-        <button class="cses-view-tab" data-view="source" onclick="switchView('source')"><i class="ri-file-code-line"></i>文件预览</button>
-      </div>
-      <div class="cses-explorer-header">
-        <span id="csesExplorerTitle">课程表</span>
-        <div class="cses-explorer-actions" id="csesExplorerActions">
-          <button class="cses-btn small" onclick="addSchedule()" title="新建课程表">+ 新建</button>
-        </div>
-      </div>
-      <div class="cses-explorer-list" id="csesExplorerList"></div>
-    </div>
-
-    <!-- 右栏：编辑区 -->
-    <div class="cses-editor-area">
-      <!-- 课程表编辑器 -->
-      <div class="cses-editor-view" id="cses-schedule-view">
-        <div class="cses-schedule-grid">
-          <div class="cses-field">
-            <label>周模式</label>
-            <select id="csesWeekMode" class="cses-select" onchange="onScheduleMetaChange('weeks', this.value)">
-              <option value="all">通用</option>
-              <option value="odd">单周</option>
-              <option value="even">双周</option>
-            </select>
-          </div>
-          <div class="cses-field">
-            <label>启用星期</label>
-            <select id="csesDayMode" class="cses-select" onchange="onScheduleMetaChange('enable_day', parseInt(this.value))">
-              <option value="1">星期一</option>
-              <option value="2">星期二</option>
-              <option value="3">星期三</option>
-              <option value="4">星期四</option>
-              <option value="5">星期五</option>
-              <option value="6">星期六</option>
-              <option value="7">星期日</option>
-            </select>
-          </div>
-          <div class="cses-field" id="csesDateFieldWrap">
-            <label>日期</label>
-            <input type="date" id="csesScheduleDate" class="cses-input" onchange="onScheduleMetaChange('date', this.value)" />
-          </div>
-          <div class="cses-field cses-name-field">
-            <label>名称</label>
-            <input type="text" id="csesScheduleName" class="cses-input" placeholder="课程表名称" onchange="onScheduleMetaChange('name', this.value)" />
-          </div>
-        </div>
-
-        <div class="cses-section-title">
-          <span>课程列表</span>
-          <div class="cses-section-actions">
-            <button class="cses-btn small" onclick="addClass()" title="添加课程">+ 添加课程</button>
-            <button class="cses-btn small" onclick="delClass()" title="删除选中课程">删除选中</button>
-          </div>
-        </div>
-        <div class="cses-class-list" id="csesClassList"></div>
-
-        <div class="cses-class-editor">
-          <div class="cses-field">
-            <label>科目</label>
-            <select id="csesCurrentSubject" class="cses-select" onchange="onClassField('subject', this.value)"></select>
-          </div>
-          <div class="cses-field">
-            <label>开始时间</label>
-            <input type="time" id="csesTimeStart" class="cses-input" onchange="onClassField('start_time', this.value)" />
-          </div>
-          <div class="cses-field">
-            <label>结束时间</label>
-            <input type="time" id="csesTimeEnd" class="cses-input" onchange="onClassField('end_time', this.value)" />
-          </div>
-          <div class="cses-field cses-ops-field">
-            <label>&nbsp;</label>
-            <div class="cses-ops-btns">
-              <button class="cses-btn small" onclick="moveClass(-1)" title="上移">上移</button>
-              <button class="cses-btn small" onclick="moveClass(1)" title="下移">下移</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="cses-schedule-ops">
-          <button class="cses-btn small" onclick="cloneSchedule()">复制课程表</button>
-          <button class="cses-btn small danger" onclick="delSchedule()">删除课程表</button>
-        </div>
-      </div>
-
-      <!-- 科目编辑器 -->
-      <div class="cses-editor-view" id="cses-subject-view" style="display:none">
-        <div class="cses-subject-card">
-          <div class="cses-section-title"><span>科目信息</span></div>
-          <div class="cses-subject-grid">
-            <div class="cses-field">
-              <label>科目名称 <span class="required">*</span></label>
-              <input type="text" id="csesSubjectName" class="cses-input" placeholder="例如：语文" />
-            </div>
-            <div class="cses-field">
-              <label>简称</label>
-              <input type="text" id="csesSubjectSimple" class="cses-input" maxlength="4" placeholder="例如：语" />
-            </div>
-            <div class="cses-field">
-              <label>任课老师</label>
-              <input type="text" id="csesSubjectTeacher" class="cses-input" placeholder="老师姓名" />
-            </div>
-            <div class="cses-field">
-              <label>教室</label>
-              <input type="text" id="csesSubjectRoom" class="cses-input" placeholder="上课教室" />
-            </div>
-          </div>
-          <div class="cses-subject-ops">
-            <button class="cses-btn primary" onclick="saveSubject()">保存科目</button>
-            <button class="cses-btn" onclick="addSubject()">新增科目</button>
-            <button class="cses-btn danger" onclick="delSubject()">删除科目</button>
-            <button class="cses-btn" onclick="fillDefaultSubjects()">填充默认科目</button>
-          </div>
-          <div class="cses-hint">左栏选中科目后可编辑；右键科目可删除。所有课程表引用此处的科目名称。</div>
-        </div>
-      </div>
-
-      <!-- 表格视图 -->
-      <div class="cses-editor-view" id="cses-change-view" style="display:none">
-        <div class="cses-change-toolbar">
-          <span>周类型</span>
-          <button class="cses-btn small change-mode-btn active" data-mode="odd" onclick="renderChangeTable('odd')">单周</button>
-          <button class="cses-btn small change-mode-btn" data-mode="even" onclick="renderChangeTable('even')">双周</button>
-          <button class="cses-btn small change-mode-btn" data-mode="all" onclick="renderChangeTable('all')">通用</button>
-          <span class="cses-change-hint">点击单元格可快速更换科目</span>
-        </div>
-        <div class="cses-change-wrap">
-          <table class="cses-change-table">
-            <thead>
-              <tr>
-                <th class="cses-change-corner"></th>
-                <th>星期一</th><th>星期二</th><th>星期三</th><th>星期四</th><th>星期五</th><th>星期六</th><th>星期日</th>
-              </tr>
-            </thead>
-            <tbody id="csesChangeBody"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- 文件预览 -->
-      <div class="cses-editor-view" id="cses-source-view" style="display:none">
-        <div class="cses-source-toolbar">
-          <span>文件内容预览（只读，保存将写入此格式）</span>
-          <button class="cses-btn small" onclick="exportFile()">导出文件</button>
-          <button class="cses-btn small" onclick="copySource()">复制内容</button>
-        </div>
-        <textarea id="csesSourceOutput" class="cses-source-textarea" readonly spellcheck="false"></textarea>
-      </div>
+<div class="cs-app">
+  <!-- ===== 顶栏：格式识别 + 配置名称 + 统计（保存走平台 Ribbon 保存按钮） ===== -->
+  <div class="cs-topbar">
+    <div class="cs-badge" id="csFormatBadge"><span class="cs-badge-dot"></span><span id="csFormatText">识别中…</span></div>
+    <input type="text" id="csConfigName" class="cs-name-input" placeholder="配置名称（configuration.name）" oninput="onConfigNameInput()" style="display:none" />
+    <span class="cs-stats" id="csStats"></span>
+    <div class="cs-topbar-actions">
+      <button class="cs-btn small" id="csUpgradeBtn" onclick="upgradeToV2()" title="将 V1.0 课表升级为 V2.0 模板（新增 configuration，room 映射为 location，enable_day 转为数组）" style="display:none">升级到 V2.0</button>
     </div>
   </div>
 
-  <!-- 状态栏 -->
-  <div class="cses-statusbar">
-    <span class="cses-status-msg" id="csesStatus">就绪</span>
-    <span class="cses-status-spacer"></span>
-    <span class="cses-stats" id="csesStats"></span>
+  <!-- ===== 视图切换（课程表 / 科目 / 配置 / YAML 源码） ===== -->
+  <div class="cs-view-tabs" id="csViewTabs">
+    <button class="cs-view-tab" data-view="schedules" onclick="switchView('schedules')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      <span>课程表</span>
+    </button>
+    <button class="cs-view-tab" data-view="subjects" onclick="switchView('subjects')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <span>科目</span>
+    </button>
+    <button class="cs-view-tab" data-view="config" id="csConfigTab" onclick="switchView('config')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <span>配置</span>
+    </button>
+    <button class="cs-view-tab" data-view="raw" onclick="switchView('raw')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      <span>YAML 源码</span>
+    </button>
+  </div>
+
+  <div class="cs-body">
+    <!-- ===== 课程表：列表 / 周视图 + 常驻快速选择 ===== -->
+    <div class="cs-view" id="csViewSchedules" style="display:none">
+      <div class="cs-subtabs" id="csSchedSubTabs">
+        <button class="cs-subtab active" data-sub="list" onclick="switchScheduleSubView('list')">列表</button>
+        <button class="cs-subtab" data-sub="week" onclick="switchScheduleSubView('week')">周视图</button>
+      </div>
+
+      <div class="cs-cp-body">
+        <!-- 列表视图：左课程表列表 + 右设置与课程 -->
+        <div class="cs-cp-list" id="csSchedListWrap">
+          <div class="cs-split">
+            <div class="cs-list-pane">
+              <div class="cs-panel-bar">
+                <span class="cs-panel-title">课程表（schedules）</span>
+                <div class="cs-items-actions">
+                  <button class="cs-btn small" onclick="addSchedule()" title="新建课程表">+ 课程表</button>
+                  <button class="cs-btn small" onclick="duplicateSchedule()" title="克隆当前选中的课程表">复制</button>
+                </div>
+              </div>
+              <div class="cs-list" id="csScheduleList"></div>
+            </div>
+            <div class="cs-detail-pane" id="csScheduleDetail">
+              <div class="cs-empty">选择左侧课程表以编辑</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 周视图：按启用日展示各课程表的课程安排 -->
+        <div class="cs-cp-week" id="csWeekWrap" style="display:none"></div>
+
+        <!-- 常驻快速选择菜单（列表 / 周视图显示，仅科目名称） -->
+        <div class="cs-quick-dock" id="csQuickDock">
+          <div class="cs-quick-dock-head">
+            <span class="cs-panel-title">快速选择</span>
+            <label class="cs-quick-autonext"><input type="checkbox" id="csDockAutoNext" onchange="onAutoNextChange(this.checked)" />自动下一个</label>
+          </div>
+          <div class="cs-quick-dock-list" id="csQuickDockList"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 科目：左表格 + 右详情 ===== -->
+    <div class="cs-view" id="csViewSubjects" style="display:none">
+      <div class="cs-split">
+        <div class="cs-subjects-pane">
+          <div class="cs-panel-bar">
+            <span class="cs-panel-title">科目（subjects）</span>
+            <div class="cs-items-actions">
+              <button class="cs-btn small" onclick="addSubject()">+ 添加</button>
+              <button class="cs-btn small" onclick="showPresetPanel()" title="从常用科目预设中添加">预设科目</button>
+              <button class="cs-btn small" onclick="duplicateSubject()" title="复制选中的科目">复制</button>
+              <button class="cs-btn small danger" onclick="removeSelectedSubject()">删除</button>
+            </div>
+          </div>
+          <div class="cs-table-wrap">
+            <table class="cs-table" id="csSubjectsTable">
+              <thead><tr><th>名称 (name)</th><th style="width:18%">简称 (simplified_name)</th><th style="width:22%">教师 (teacher)</th><th style="width:22%" id="csSubjectLastCol">地点 (location)</th></tr></thead>
+              <tbody id="csSubjectsBody"></tbody>
+            </table>
+            <div class="cs-empty" id="csSubjectsEmpty">暂无科目，点击「添加」或「预设科目」创建</div>
+          </div>
+        </div>
+        <div class="cs-detail-pane cs-subject-detail" id="csSubjectDetail">
+          <div class="cs-empty">选择左侧科目以编辑详情</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 配置（CSES V2.0：configuration，含周期 cycle） ===== -->
+    <div class="cs-view" id="csViewConfig" style="display:none">
+      <div class="cs-config-scroll">
+        <h3 class="cs-detail-title">配置（configuration）</h3>
+        <div class="cs-collapse" id="csConfigCollapse">
+          <div class="cs-collapse-head" onclick="toggleCollapse('config')">
+            <span class="cs-collapse-title">基本信息</span><span class="cs-collapse-chevron">&#9662;</span>
+          </div>
+          <div class="cs-collapse-body">
+            <div class="cs-form-grid">
+              <div class="cs-field" style="grid-column:1/-1"><label>描述（description）</label><input id="csConfigDesc" placeholder="配置的描述" oninput="onConfigField('description', this.value)" /></div>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="cs-detail-title" style="margin-top:14px">周期（cycle）</h3>
+        <div class="cs-form-grid" id="csCycleGrid"></div>
+        <div class="cs-items-head">
+          <span class="cs-panel-title">周期分配（spans）：依次声明连续的工作日 / 休息日段</span>
+          <div class="cs-items-actions">
+            <button class="cs-btn small" onclick="addSpan('work')" title="追加一段工作日">+ 工作日</button>
+            <button class="cs-btn small" onclick="addSpan('rest')" title="追加一段休息日">+ 休息日</button>
+          </div>
+        </div>
+        <div id="csSpanRows"></div>
+        <div class="cs-hint" id="csCycleHint"></div>
+      </div>
+    </div>
+
+    <!-- ===== YAML 源码 ===== -->
+    <div class="cs-view" id="csViewRaw" style="display:none">
+      <div class="cs-panel-bar">
+        <span class="cs-panel-title">YAML 源码（保存统一写入 YAML，保留未知字段，Ctrl+S 保存）</span>
+        <button class="cs-btn small" onclick="syncFromRaw()">从源码载入</button>
+      </div>
+      <textarea class="cs-raw" id="csRaw" spellcheck="false" oninput="onRawInput()"></textarea>
+    </div>
+
+    <!-- ===== 通用 YAML 回退编辑器（非 CSES 格式） ===== -->
+    <div class="cs-view" id="csGenericView" style="display:none">
+      <div class="cs-generic-tip">
+        当前文件不是 CSES 课表（未识别到 <code>version</code> + <code>subjects</code> / <code>schedules</code> 关键结构），已回退为通用 YAML 编辑器。<br>
+        CSES V1.0 需包含 <code>version: 1</code>、<code>subjects</code>、<code>schedules</code>；V2.0 需包含 <code>version: 2</code>、<code>configuration</code>、<code>subjects</code>、<code>schedules</code>。
+        点击 Ribbon「新建课程表」可将文件初始化为 CSES V2.0 空白模板。
+      </div>
+      <textarea class="cs-raw" id="csGeneric" spellcheck="false" oninput="onGenericInput()"></textarea>
+    </div>
+  </div>
+
+  <!-- ===== 课程快速选择面板 ===== -->
+  <div class="cs-quick-overlay" id="csQuickSelect" style="display:none" onclick="if(event.target===this)closeQuickSelect()">
+    <div class="cs-quick-panel">
+      <div class="cs-quick-head">
+        <span id="csQuickTitle">快速选择科目</span>
+        <button class="cs-row-del" onclick="closeQuickSelect()">&times;</button>
+      </div>
+      <input type="text" class="cs-quick-search" id="csQuickSearch" placeholder="搜索科目…" oninput="renderQuickSelect()" />
+      <div class="cs-quick-grid" id="csQuickGrid"></div>
+    </div>
+  </div>
+
+  <!-- ===== 问题面板 ===== -->
+  <div class="cs-issues" id="csIssuesPanel">
+    <div class="cs-issues-head" onclick="toggleIssues()">
+      <span>问题 <b id="csIssueCount">0</b></span>
+      <span class="cs-issues-toggle" id="csIssueToggleIcon">&#9662;</span>
+    </div>
+    <div class="cs-issues-body" id="csIssueList"></div>
   </div>
 </div>

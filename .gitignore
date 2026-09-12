@@ -1,6 +1,9 @@
 # Built frontend output
 dist/
 
+# Dev-mode marker（存在时联盟登录走本地模拟登录，见 server/lib/alliance-oauth.js）
+debug.flag
+
 # Data
 data/cses.db*
 data/dev-users/

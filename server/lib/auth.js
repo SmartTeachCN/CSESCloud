@@ -148,6 +148,34 @@ function makeAuth(req, res) {
       return true;
     },
 
+    /** 智教联盟 OAuth 登录（真实 SSO，非 dev 模式；userInfo 为 SSO /api/userinfo 返回） */
+    loginAllianceOauth(userInfo) {
+      const info = userInfo || {};
+      const username = String(info.preferred_username || info.name || info.sub || '').trim();
+      if (!username) return false;
+
+      // 联盟账户登录：默认绑定第一所学校作为当前上下文，可在控制台切换
+      const school = DB.one('SELECT * FROM schools ORDER BY id ASC LIMIT 1');
+      const schoolId = school ? school.id : 1;
+      const schoolName = school ? school.name : '默认校园';
+
+      self.init();
+      req.session.auth = {
+        type: 'alliance',
+        user_id: 0,
+        school_id: schoolId,
+        school_name: schoolName,
+        username,
+        display_name: String(info.name || username),
+        role: 'alliance',
+        email: String(info.email || ''),
+        alliance_sub: String(info.sub || ''),
+      };
+
+      self.logAudit(schoolId, 0, 'login', `智教联盟登录: ${username}`, 'success');
+      return true;
+    },
+
     /** 临时管理员登录 */
     loginTempAdmin(username, password) {
       const config = self.serverConfig();

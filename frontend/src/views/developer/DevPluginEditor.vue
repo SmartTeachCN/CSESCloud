@@ -6,7 +6,7 @@
         <button class="back-btn" @click="goBack" title="返回">
           <Icon icon="ri-arrow-left-s-line" :size="18" />
         </button>
-        <div class="plugin-icon"><Icon :icon="plugin?.icon || 'ri-plug-line'" :size="20" /></div>
+        <div class="plugin-icon" :class="{ asset: isAssetIcon(plugin?.icon) }"><AppIcon :icon="plugin?.icon" :plugin-key="plugin?.plugin_key" :size="22" fallback="ri-plug-line" /></div>
         <div class="plugin-meta">
           <div class="plugin-title-row">
             <span class="plugin-name">{{ plugin?.name || '加载中...' }}</span>
@@ -242,6 +242,11 @@ function getStatusLabel(status?: string): string {
   return labels[status || ''] || status || '';
 }
 
+/** icon 值以 asset: 开头表示插件自带真实图标（由 AppIcon 渲染） */
+function isAssetIcon(icon?: string): boolean {
+  return !!icon && icon.startsWith('asset:');
+}
+
 function markDirty(tab: string) {
   dirtyTabs.value[tab] = true;
 }
@@ -377,6 +382,9 @@ onMounted(() => {
 .back-btn:hover { background: var(--subtle-secondary); color: var(--text-primary); }
 
 .plugin-icon { width: 36px; height: 36px; border-radius: var(--radius-md); background: rgba(120, 90, 240, 0.1); color: #785AF0; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
+/* 插件自带真实图标时不使用底色 */
+.plugin-icon.asset { background: transparent; overflow: hidden; }
 .plugin-meta { flex: 1; min-width: 0; }
 .plugin-title-row { display: flex; align-items: center; gap: var(--spacer-2); }
 .plugin-name { font-size: var(--font-size-base); font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }

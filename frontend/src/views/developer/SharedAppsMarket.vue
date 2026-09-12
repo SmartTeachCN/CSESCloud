@@ -125,8 +125,12 @@
         <!-- 插件卡片 -->
         <div v-else-if="item._type === 'plugin' || activeCategory === 'plugins'" class="item-card">
           <div class="card-head">
-            <div class="item-icon" :class="item.is_official ? 'official' : ''" style="background: rgba(120, 90, 240, 0.1); color: #785AF0;">
-              <Icon :icon="item.icon || 'ri-plug-line'" :size="20" />
+            <div
+              class="item-icon"
+              :class="[{ official: item.is_official }, { asset: isAssetIcon(item.icon) }]"
+              :style="isAssetIcon(item.icon) ? undefined : { background: 'rgba(120, 90, 240, 0.1)', color: '#785AF0' }"
+            >
+              <AppIcon :icon="item.icon" :plugin-key="item.plugin_key" :size="26" fallback="ri-plug-line" />
             </div>
             <div class="head-meta">
               <div class="head-title">

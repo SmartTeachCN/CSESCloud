@@ -99,7 +99,7 @@
         </div>
         <div class="top-bar-right">
           <span v-if="activePlugin" class="plugin-indicator">
-            <Icon :icon="activePlugin.icon || 'ri-plug-line'" :size="14" />
+            <AppIcon :icon="activePlugin.icon" :plugin-key="activePlugin.plugin_key" :size="16" fallback="ri-plug-line" />
             {{ activePlugin.name }}
           </span>
           <span class="file-type-badge" v-if="currentFile">{{ currentFileType }}</span>

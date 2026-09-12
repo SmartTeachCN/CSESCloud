@@ -1,15 +1,46 @@
 {
   "plugin_key": "cses_official",
   "name": "CSES 编辑器",
-  "version": "2.0.0",
-  "description": "官方 CSES 配置文件可视化编辑器，移植自旧版 CSESCloud 平台。支持课程表/科目可视化编辑、表格视图快速改课、文件预览与多格式导出（YAML/JSON/ClassIsland/ExamSchedule）、自动识别 ClassIsland 档案、数据校验、Ctrl+S 保存。注册 .cses 后缀。",
+  "version": "3.0.0",
+  "description": "官方 CSES 课表可视化编辑器（UI 对齐 ClassIsland 档案编辑器）。注册 .yml 后缀并按 CSES 模板自动识别格式（V1.0 / V2.0）：匹配成功进入结构化编辑（课程表、科目、V2 周期配置、周视图、快速换课、校验、撤销/重做），非 CSES 格式的 .yml 文件自动回退为通用 YAML 编辑器；保存统一输出 YAML，Ctrl+S 保存。",
   "extensions": [
-    "cses"
+    "yml"
   ],
-  "icon": "ri-calendar-schedule-line",
+  "icon": "asset:icon.png",
+  "ribbon": [
+    {
+      "label": "课程表",
+      "tools": [
+        { "id": "cs-detect", "label": "重新识别", "icon": "ri-search-eye-line", "command": "cs-detect" },
+        { "id": "cs-add-schedule", "label": "新建课程表", "icon": "ri-calendar-2-line", "command": "cs-add-schedule" },
+        { "id": "cs-dup-schedule", "label": "复制课程表", "icon": "ri-file-copy-line", "command": "cs-dup-schedule" }
+      ]
+    },
+    {
+      "label": "课程",
+      "tools": [
+        { "id": "cs-add-class", "label": "添加课程", "icon": "ri-add-line", "command": "cs-add-class" }
+      ]
+    },
+    {
+      "label": "科目",
+      "tools": [
+        { "id": "cs-add-subject", "label": "新建科目", "icon": "ri-book-2-line", "command": "cs-add-subject" },
+        { "id": "cs-preset-subject", "label": "预设科目", "icon": "ri-price-tag-3-line", "command": "cs-preset-subject" }
+      ]
+    },
+    {
+      "label": "工具",
+      "tools": [
+        { "id": "cs-validate", "label": "校验", "icon": "ri-error-warning-line", "command": "cs-validate" },
+        { "id": "cs-format", "label": "格式化", "icon": "ri-code-s-slash-line", "command": "cs-format" },
+        { "id": "cs-raw", "label": "YAML 源码", "icon": "ri-braces-line", "command": "cs-toggle-raw" }
+      ]
+    }
+  ],
   "status": "published",
   "developer_username": "system",
   "is_official": true,
   "created_at": "2026-08-13 11:03:59",
-  "updated_at": "2026-08-18 12:10:00"
+  "updated_at": "2026-09-12 10:00:00"
 }
