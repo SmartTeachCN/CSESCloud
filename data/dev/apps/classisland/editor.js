@@ -114,6 +114,7 @@ function renderDeviceCards(devices, profilePlaying) {
       '<div class="cia-device-menu" id="ciamenu_' + escAttr(d.device_id) + '" style="display:none" onclick="event.stopPropagation()">' +
         '<button class="cia-device-menu-item" onclick="closeDeviceMenu();openDeviceModal(\'' + d.device_id + '\')">查看 / 编辑设备</button>' +
         '<button class="cia-device-menu-item" onclick="closeDeviceMenu();openDeviceModal(\'' + d.device_id + '\', \'broadcast\')">发送广播</button>' +
+        '<button class="cia-device-menu-item" onclick="closeDeviceMenu();restartClient(\'' + d.device_id + '\')">重启客户端</button>' +
         '<button class="cia-device-menu-item danger" onclick="closeDeviceMenu();unregisterDevice(\'' + d.device_id + '\', \'' + escAttr(d.display_name) + '\')">删除设备</button>' +
       '</div>' +
     '</div>';
@@ -427,6 +428,23 @@ function deleteDeviceFromModal() {
       alert('设备已删除');
     })
     .catch(function (e) { alert('删除失败: ' + e.message); });
+}
+
+/** 重启客户端（下发 client.restart，客户端适配器收到后调用 AppBase.Restart 自动重启） */
+async function restartClient(deviceId) {
+  if (!deviceId) return;
+  if (!confirm('确认向该设备发送重启客户端指令？客户端收到命令后将立即重启。')) return;
+  try {
+    await window.CSES.request('controlApi', {
+      action: 'command_create',
+      payload: { command_type: 'client.restart', device_id: deviceId, payload: { source: 'platform' } }
+    });
+    alert('重启指令已下发，客户端将在收到命令后自动重启');
+  } catch (e) { alert('重启指令下发失败: ' + e.message); }
+}
+
+function restartClientFromModal() {
+  if (modalDevice) restartClient(modalDevice.device_id);
 }
 
 // ===== 档案选择弹框（课表档案「编辑」：弹出选一个档案并应用） =====
@@ -882,7 +900,7 @@ function batchDeployProfiles() {
   openDeployDialog(deployProfileId);
 }
 
-// ===== 应用配置（全局 + 设备分层，保存后经 settings.apply 同步到客户端） =====
+// ===== 应用设置（左侧栏对齐 ClassIsland 设置窗口：通用 / 主界面 / 适配器，全局 + 设备分层，保存后经 settings.apply 实时同步到客户端） =====
 var configDeviceId = '__global__';
 var globalConfig = {};       // 全局配置（classisland-config.json）
 var deviceConfigRaw = {};    // 当前设备的覆盖配置（device-<id>.json）
@@ -952,11 +970,26 @@ async function saveConfig() {
   } catch (e) { console.error('保存配置失败:', e); }
 }
 
-/** 配置同步：全局配置广播 settings.apply，设备配置定向下发（与 EA2 相同的设置接口） */
+/**
+ * 配置同步：把配置展开为扁平的 "a.b.c" 键值后经 settings.apply 下发。
+ * 全局配置保存时广播到所有设备；设备覆盖保存时仅定向该设备（受影响的设备）。
+ * 客户端适配器按扁平键白名单写入适配器设置（sync.* / notification.*）与 ClassIsland 客户端设置（client.*）。
+ */
+function flattenSettings(obj, prefix, out) {
+  for (var k in obj) {
+    var v = obj[k];
+    var key = prefix ? prefix + '.' + k : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) flattenSettings(v, key, out);
+    else out.push({ key: key, value: v });
+  }
+}
+
 async function dispatchSettings() {
+  // 重新合并：saveConfigField 直接写入层对象，configCache 若不刷新会下发旧值
+  configCache = mergedConfig();
   var settings = [];
   for (var k in configCache) {
-    if (k !== 'server') settings.push({ key: k, value: configCache[k] });
+    if (k !== 'server') flattenSettings(configCache[k], k, settings);
   }
   var cmdPayload = { command_type: 'settings.apply', payload: { settings: settings, revision: Date.now().toString() } };
   if (configDeviceId !== '__global__') cmdPayload.device_id = configDeviceId;
@@ -972,7 +1005,7 @@ function switchConfigTab(tab) {
 
 function renderConfigPage() {
   refreshConfigDeviceSelector();
-  switchConfigTab('sync');
+  switchConfigTab('general');
 }
 
 function switchConfigDevice(deviceId) {
@@ -996,6 +1029,67 @@ function refreshConfigDeviceSelector() {
   }).catch(function () { });
 }
 
+// ---- 设置行构建工具（生成与 ClassIsland 设置项一致的行/卡片控件） ----
+function cfgRow(title, desc, actionHtml) {
+  return '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">' + title + '</div><div class="cia-config-item-desc">' + desc + '</div></div><div class="cia-config-item-action">' + actionHtml + '</div></div>';
+}
+
+function cfgCard(title, rows) {
+  return '<div class="cia-config-card">' + (title ? '<div class="cia-section-title">' + title + '</div>' : '') + rows.join('<div class="cia-config-divider"></div>') + '</div>';
+}
+
+/** 开关型设置（bool） */
+function cfgBoolSelect(key, def) {
+  return cfgSelect(key, def, [[true, '开启'], [false, '关闭']], 'this.value === \'true\'');
+}
+
+/** 下拉设置：options 为 [值, 显示文本] 数组；conv 为 onchange 中的取值表达式 */
+function cfgSelect(key, def, options, conv) {
+  var cur = getConfigField(key, def);
+  var html = '<select onchange="saveConfigField(\'' + key + '\', ' + (conv || 'this.value') + ')">';
+  options.forEach(function (o) {
+    html += '<option value="' + escAttr(o[0]) + '"' + (String(cur) === String(o[0]) ? ' selected' : '') + '>' + escHtml(o[1]) + '</option>';
+  });
+  return html + '</select>';
+}
+
+/** 数字输入：opts: {min,max,step,float} */
+function cfgNumber(key, def, opts) {
+  opts = opts || {};
+  var cur = getConfigField(key, def);
+  var conv = (opts.float ? 'parseFloat(this.value)' : 'parseInt(this.value)') + '||' + def;
+  var attr = '';
+  if (opts.min !== undefined) attr += ' min="' + opts.min + '"';
+  if (opts.max !== undefined) attr += ' max="' + opts.max + '"';
+  if (opts.step !== undefined) attr += ' step="' + opts.step + '"';
+  return '<input type="number" value="' + escAttr(cur) + '"' + attr + ' onchange="saveConfigField(\'' + key + '\', ' + conv + ')" style="width:100px" />';
+}
+
+function cfgText(key, def, width) {
+  var cur = getConfigField(key, def);
+  return '<input type="text" value="' + escAttr(cur) + '" placeholder="' + escAttr(def) + '" onchange="saveConfigField(\'' + key + '\', this.value)" style="width:' + (width || 160) + 'px" />';
+}
+
+/** 日期输入（写回 yyyy-MM-dd 字符串，客户端以 DateTime 解析） */
+function cfgDate(key, def) {
+  var cur = String(getConfigField(key, def) || def || '');
+  return '<input type="date" value="' + escAttr(cur.slice(0, 10)) + '" onchange="saveConfigField(\'' + key + '\', this.value)" style="width:150px" />';
+}
+
+/** 颜色输入（写回 #RRGGBB，客户端以 Avalonia Color 解析） */
+function cfgColor(key, def) {
+  var cur = String(getConfigField(key, def) || def);
+  if (cur.charAt(0) === '#' && cur.length === 9) cur = '#' + cur.slice(3); // #AARRGGBB → #RRGGBB
+  if (cur.charAt(0) !== '#') cur = def;
+  return '<input type="color" value="' + escAttr(cur) + '" onchange="saveConfigField(\'' + key + '\', this.value)" />';
+}
+
+/** 单周开始时间默认值：本周周日（与 ClassIsland 默认一致） */
+function weekStartDefault() {
+  var d = new Date(Date.now() - new Date().getDay() * 86400000);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
 function renderConfigTab(tab) {
   var container = document.getElementById('ciaConfigContent');
   var uid = (window.CSES.instance && window.CSES.instance.uid) || '';
@@ -1004,99 +1098,214 @@ function renderConfigTab(tab) {
   var scopeTag = isGlobal ? '（全局）' : '（设备覆盖）';
   var html = '';
   switch (tab) {
-    case 'sync':
-      html = '<h2>同步设置 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
-        '<div class="cia-config-card">' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">自动同步</div><div class="cia-config-item-desc">客户端后台定期向平台拉取命令与档案更新。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'sync.autoSync\', this.value === \'true\')"><option value="true"' + (getConfigField('sync.autoSync', true) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('sync.autoSync', true) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">同步间隔</div><div class="cia-config-item-desc">客户端向平台拉取命令与档案版本的最小间隔（秒），实际以服务器限制为准。</div></div><div class="cia-config-item-action"><input type="number" value="' + escAttr(getConfigField('sync.pollInterval', 300)) + '" min="5" max="86400" onchange="saveConfigField(\'sync.pollInterval\', parseInt(this.value)||300)" style="width:110px" /><span style="font-size:11px;color:var(--text-tertiary)">秒</span></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">档案应用方式</div><div class="cia-config-item-desc">热替换立即生效；写入文件则在客户端重启或手动切换档案后生效。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'sync.applyMode\', this.value)"><option value="hotswap"' + (getConfigField('sync.applyMode', 'hotswap') === 'hotswap' ? ' selected' : '') + '>热替换（立即生效）</option><option value="file"' + (getConfigField('sync.applyMode') === 'file' ? ' selected' : '') + '>写入档案文件</option></select></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">默认目标档案名</div><div class="cia-config-item-desc">部署时客户端默认保存的档案文件名（不含路径）。</div></div><div class="cia-config-item-action"><input type="text" value="' + escAttr(getConfigField('sync.targetProfile', 'CSES-Cloud.json')) + '" onchange="saveConfigField(\'sync.targetProfile\', this.value)" style="width:180px" /></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">连接传输</div><div class="cia-config-item-desc">长轮询为 REST 轮询；WebSocket 为实时推送（断线自动回退长轮询）。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'sync.transport\', this.value)"><option value="poll"' + (getConfigField('sync.transport', 'poll') !== 'ws' ? ' selected' : '') + '>长轮询</option><option value="ws"' + (getConfigField('sync.transport', 'poll') === 'ws' ? ' selected' : '') + '>WebSocket</option></select></div></div>' +
-        '</div>';
+    case 'general':
+      html = '<h2>基本 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        cfgCard('主界面显示', [
+          cfgRow('隐藏模式', '基础模式按下方开关隐藏主界面；规则模式按条件规则隐藏。', cfgSelect('client.hideMode', 0, [[0, '基础模式'], [1, '规则模式']], 'parseInt(this.value)')),
+          cfgRow('上课时隐藏', '上课时间自动隐藏主界面。', cfgBoolSelect('client.hideOnClass', false)),
+          cfgRow('前台是最大化窗口时隐藏', '', cfgBoolSelect('client.hideOnMaxWindow', false)),
+          cfgRow('前台是全屏窗口时隐藏', '', cfgBoolSelect('client.hideOnFullscreen', false)),
+        ]) +
+        cfgCard('周次', [
+          cfgRow('单周开始时间', '单周轮换模式的起始日期（默认取本周周日）。', cfgDate('client.singleWeekStartTime', weekStartDefault())),
+          cfgRow('多周轮换周期', '多周轮换的总周期长度（周）。', cfgNumber('client.multiWeekRotationMaxCycle', 4, { min: 1, max: 99 })),
+        ]) +
+        cfgCard('启动与任务栏', [
+          cfgRow('显示启动画面', '客户端启动时显示 Splash 启动画面。', cfgBoolSelect('client.isSplashEnabled', false)),
+          cfgRow('启动画面显示详细信息', '在启动画面上显示加载项详情。', cfgBoolSelect('client.showDetailedStatusOnSplash', false)),
+          cfgRow('降低加载进度精度', '启动画面进度条以低精度推进，观感更平滑。', cfgBoolSelect('client.reduceProgressAccuracy', true)),
+          cfgRow('任务栏图标点击行为', '点击客户端任务栏图标时执行的操作。', cfgSelect('client.taskBarIconClickBehavior', 0, [[0, '打开主菜单'], [1, '打开档案编辑窗口'], [2, '显示/隐藏主界面'], [3, '打开换课窗口'], [4, '打开设置窗口']], 'parseInt(this.value)')),
+        ]);
       break;
-    case 'notification':
-      html = '<h2>通知 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
-        '<div class="cia-config-card">' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">平台广播提醒</div><div class="cia-config-item-desc">客户端收到 broadcast.show 命令时弹出 ClassIsland 提醒。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'notification.enabled\', this.value === \'true\')"><option value="true"' + (getConfigField('notification.enabled', true) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('notification.enabled', true) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">广播提醒时长</div><div class="cia-config-item-desc">广播提醒在屏幕上停留的时间。</div></div><div class="cia-config-item-action"><input type="number" value="' + escAttr(getConfigField('notification.durationSeconds', 10)) + '" min="3" max="120" onchange="saveConfigField(\'notification.durationSeconds\', parseInt(this.value)||10)" style="width:90px" /><span style="font-size:11px;color:var(--text-tertiary)">秒</span></div></div>' +
-        '</div>' +
-        '<div class="cia-config-card">' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">发送测试广播</div><div class="cia-config-item-desc">' + (isGlobal ? '向所有在线设备下发一条测试广播。' : '向该设备下发一条测试广播。') + '</div></div><div class="cia-config-item-action"><button class="cia-btn small" onclick="showBroadcastDialog(' + (isGlobal ? '' : ('\'' + configDeviceId + '\', \'\'') ) + ')">发送</button></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">撤回广播</div><div class="cia-config-item-desc">向客户端下发 broadcast.dismiss 关闭当前提醒。</div></div><div class="cia-config-item-action"><button class="cia-btn small danger" onclick="dismissBroadcast(' + (isGlobal ? '' : ('\'' + configDeviceId + '\'')) + ')">撤回</button></div></div>' +
-        '</div>';
+    case 'clock':
+      html = '<h2>时钟 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        cfgCard('精确时间', [
+          cfgRow('使用精确时间', '从 NTP 服务器获取精确时间进行课程计算。', cfgBoolSelect('client.exactTimeEnabled', true)),
+          cfgRow('NTP 服务器', '精确时间使用的 NTP 服务器地址。', cfgText('client.exactTimeServer', 'ntp.aliyun.com', 150)),
+          cfgRow('自动校时', '定期与 NTP 服务器校准时间。', cfgBoolSelect('client.timeAutoAdjust', false)),
+          cfgRow('校时间隔（秒）', '自动校时的时间间隔。', cfgNumber('client.timeAutoAdjustSeconds', 0, { min: 0, max: 86400, float: true })),
+          cfgRow('手动时间偏移（秒）', '在精确时间基础上手动调整的偏移量。', cfgNumber('client.timeOffsetSeconds', 0, { float: true })),
+        ]) +
+        cfgCard('时间线显示', [
+          cfgRow('时间点附加信息', '时间点上显示的附加信息类型。', cfgSelect('client.extraInfoType', 0, [[0, '持续时间'], [1, '已过/持续'], [2, '剩余/持续'], [3, '已过百分比'], [4, '剩余时间'], [5, '倒计时']], 'parseInt(this.value)')),
+          cfgRow('结束倒计时', '时间点结束前显示倒计时。', cfgBoolSelect('client.countdownEnabled', true)),
+          cfgRow('倒计时触发（秒）', '课程结束前多少秒开始显示倒计时。', cfgNumber('client.countdownSeconds', 60, { min: 1, max: 3600 })),
+        ]) +
+        cfgCard('默认时长', [
+          cfgRow('默认上课时长（分钟）', '新建时间点时的默认上课时长。', cfgNumber('client.defaultOnClassMinutes', 40, { min: 1, max: 600 })),
+          cfgRow('默认课间时长（分钟）', '新建时间点时的默认课间时长。', cfgNumber('client.defaultBreakingMinutes', 10, { min: 0, max: 600 })),
+        ]);
       break;
-    case 'client':
-      html = '<h2>客户端设置 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
-        '<div class="cia-tip-box" style="margin-bottom:var(--spacer-3)">对应 ClassIsland 客户端的设置项，保存后经 settings.apply 即时下发并在客户端生效。</div>' +
-        '<div class="cia-config-card">' +
-          '<div class="cia-section-title">外观</div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">应用主题</div><div class="cia-config-item-desc">客户端界面主题。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.theme\', parseInt(this.value))"><option value="0"' + (getConfigField('client.theme', 0) === 0 ? ' selected' : '') + '>跟随系统</option><option value="1"' + (getConfigField('client.theme', 0) === 1 ? ' selected' : '') + '>明亮</option><option value="2"' + (getConfigField('client.theme', 0) === 2 ? ' selected' : '') + '>黑暗</option></select></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">背景不透明度</div><div class="cia-config-item-desc">主界面背景不透明度（%）。</div></div><div class="cia-config-item-action"><input type="number" min="0" max="100" value="' + escAttr(Math.round(getConfigField('client.opacity', 0.55) * 100)) + '" onchange="saveConfigField(\'client.opacity\', (parseInt(this.value)||55)/100)" style="width:90px" /><span style="font-size:11px;color:var(--text-tertiary)">%</span></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">界面缩放</div><div class="cia-config-item-desc">客户端界面缩放倍率。</div></div><div class="cia-config-item-action"><input type="number" step="0.05" min="0.5" max="2" value="' + escAttr(getConfigField('client.scale', 1)) + '" onchange="saveConfigField(\'client.scale\', parseFloat(this.value)||1)" style="width:90px" /><span style="font-size:11px;color:var(--text-tertiary)">倍</span></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">动画效果级别</div><div class="cia-config-item-desc">0 完整 / 1 减少 / 2 关闭。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.animationLevel\', parseInt(this.value))"><option value="0"' + (getConfigField('client.animationLevel', 0) === 0 ? ' selected' : '') + '>完整</option><option value="1"' + (getConfigField('client.animationLevel', 0) === 1 ? ' selected' : '') + '>减少</option><option value="2"' + (getConfigField('client.animationLevel', 0) === 2 ? ' selected' : '') + '>关闭</option></select></div></div>' +
-        '</div>' +
-        '<div class="cia-config-card">' +
-          '<div class="cia-section-title">提醒</div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">准备上课提醒</div><div class="cia-config-item-desc">上课前指定时间发出提醒。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.classPrepareEnabled\', this.value === \'true\')"><option value="true"' + (getConfigField('client.classPrepareEnabled', true) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('client.classPrepareEnabled', true) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">提醒提前量</div><div class="cia-config-item-desc">准备上课提醒的提前秒数。</div></div><div class="cia-config-item-action"><input type="number" min="10" max="3600" value="' + escAttr(getConfigField('client.classPrepareSeconds', 60)) + '" onchange="saveConfigField(\'client.classPrepareSeconds\', parseInt(this.value)||60)" style="width:90px" /><span style="font-size:11px;color:var(--text-tertiary)">秒</span></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">下课提醒</div><div class="cia-config-item-desc">下课时发出提醒。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.classOffEnabled\', this.value === \'true\')"><option value="true"' + (getConfigField('client.classOffEnabled', true) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('client.classOffEnabled', true) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">课程切换提醒</div><div class="cia-config-item-desc">课程切换时发出提醒。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.classChangingEnabled\', this.value === \'true\')"><option value="true"' + (getConfigField('client.classChangingEnabled', false) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('client.classChangingEnabled', false) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
-        '</div>' +
-        '<div class="cia-config-card">' +
-          '<div class="cia-section-title">显示</div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">时间点附加信息</div><div class="cia-config-item-desc">时间点上显示的附加信息类型。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.extraInfoType\', parseInt(this.value))"><option value="0"' + (getConfigField('client.extraInfoType', 0) === 0 ? ' selected' : '') + '>持续时间</option><option value="1"' + (getConfigField('client.extraInfoType', 0) === 1 ? ' selected' : '') + '>已过/持续</option><option value="2"' + (getConfigField('client.extraInfoType', 0) === 2 ? ' selected' : '') + '>剩余/持续</option><option value="3"' + (getConfigField('client.extraInfoType', 0) === 3 ? ' selected' : '') + '>已过百分比</option><option value="4"' + (getConfigField('client.extraInfoType', 0) === 4 ? ' selected' : '') + '>剩余时间</option><option value="5"' + (getConfigField('client.extraInfoType', 0) === 5 ? ' selected' : '') + '>倒计时</option></select></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">结束倒计时</div><div class="cia-config-item-desc">时间点结束前显示倒计时。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.countdownEnabled\', this.value === \'true\')"><option value="true"' + (getConfigField('client.countdownEnabled', false) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('client.countdownEnabled', false) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">默认上课时长</div><div class="cia-config-item-desc">新建时间点时的默认上课时长。</div></div><div class="cia-config-item-action"><input type="number" min="1" max="600" value="' + escAttr(getConfigField('client.defaultOnClassMinutes', 40)) + '" onchange="saveConfigField(\'client.defaultOnClassMinutes\', parseInt(this.value)||40)" style="width:90px" /><span style="font-size:11px;color:var(--text-tertiary)">分钟</span></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">默认课间时长</div><div class="cia-config-item-desc">新建时间点时的默认课间时长。</div></div><div class="cia-config-item-action"><input type="number" min="0" max="600" value="' + escAttr(getConfigField('client.defaultBreakingMinutes', 10)) + '" onchange="saveConfigField(\'client.defaultBreakingMinutes\', parseInt(this.value)||10)" style="width:90px" /><span style="font-size:11px;color:var(--text-tertiary)">分钟</span></div></div>' +
-        '</div>' +
-        '<div class="cia-config-card">' +
-          '<div class="cia-section-title">时间</div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">精确时间</div><div class="cia-config-item-desc">使用 NTP 精确时间进行课程计算。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.exactTimeEnabled\', this.value === \'true\')"><option value="true"' + (getConfigField('client.exactTimeEnabled', true) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('client.exactTimeEnabled', true) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">自动校时</div><div class="cia-config-item-desc">定期与 NTP 服务器校准时间。</div></div><div class="cia-config-item-action"><select onchange="saveConfigField(\'client.timeAutoAdjust\', this.value === \'true\')"><option value="true"' + (getConfigField('client.timeAutoAdjust', true) !== false ? ' selected' : '') + '>开启</option><option value="false"' + (getConfigField('client.timeAutoAdjust', true) === false ? ' selected' : '') + '>关闭</option></select></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">手动时间偏移</div><div class="cia-config-item-desc">在精确时间基础上手动调整的偏移量。</div></div><div class="cia-config-item-action"><input type="number" value="' + escAttr(getConfigField('client.timeOffsetSeconds', 0)) + '" onchange="saveConfigField(\'client.timeOffsetSeconds\', parseFloat(this.value)||0)" style="width:110px" /><span style="font-size:11px;color:var(--text-tertiary)">秒</span></div></div>' +
-        '</div>';
+    case 'storage':
+      html = '<h2>存储 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        cfgCard('自动备份', [
+          cfgRow('自动备份', '客户端定期自动备份数据。', cfgBoolSelect('client.autoBackupEnabled', true)),
+          cfgRow('备份间隔（天）', '自动备份的间隔天数。', cfgNumber('client.autoBackupIntervalDays', 7, { min: 1, max: 365 })),
+          cfgRow('备份保留数量', '最多保留的备份文件数量。', cfgNumber('client.autoBackupLimit', 16, { min: 1, max: 999 })),
+        ]);
       break;
-    case 'connect':
-      html = '<h2>客户端接入</h2>' +
-        '<div class="cia-config-card">' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">服务器地址</div><div class="cia-config-item-desc">ClassIsland「CSES Cloud 适配器」设置中填写的服务器地址。</div></div><div class="cia-config-item-action"><code class="cia-code-chip">' + escHtml(serverUrl) + '</code></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">实例 UID</div><div class="cia-config-item-desc">与注册码二选一填写；填写后客户端无需通过注册码解析实例。</div></div><div class="cia-config-item-action"><code class="cia-code-chip">' + escHtml(uid) + '</code></div></div>' +
-        '</div>' +
-        '<div class="cia-tip-box">' +
-          '<strong>接入步骤：</strong><br>' +
-          '1. 在 ClassIsland 客户端安装「CSES Cloud 适配器」插件（.cipx 包，见适配器 README）；<br>' +
-          '2. 在「连接应用」页面生成注册码，可直接「下载凭据」文件；<br>' +
-          '3. 在 ClassIsland 设置 → CSES Cloud 适配器 中「导入凭据」（或手动填写服务器地址与注册码），点击「连接」；<br>' +
-          '4. 设备出现在「连接应用」页面后，即可在「档案管理」中向其部署档案。' +
-        '</div>';
+    case 'privacy':
+      html = '<h2>隐私 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        cfgCard('隐私', [
+          cfgRow('匿名使用情况统计', '向开发者上报匿名使用数据以改进 ClassIsland。', cfgBoolSelect('client.isReportingEnabled', true)),
+          cfgRow('Sentry 错误上报', '客户端出错时向 Sentry 上报错误信息。', cfgBoolSelect('client.isSentryEnabled', true)),
+        ]);
+      break;
+    case 'refreshing':
+      html = '<h2>翻新与迎新 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        cfgCard('翻新提醒', [
+          cfgRow('翻新提醒', '在关键时间节点显示翻新提醒横幅。', cfgBoolSelect('client.isRefreshingToastEnabled', true)),
+          cfgRow('提醒阈值（天）', '距离关键时间节点多少天时开始显示提醒。', cfgNumber('client.refreshingToastThresholdDays', 20, { min: 1, max: 365 })),
+          cfgRow('最多提醒次数', '整个翻新周期内最多显示的提醒次数。', cfgNumber('client.maxRefreshingToastCounts', 5, { min: 1, max: 99 })),
+          cfgRow('剩余提醒次数', '当前周期内剩余的提醒次数。', cfgNumber('client.leftRefreshingToastCounts', 0, { min: 0, max: 99 })),
+          cfgRow('下次启动显示迎新引导', '下次启动客户端时显示迎新引导。', cfgBoolSelect('client.showRefreshingToastOnNextStart', false)),
+        ]);
       break;
     case 'advanced':
-      html = '<h2>高级</h2>' +
-        '<div class="cia-config-card">' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">REST 轮询频率限制</div><div class="cia-config-item-desc">长轮询设备的命令轮询间隔（秒）。客户端按此限制自适应调整。</div></div><div class="cia-config-item-action"><input type="number" id="ciaPollInterval" value="300" min="5" max="86400" style="width:110px" /><button class="cia-btn small" onclick="savePollInterval()">保存</button></div></div>' +
-          '<div class="cia-config-divider"></div>' +
-          '<div class="cia-config-item"><div class="cia-config-item-main"><div class="cia-config-item-title">WebSocket 网关</div><div class="cia-config-item-desc">客户端 WebSocket 实时通信网关地址（传输为 ws 时使用）。</div></div><div class="cia-config-item-action"><code class="cia-code-chip">' + escHtml(serverUrl + '/api/ws-control') + '</code></div></div>' +
-        '</div>';
+      html = '<h2>高级 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        cfgCard('插件', [
+          cfgRow('自动禁用损坏的插件', '启动时检测并禁用加载失败的插件。', cfgBoolSelect('client.autoDisableCorruptPlugins', true)),
+        ]) +
+        cfgCard('调试', [
+          cfgRow('显示调试选项', '在客户端设置窗口中显示调试页面。', cfgBoolSelect('client.isDebugOptionsEnabled', false)),
+        ]);
+      break;
+    case 'components':
+      html = '<h2>组件 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        '<div class="cia-tip-box">主界面组件（课程、日期、天气等）的添加与排列需在客户端主界面「编辑模式」中完成；整体显示样式可在「外观」页调整。此处暂无可远程下发的组件项。</div>';
+      break;
+    case 'appearance':
+      html = '<h2>外观 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        cfgCard('主题', [
+          cfgRow('应用主题', '客户端界面主题。', cfgSelect('client.theme', 2, [[0, '跟随系统'], [1, '明亮'], [2, '黑暗']], 'parseInt(this.value)')),
+          cfgRow('主题亮度', '自定义主题的目标亮度（0-1）。', cfgNumber('client.targetLightValue', 0.6, { min: 0, max: 1, step: 0.05, float: true })),
+          cfgRow('颜色回退模式', '主题颜色计算异常时使用回退方案。', cfgBoolSelect('client.isFallbackModeEnabled', true)),
+        ]) +
+        cfgCard('颜色', [
+          cfgRow('主题色', '主界面强调颜色。', cfgColor('client.primaryColor', '#0067C0')),
+          cfgRow('背景色', '主界面背景颜色（需开启自定义背景色）。', cfgColor('client.backgroundColor', '#FFFFFF')),
+          cfgRow('自定义背景色', '启用上方自定义背景颜色。', cfgBoolSelect('client.isCustomBackgroundColorEnabled', false)),
+        ]) +
+        cfgCard('布局与缩放', [
+          cfgRow('界面缩放（倍）', '客户端界面缩放倍率。', cfgNumber('client.scale', 1, { min: 0.5, max: 2, step: 0.05, float: true })),
+          cfgRow('背景不透明度（%）', '主界面背景不透明度（0-100）。', '<input type="number" min="0" max="100" value="' + escAttr(Math.round(getConfigField('client.opacity', 0.5) * 100)) + '" onchange="saveConfigField(\'client.opacity\', (parseInt(this.value)||50)/100)" style="width:100px" />'),
+          cfgRow('界面圆角（px）', '主界面圆角半径。', cfgNumber('client.radiusX', 8, { min: 0, max: 32, float: true })),
+          cfgRow('动画效果级别', '0 完整 / 1 减少 / 2 关闭。', cfgSelect('client.animationLevel', 1, [[0, '完整'], [1, '减少'], [2, '关闭']], 'parseInt(this.value)')),
+          cfgRow('分开显示信息岛', '主界面各组件以独立窗口显示。', cfgBoolSelect('client.isIslandSeperated', false)),
+        ]) +
+        cfgCard('字体', [
+          cfgRow('主界面字体', '主界面使用的字体族。', cfgText('client.mainWindowFont', 'MiSans', 150)),
+          cfgRow('次要字体大小', '', cfgNumber('client.mainWindowSecondaryFontSize', 14, { min: 8, max: 40, float: true })),
+          cfgRow('正文字体大小', '', cfgNumber('client.mainWindowBodyFontSize', 16, { min: 8, max: 48, float: true })),
+          cfgRow('强调字体大小', '', cfgNumber('client.mainWindowEmphasizedFontSize', 18, { min: 8, max: 48, float: true })),
+          cfgRow('大号字体大小', '', cfgNumber('client.mainWindowLargeFontSize', 20, { min: 8, max: 64, float: true })),
+          cfgRow('字体字重', '', cfgSelect('client.mainWindowFontWeight2', 500, [[400, '常规'], [500, '中等'], [600, '半粗'], [700, '粗体']], 'parseInt(this.value)')),
+          cfgRow('行垂直边距（px）', '时间线每行文字的垂直边距。', cfgNumber('client.mainWindowLineVerticalMargin', 5, { min: 0, max: 20, float: true })),
+        ]);
+      break;
+    case 'notification':
+      html = '<h2>提醒 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        cfgCard('通知服务', [
+          cfgRow('启用通知服务', '关闭后客户端不再弹出任何提醒。', cfgBoolSelect('client.isNotificationEnabled', true)),
+          cfgRow('提醒效果', '启用提醒弹出动画效果。', cfgBoolSelect('client.isNotificationEffectEnabled', true)),
+          cfgRow('允许提醒使用效果', '提醒提供方可使用弹出效果。', cfgBoolSelect('client.allowNotificationEffect', true)),
+          cfgRow('提醒置顶', '提醒弹出时临时置顶显示。', cfgBoolSelect('client.isNotificationTopmostEnabled', true)),
+          cfgRow('允许提醒置顶', '提醒提供方可请求置顶显示。', cfgBoolSelect('client.allowNotificationTopmost', true)),
+        ]) +
+        cfgCard('声音', [
+          cfgRow('提醒音效', '启用提醒音效。', cfgBoolSelect('client.isNotificationSoundEnabled', true)),
+          cfgRow('允许提醒使用音效', '提醒提供方可播放音效。', cfgBoolSelect('client.allowNotificationSound', false)),
+          cfgRow('提醒音量', '', cfgNumber('client.notificationSoundVolume', 1, { min: 0, max: 1, step: 0.05, float: true })),
+        ]) +
+        cfgCard('语音', [
+          cfgRow('提醒语音', '启用提醒语音朗读。', cfgBoolSelect('client.isSpeechEnabled', true)),
+          cfgRow('允许提醒使用语音', '提醒提供方可朗读内容。', cfgBoolSelect('client.allowNotificationSpeech', false)),
+          cfgRow('语音音量', '', cfgNumber('client.speechVolume', 1, { min: 0, max: 1, step: 0.05, float: true })),
+        ]) +
+        cfgCard('课程提醒', [
+          cfgRow('准备上课提醒', '上课前指定时间发出提醒。', cfgBoolSelect('client.classPrepareEnabled', true)),
+          cfgRow('提醒提前量（秒）', '准备上课提醒的提前秒数。', cfgNumber('client.classPrepareSeconds', 60, { min: 10, max: 3600 })),
+          cfgRow('下课提醒', '下课时发出提醒。', cfgBoolSelect('client.classOffEnabled', true)),
+          cfgRow('课程切换提醒', '课程切换时发出提醒。', cfgBoolSelect('client.classChangingEnabled', true)),
+        ]) +
+        cfgCard('广播测试', [
+          cfgRow('发送测试广播', isGlobal ? '向所有设备下发一条测试广播。' : '向该设备下发一条测试广播。', '<button class="cia-btn small" onclick="showBroadcastDialog(' + (isGlobal ? '' : ('\'' + configDeviceId + '\', \'\'')) + ')">发送</button>'),
+          cfgRow('撤回广播', '向客户端下发 broadcast.dismiss 关闭当前提醒。', '<button class="cia-btn small danger" onclick="dismissBroadcast(' + (isGlobal ? '' : ('\'' + configDeviceId + '\'')) + ')">撤回</button>'),
+        ]);
+      break;
+    case 'window':
+      html = '<h2>窗口 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        cfgCard('停靠位置', [
+          cfgRow('停靠位置', '主界面在屏幕上的停靠位置。', cfgSelect('client.windowDockingLocation', 1, [[0, '上左'], [1, '上中'], [2, '上右'], [3, '下左'], [4, '下中'], [5, '下右']], 'parseInt(this.value)')),
+          cfgRow('停靠显示器', '多显示器时主界面停靠的显示器编号（从 0 开始）。', cfgNumber('client.windowDockingMonitorIndex', 0, { min: 0, max: 9 })),
+          cfgRow('水平偏移（px）', '相对停靠位置的水平偏移。', cfgNumber('client.windowDockingOffsetX', 0)),
+          cfgRow('垂直偏移（px）', '相对停靠位置的垂直偏移。', cfgNumber('client.windowDockingOffsetY', 0)),
+        ]) +
+        cfgCard('窗口层级', [
+          cfgRow('窗口层级', '置底显示在所有窗口后方，置顶显示在所有窗口前方。', cfgSelect('client.windowLayer', 1, [[0, '置底'], [1, '置顶']], 'parseInt(this.value)')),
+          cfgRow('层级重设频率', '重新设置置顶/置底状态的时机，较高的频率会增加性能占用。', cfgSelect('client.windowTopmostRecheckMode', 0, [[0, '窗口层级变化时'], [1, '前台窗口变化时']], 'parseInt(this.value)')),
+        ]) +
+        cfgCard('交互与显示', [
+          cfgRow('启用鼠标点击', '启用时鼠标可与主界面元素交互；禁用时点击将穿透到后方窗口。', cfgBoolSelect('client.isMouseClickingEnabled', true)),
+          cfgRow('指针移入淡化', '鼠标移入或触屏点击主界面区域时淡化主界面。', cfgBoolSelect('client.isMouseInFadingEnabled', true)),
+          cfgRow('触屏点击后自动恢复时间（ms）', '触屏点击主界面后自动恢复显示的延时，0 为禁用。', cfgNumber('client.touchInFadingDurationMs', 0, { min: 0, float: true })),
+          cfgRow('阻止截图', '开启后其他应用无法截取主界面窗口内容。', cfgBoolSelect('client.isWindowCaptureBlockingEnabled', false)),
+          cfgRow('使用原始输入', '使用 RawInput 接收鼠标/触屏事件，可区分鼠标与触摸；不兼容时可禁用。', cfgBoolSelect('client.useRawInput', false)),
+        ]);
+      break;
+    case 'weather':
+      html = '<h2>天气 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        cfgCard('城市与位置', [
+          cfgRow('城市名称', '天气信息显示的城市名称。', cfgText('client.cityName', '北京 (北京, 中国)', 180)),
+          cfgRow('城市 ID', '天气数据源的城市标识（如 weathercn:101010100）。', cfgText('client.cityId', 'weathercn:101010100', 180)),
+          cfgRow('纬度', '', cfgNumber('client.weatherLatitude', 39.9, { min: -90, max: 90, step: 0.0001, float: true })),
+          cfgRow('经度', '', cfgNumber('client.weatherLongitude', 116.4, { min: -180, max: 180, step: 0.0001, float: true })),
+          cfgRow('自动刷新天气位置', '定期根据定位自动刷新天气位置。', cfgBoolSelect('client.autoRefreshWeatherLocation', false)),
+        ]);
+      break;
+    case 'automation':
+      html = '<h2>自动化 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        cfgCard('自动化', [
+          cfgRow('启用自动化', '启用客户端的课表自动化规则。', cfgBoolSelect('client.isAutomationEnabled', false)),
+        ]);
+      break;
+    case 'update':
+      html = '<h2>更新</h2>' +
+        '<div class="cia-tip-box">客户端更新请在客户端内进行（ClassIsland 设置 → 更新）。平台侧不远程管理客户端版本。</div>';
+      break;
+    case 'plugins':
+      html = '<h2>插件</h2>' +
+        '<div class="cia-tip-box">插件安装与管理在客户端设置 → 插件 中进行。平台侧可通过「CSES Cloud 适配器」页远程配置适配器插件的同步与提醒行为。</div>';
+      break;
+    case 'themes':
+      html = '<h2>主题</h2>' +
+        '<div class="cia-tip-box">主题包在客户端设置 → 主题 中管理。可通过「外观」页远程下发主题模式、颜色与字体等显示设置。</div>';
+      break;
+    case 'adapter':
+      html = '<h2>CSES Cloud 适配器 <span style="font-size:12px;color:var(--text-tertiary)">' + scopeTag + '</span></h2>' +
+        '<div class="cia-tip-box" style="margin-bottom:var(--spacer-3)">本页对应客户端「CSES Cloud 适配器」插件的设置，保存后经 settings.apply 即时下发。</div>' +
+        cfgCard('同步', [
+          cfgRow('自动同步', '客户端后台定期向平台拉取命令与档案更新。', cfgBoolSelect('sync.autoSync', true)),
+          cfgRow('同步间隔（秒）', '客户端向平台拉取命令与档案版本的最小间隔，实际以服务器限制为准。', cfgNumber('sync.pollInterval', 300, { min: 5, max: 86400 })),
+          cfgRow('档案应用方式', '热替换立即生效；写入文件则在客户端重启或手动切换档案后生效。', cfgSelect('sync.applyMode', 'hotswap', [['hotswap', '热替换（立即生效）'], ['file', '写入档案文件']])),
+          cfgRow('默认目标档案名', '部署时客户端默认保存的档案文件名。', cfgText('sync.targetProfile', 'CSES-Cloud.json', 170)),
+          cfgRow('连接传输', '长轮询为 REST 轮询；WebSocket 为实时推送（断线自动回退长轮询）。', cfgSelect('sync.transport', 'poll', [['poll', '长轮询'], ['ws', 'WebSocket']])),
+        ]) +
+        cfgCard('广播提醒', [
+          cfgRow('平台广播提醒', '客户端收到广播命令时弹出提醒。', cfgBoolSelect('notification.enabled', true)),
+          cfgRow('广播提醒时长（秒）', '广播提醒在屏幕上停留的时间（3-120）。', cfgNumber('notification.durationSeconds', 10, { min: 3, max: 120 })),
+        ]) +
+        cfgCard('接入信息', [
+          cfgRow('服务器地址', '客户端适配器设置中填写的服务器地址。', '<code class="cia-code-chip">' + escHtml(serverUrl) + '</code>'),
+          cfgRow('实例 UID', '与注册码二选一填写；填写后客户端无需通过注册码解析实例。', '<code class="cia-code-chip">' + escHtml(uid) + '</code>'),
+          cfgRow('WebSocket 网关', '客户端 WebSocket 实时通信网关地址。', '<code class="cia-code-chip">' + escHtml(serverUrl + '/api/ws-control') + '</code>'),
+          cfgRow('REST 轮询频率限制（秒）', '长轮询设备的命令轮询间隔，客户端按此限制自适应调整。', '<input type="number" id="ciaPollInterval" value="300" min="5" max="86400" style="width:110px" /><button class="cia-btn small" onclick="savePollInterval()">保存</button>'),
+        ]);
       loadServerProtocolConfig();
       break;
+    default:
+      switchConfigTab('general');
+      return;
   }
   container.innerHTML = '<div class="cia-config-tab">' + html + '</div>';
 }

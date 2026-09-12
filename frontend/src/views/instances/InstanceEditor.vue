@@ -823,6 +823,38 @@ function onPluginFileSave(content: string) {
 }
 function onPluginFileReady() {}
 function onFileContentChange(e: Event) { dirtyFileContent.value = (e.target as HTMLTextAreaElement).value; }
+
+/** 判断保存的文件是否为 ClassIsland 档案（.json 且含 TimeLayouts/ClassPlans/Subjects 关键结构） */
+function isClassIslandProfileFile(file: any, content: string): boolean {
+  if (!file || (file.file_type || '').toLowerCase() !== 'json') return false;
+  try { return isClassIslandProfileData(JSON.parse(content)); } catch { return false; }
+}
+
+/**
+ * 档案保存后向已部署该档案的设备同步：查询设备上报状态中档案 config_id 与本文件一致的设备，
+ * 重新下发 profile.prepare（与平台「部署档案」相同指令），使客户端拉取最新版本。
+ */
+async function syncProfileToDeployedDevices(fileId: number, fileName: string) {
+  try {
+    const devices = ((await callControlApi('device_list', {})) || []) as any[];
+    const targets = devices
+      .filter((d) => {
+        const profile = d.last_reported_state?.profile;
+        return profile && profile.config_id && String(profile.config_id) === String(fileId);
+      })
+      .map((d) => d.device_id);
+    if (!targets.length) return;
+    const res = await callControlApi('profile_deploy', {
+      profile_config_id: String(fileId),
+      device_ids: targets,
+      profile_name: fileName,
+    });
+    alert(`档案已保存，并已向 ${res?.device_count || targets.length} 台已部署设备发送同步命令`);
+  } catch (e: any) {
+    console.error('同步档案到已部署设备失败', e);
+  }
+}
+
 async function saveCurrentFile() {
   if (!selectedFile.value || !canWrite.value) return;
   saving.value = true;
@@ -830,6 +862,9 @@ async function saveCurrentFile() {
     await instanceFilesApi.save({ id: selectedFile.value.id, instance_id: instanceId.value, name: selectedFile.value.name, content: dirtyFileContent.value, file_type: selectedFile.value.file_type, file_category: selectedFile.value.file_category });
     selectedFile.value.content = dirtyFileContent.value; selectedFile.value.file_size = dirtyFileContent.value.length;
     await loadFileTree(); await loadStorageStats();
+    if (isClassIslandProfileFile(selectedFile.value, dirtyFileContent.value)) {
+      await syncProfileToDeployedDevices(selectedFile.value.id, selectedFile.value.name);
+    }
   } catch (e: any) { alert(e.message || '保存失败'); }
   finally { saving.value = false; }
 }
@@ -1308,6 +1343,10 @@ function onExamPluginSave(content: string) {
       examEditorFile.value.file_size = content.length;
       loadFileTree(currentDir.value);
       loadStorageStats();
+      // ClassIsland 档案保存后，向已部署该档案的设备发送同步命令
+      if (isClassIslandProfileFile(examEditorFile.value, content)) {
+        syncProfileToDeployedDevices(examEditorFile.value.id, examEditorFile.value.name);
+      }
     })
     .catch((e: any) => alert(e.message || '保存失败'))
     .finally(() => { saving.value = false; });

@@ -12,7 +12,7 @@ namespace CsesCloudAdapter.Services;
 /// CSES Cloud 同步服务（后台常驻）：
 /// 1. 未绑定时使用注册码向平台注册设备并保存凭证；
 /// 2. 按服务器限制轮询命令（429 时按 retry_after 退避）；传输支持长轮询 / WebSocket（断线回退长轮询）；
-/// 3. 处理 profile.prepare / profile.activate / settings.apply / broadcast.show / broadcast.dismiss；
+/// 3. 处理 profile.prepare / profile.activate / settings.apply / broadcast.show / broadcast.dismiss / client.restart；
 /// 4. 每轮心跳上报本机档案应用状态。
 /// </summary>
 public class CsesCloudSyncService : BackgroundService
@@ -441,6 +441,9 @@ public class CsesCloudSyncService : BackgroundService
                     NotificationProvider.DismissCurrent();
                     await ReportAsync(cred, envelope.CommandId, "succeeded");
                     break;
+                case "client.restart":
+                    await HandleClientRestartAsync(cred, envelope);
+                    break;
                 default:
                     // 未识别的命令按成功忽略，避免平台重试
                     await ReportAsync(cred, envelope.CommandId, "succeeded",
@@ -556,10 +559,29 @@ public class CsesCloudSyncService : BackgroundService
         await ReportAsync(cred, envelope.CommandId, "succeeded");
     }
 
+    /// <summary>
+    /// 重启 ClassIsland 客户端（AppBase.Restart）。
+    /// 先上报命令结果再延迟重启，确保平台能收到回执。
+    /// </summary>
+    private async Task HandleClientRestartAsync(DeviceCredentials cred, ServerCommandEnvelope envelope)
+    {
+        var appBase = ClassIsland.Core.AppBase.Current;
+        if (appBase == null)
+        {
+            await ReportAsync(cred, envelope.CommandId, "failed", new { error = "AppBase 尚未就绪，无法重启" });
+            return;
+        }
+        StatusText = "收到重启指令，客户端即将重启";
+        _logger.LogInformation("平台下发重启指令，客户端即将重启");
+        await ReportAsync(cred, envelope.CommandId, "succeeded");
+        // 留出回执发送时间，再静默重启
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        appBase.Restart(true);
+    }
+
     private async Task HandleBroadcastShowAsync(DeviceCredentials cred, ServerCommandEnvelope envelope,
         Dictionary<string, object?>? payload)
-    {
-        AdapterSettings settings;
+    {        AdapterSettings settings;
         lock (_stateLock) settings = _settings;
         var title = GetString(payload, "title") ?? "CSES Cloud 广播";
         var body = GetString(payload, "body") ?? "";

@@ -155,7 +155,8 @@
 .cia-config-device-sel select { width: 100%; padding: 5px var(--spacer-2); background: var(--ctrl-fill-default); color: var(--text-primary); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); font-size: var(--font-size-xs); font-family: inherit; cursor: pointer; outline: none; }
 .cia-config-device-sel select:focus { border-color: var(--accent-base); }
 .cia-config-device-count { padding: var(--spacer-1) var(--spacer-3); font-size: 10px; color: var(--text-tertiary); }
-.cia-config-nav { padding: var(--spacer-2) 0; }
+.cia-config-nav { padding: var(--spacer-2) 0 calc(var(--spacer-3) * 2); }
+.cia-config-nav-group { padding: var(--spacer-2) var(--spacer-4) var(--spacer-1); font-size: 11px; font-weight: 600; color: var(--text-tertiary); letter-spacing: 0.02em; }
 .cia-config-nav-item { display: block; width: 100%; padding: var(--spacer-2) var(--spacer-4); text-align: left; background: none; border: none; color: var(--text-secondary); font-size: var(--font-size-sm); cursor: pointer; font-family: inherit; transition: background var(--fast-duration), color var(--fast-duration); border-left: 3px solid transparent; }
 .cia-config-nav-item:hover { background: var(--subtle-tertiary); color: var(--text-primary); }
 .cia-config-nav-item.active { background: var(--subtle-secondary); border-left-color: var(--accent-base); color: var(--accent-base); font-weight: 500; }
@@ -169,6 +170,7 @@
 .cia-config-item-action { display: flex; align-items: center; gap: var(--spacer-1); flex-shrink: 0; }
 .cia-config-item-action input, .cia-config-item-action select { padding: 5px var(--spacer-2); background: var(--ctrl-fill-default); color: var(--text-primary); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); font-size: var(--font-size-xs); font-family: inherit; outline: none; transition: border-color var(--fast-duration); }
 .cia-config-item-action input:focus, .cia-config-item-action select:focus { border-color: var(--accent-base); }
+.cia-config-item-action input[type="color"] { padding: 2px; width: 44px; height: 30px; cursor: pointer; }
 .cia-config-divider { height: 1px; background: var(--divider-stroke); margin: 0; }
 .cia-code-chip { font-family: var(--font-family-mono); font-size: var(--font-size-xs); padding: var(--spacer-1) var(--spacer-2); background: var(--subtle-secondary); border: 1px solid var(--card-stroke); border-radius: var(--radius-xs); color: var(--text-secondary); word-break: break-all; user-select: all; }
 
@@ -201,7 +203,8 @@
 .cia-modal-section-title { font-size: var(--font-size-xs); font-weight: 600; color: var(--text-tertiary); letter-spacing: 0.02em; margin: var(--spacer-4) 0 var(--spacer-2); }
 .cia-modal-section-title:first-child { margin-top: 0; }
 .cia-inline-row { display: flex; gap: var(--spacer-2); align-items: center; }
-.cia-inline-row select, .cia-inline-row input { flex: 1; }
+.cia-inline-row select, .cia-inline-row input { flex: 1; min-width: 0; height: 30px; box-sizing: border-box; padding: 0 var(--spacer-2); background: var(--ctrl-fill-default); color: var(--text-primary); border: 1px solid var(--ctrl-border-rest); border-radius: var(--radius-sm); font-size: var(--font-size-xs); font-family: inherit; outline: none; transition: border-color var(--fast-duration); }
+.cia-inline-row select:focus, .cia-inline-row input:focus { border-color: var(--accent-base); }
 .cia-danger-zone { border: 1px solid rgba(196, 43, 28, 0.2); background: rgba(196, 43, 28, 0.04); border-radius: var(--radius-md); padding: var(--spacer-3) var(--spacer-4); margin-top: var(--spacer-5); }
 .cia-danger-zone .cia-config-item-title { color: var(--status-error); }
 .cia-device-checkboxes { max-height: 200px; overflow-y: auto; margin-top: var(--spacer-2); }
@@ -294,7 +297,7 @@
     </div>
   </div>
 
-  <!-- ===== 应用配置页面（左侧栏含全部设备） ===== -->
+  <!-- ===== 应用设置页面（左侧栏对齐 ClassIsland 设置窗口，全局 + 设备分层） ===== -->
   <div class="cia-page" id="ciaPageConfig" style="display:none">
     <div class="cia-config-shell">
       <div class="cia-config-sidebar">
@@ -305,11 +308,25 @@
         </div>
         <div class="cia-config-device-count" id="ciaConfigDeviceCount"></div>
         <div class="cia-config-nav">
-          <button class="cia-config-nav-item active" data-cfg="sync" onclick="switchConfigTab('sync')">同步</button>
-          <button class="cia-config-nav-item" data-cfg="notification" onclick="switchConfigTab('notification')">通知</button>
-          <button class="cia-config-nav-item" data-cfg="client" onclick="switchConfigTab('client')">客户端设置</button>
-          <button class="cia-config-nav-item" data-cfg="connect" onclick="switchConfigTab('connect')">客户端接入</button>
+          <div class="cia-config-nav-group">通用</div>
+          <button class="cia-config-nav-item active" data-cfg="general" onclick="switchConfigTab('general')">基本</button>
+          <button class="cia-config-nav-item" data-cfg="clock" onclick="switchConfigTab('clock')">时钟</button>
+          <button class="cia-config-nav-item" data-cfg="storage" onclick="switchConfigTab('storage')">存储</button>
+          <button class="cia-config-nav-item" data-cfg="privacy" onclick="switchConfigTab('privacy')">隐私</button>
+          <button class="cia-config-nav-item" data-cfg="refreshing" onclick="switchConfigTab('refreshing')">翻新与迎新</button>
           <button class="cia-config-nav-item" data-cfg="advanced" onclick="switchConfigTab('advanced')">高级</button>
+          <div class="cia-config-nav-group">主界面</div>
+          <button class="cia-config-nav-item" data-cfg="components" onclick="switchConfigTab('components')">组件</button>
+          <button class="cia-config-nav-item" data-cfg="appearance" onclick="switchConfigTab('appearance')">外观</button>
+          <button class="cia-config-nav-item" data-cfg="notification" onclick="switchConfigTab('notification')">提醒</button>
+          <button class="cia-config-nav-item" data-cfg="window" onclick="switchConfigTab('window')">窗口</button>
+          <button class="cia-config-nav-item" data-cfg="weather" onclick="switchConfigTab('weather')">天气</button>
+          <button class="cia-config-nav-item" data-cfg="automation" onclick="switchConfigTab('automation')">自动化</button>
+          <button class="cia-config-nav-item" data-cfg="update" onclick="switchConfigTab('update')">更新</button>
+          <button class="cia-config-nav-item" data-cfg="plugins" onclick="switchConfigTab('plugins')">插件</button>
+          <button class="cia-config-nav-item" data-cfg="themes" onclick="switchConfigTab('themes')">主题</button>
+          <div class="cia-config-nav-group">插件</div>
+          <button class="cia-config-nav-item" data-cfg="adapter" onclick="switchConfigTab('adapter')">CSES Cloud 适配器</button>
         </div>
       </div>
       <div class="cia-config-content" id="ciaConfigContent"></div>
@@ -333,7 +350,10 @@
         <div class="cia-empty cia-empty-compact">加载中...</div>
       </div>
       <div class="cia-modal-footer" style="justify-content:space-between">
-        <button class="cia-btn danger" id="ciaDeviceDeleteBtn" onclick="deleteDeviceFromModal()">删除设备</button>
+        <div style="display:flex;gap:var(--spacer-2)">
+          <button class="cia-btn danger" id="ciaDeviceDeleteBtn" onclick="deleteDeviceFromModal()">删除设备</button>
+          <button class="cia-btn" onclick="restartClientFromModal()">重启客户端</button>
+        </div>
         <button class="cia-btn" onclick="closeDeviceModal()">关闭</button>
       </div>
     </div>
