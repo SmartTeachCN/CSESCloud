@@ -13,7 +13,7 @@ public class AdapterSettings
     public string ServerUrl { get; set; } = "";
 
     /// <summary>
-    /// 注册码（EA2- 开头）。仅在首次绑定设备时校验，绑定成功后不再需要。
+    /// 注册码（CSES-/EA2- 前缀）。仅在首次绑定设备时校验，绑定成功后不再需要。
     /// </summary>
     public string EnrollmentCode { get; set; } = "";
 
@@ -30,7 +30,7 @@ public class AdapterSettings
     /// <summary>
     /// 期望轮询间隔（秒）。实际以服务器返回的 poll_interval_seconds / retry_after 为准，此处仅为下限。
     /// </summary>
-    public int PollIntervalSeconds { get; set; } = 300;
+    public int PollIntervalSeconds { get; set; } = 30;
 
     /// <summary>
     /// 连接传输：poll = REST 长轮询；ws = WebSocket 实时推送（断线自动回退长轮询）。
@@ -173,6 +173,16 @@ public class AdapterSettings
         if (s == "0") { result = false; return true; }
         return false;
     }
+}
+
+/// <summary>
+/// 最近一次应用的档案标识（持久化在插件目录，客户端重启后仍能正确上报档案关联，避免平台侧关联丢失）。
+/// </summary>
+public class AppliedProfileRecord
+{
+    public string Name { get; set; } = "";
+    public string Version { get; set; } = "";
+    public string ConfigId { get; set; } = "";
 }
 
 /// <summary>

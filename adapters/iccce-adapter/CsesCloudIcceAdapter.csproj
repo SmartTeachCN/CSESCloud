@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>CsesCloudIcceAdapter</RootNamespace>
+    <AssemblyName>CsesCloudIcceAdapter</AssemblyName>
+    <CreateIcpx>true</CreateIcpx>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 宿主已加载 SDK 程序集，打包时排除运行时资产，避免重复携带 -->
+    <PackageReference Include="InkCanvas.PluginSdk" Version="1.8.0.2-gbd4880718d">
+      <ExcludeAssets>runtime; native</ExcludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="README.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="icon.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

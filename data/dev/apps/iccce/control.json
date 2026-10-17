@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "protocolVersion": 1,
+  "supportedCommands": [
+    "settings.apply",
+    "icc.command",
+    "broadcast.show",
+    "broadcast.dismiss",
+    "client.restart"
+  ],
+  "description": "用于 ICC CE 客户端（CSES Cloud 适配器插件）远程下发设置（配置方案热重载）、icc:// 远程命令与应用内通知"
+}

@@ -56,6 +56,32 @@ public class CsesSettingsViewModel : INotifyPropertyChanged
     public string StatusText { get => _statusText; set => SetField(ref _statusText, value); }
     public string DeviceInfo { get => _deviceInfo; set => SetField(ref _deviceInfo, value); }
 
+    private bool _isConnected;
+    private string _connectedSummary = "";
+
+    /// <summary>场景化动态适配：已连接时隐藏注册组件</summary>
+    public bool IsConnected
+    {
+        get => _isConnected;
+        set
+        {
+            if (SetField(ref _isConnected, value))
+            {
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsDisconnected)));
+            }
+        }
+    }
+
+    /// <summary>场景化动态适配：未连接时显示注册组件</summary>
+    public bool IsDisconnected
+    {
+        get => !_isConnected;
+        set => IsConnected = !value;
+    }
+
+    /// <summary>已连接摘要（服务器 + 实例）</summary>
+    public string ConnectedSummary { get => _connectedSummary; set => SetField(ref _connectedSummary, value); }
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     /// <summary>
@@ -94,11 +120,24 @@ public class CsesSettingsViewModel : INotifyPropertyChanged
         if (service == null)
         {
             StatusText = "服务未就绪";
+            IsConnected = false;
+            ConnectedSummary = "";
             return;
         }
         StatusText = service.StatusText;
-        var cred = service.IsConnected ? "已连接" : "未连接";
-        DeviceInfo = $"{cred} · 设备 {Environment.MachineName}";
+        IsConnected = service.IsConnected;
+        DeviceInfo = $"{(service.IsConnected ? "已连接" : "未连接")} · 设备 {Environment.MachineName}";
+        if (service.IsConnected)
+        {
+            var settings = Plugin.Instance?.LoadSettings();
+            ConnectedSummary = settings != null
+                ? $"服务器 {settings.ServerUrl}\n实例 {service.ConnectedInstanceUid}"
+                : "";
+        }
+        else
+        {
+            ConnectedSummary = "";
+        }
     }
 
     /// <summary>
@@ -121,10 +160,11 @@ public class CsesSettingsViewModel : INotifyPropertyChanged
         };
     }
 
-    private void SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
+    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
     {
-        if (EqualityComparer<T>.Default.Equals(field, value)) return;
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
         field = value;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        return true;
     }
 }

@@ -21,21 +21,19 @@ public class BroadcastNotificationProvider : NotificationProviderBase
 
     /// <summary>
     /// 展示一条平台广播。
+    /// 内容使用 ClassIsland 内置的双图标文本模板（CreateTwoIconsMask），
+    /// 保证遮罩与提示文字正确渲染（自定义控件在后台线程构建时无法显示）。
     /// </summary>
     public void ShowBroadcast(string title, string body, int durationSeconds = 10)
     {
+        // 正文不拼接标题：优先显示正文内容，仅正文为空时回退显示标题
+        var text = string.IsNullOrWhiteSpace(body) ? title : body;
+        var duration = TimeSpan.FromSeconds(Math.Clamp(durationSeconds, 3, 120));
         var request = new NotificationRequest
         {
-            MaskContent = new NotificationContent(new TextBlock
-            {
-                Text = string.IsNullOrWhiteSpace(body) ? title : title + "\n" + body,
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Avalonia.Thickness(24),
-                MaxWidth = 560,
-            })
-            {
-                Duration = TimeSpan.FromSeconds(Math.Clamp(durationSeconds, 3, 120)),
-            },
+            // 遮罩提示 + 非遮罩正文同时下发（都使用 ClassIsland 内置文本模板）
+            MaskContent = NotificationContent.CreateTwoIconsMask(text, factory: c => c.Duration = duration),
+            OverlayContent = NotificationContent.CreateSimpleTextContent(text, factory: c => c.Duration = duration),
             ChannelId = Guid.Parse(BroadcastChannelId),
         };
         _currentRequest = request;

@@ -1,0 +1,15 @@
+{
+  "id": "cloud.cses.iccce",
+  "name": "CSES Cloud 适配器",
+  "version": "1.0.0",
+  "description": "将 ICC CE (InkCanvasForClass) 接入 CSES Cloud 平台：通过注册码接入实例，接收平台远程命令（icc:// 命令、设置下发、通知）并自动应用到本机。",
+  "author": "CSES Cloud",
+  "entranceAssembly": "CsesCloudIcceAdapter.dll",
+  "url": "https://github.com/CSESCloud/CSESCloudNG",
+  "apiVersion": "1.0.0",
+  "minHostVersion": "",
+  "permissions": ["Network", "Settings", "FileSystem"],
+  "license": "MIT",
+  "tags": ["集控", "CSES", "Cloud", "管理"],
+  "sourceUrl": "https://github.com/CSESCloud/CSESCloudNG"
+}

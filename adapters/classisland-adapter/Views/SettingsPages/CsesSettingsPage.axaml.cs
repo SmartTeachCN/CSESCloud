@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Text.Json;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -134,6 +133,74 @@ public partial class CsesSettingsPage : SettingsPageBase
             ViewModel.StatusText = "同步失败：" + ex.Message;
         }
         ViewModel.RefreshStatus(service);
+    }
+
+    private async void OnDisconnect(object? sender, RoutedEventArgs e)
+    {
+        var service = Service;
+        if (service == null) return;
+        if (!await ConfirmDisconnectAsync()) return;
+        try
+        {
+            await service.DisconnectAsync();
+        }
+        catch (Exception ex)
+        {
+            ViewModel.StatusText = "断开失败：" + ex.Message;
+        }
+        ViewModel.RefreshStatus(service);
+    }
+
+    /// <summary>断开前确认对话框（异步 ShowDialog，不阻塞 UI 线程）</summary>
+    private async Task<bool> ConfirmDisconnectAsync()
+    {
+        var owner = TopLevel.GetTopLevel(this) as Window;
+        if (owner == null) return false;
+        var confirmed = false;
+        var dialog = new Window
+        {
+            Title = "断开连接",
+            SizeToContent = SizeToContent.WidthAndHeight,
+            CanResize = false,
+            ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+        };
+        var buttons = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            Spacing = 10,
+        };
+        buttons.Children.Add(CreateCloseButton(dialog, "取消", () => confirmed = false));
+        buttons.Children.Add(CreateCloseButton(dialog, "断开连接", () => confirmed = true));
+        dialog.Content = new StackPanel
+        {
+            Margin = new Avalonia.Thickness(20),
+            Spacing = 14,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = "确认断开连接？\n设备的绑定与本地凭证将被移除，重新接入需要新的注册码。",
+                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                    MaxWidth = 360,
+                },
+                buttons,
+            },
+        };
+        await dialog.ShowDialog(owner);
+        return confirmed;
+    }
+
+    private static Button CreateCloseButton(Window dialog, string content, Action onClosed)
+    {
+        var btn = new Button { Content = content };
+        btn.Click += (_, _) =>
+        {
+            onClosed();
+            dialog.Close();
+        };
+        return btn;
     }
 
     private void OnRefreshStatus(object? sender, RoutedEventArgs e)

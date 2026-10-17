@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using ClassIsland.Shared;
+using ClassIsland.Shared.Helpers;
 using CsesCloudAdapter.Models;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -11,8 +12,8 @@ namespace CsesCloudAdapter.Services;
 /// <summary>
 /// CSES Cloud 同步服务（后台常驻）：
 /// 1. 未绑定时使用注册码向平台注册设备并保存凭证；
-/// 2. 按服务器限制轮询命令（429 时按 retry_after 退避）；
-/// 3. 处理 profile.prepare / profile.activate / settings.apply / broadcast.show / broadcast.dismiss；
+/// 2. 按服务器限制轮询命令（429 时按 retry_after 退避）；传输支持长轮询 / WebSocket（断线回退长轮询）；
+/// 3. 处理 profile.prepare / profile.activate / settings.apply / broadcast.show / broadcast.dismiss / client.restart；
 /// 4. 每轮心跳上报本机档案应用状态。
 /// </summary>
 public class CsesCloudSyncService : BackgroundService
@@ -27,6 +28,9 @@ public class CsesCloudSyncService : BackgroundService
     private DeviceCredentials _credentials = new();
     private AdapterSettings _settings = new();
 
+    /// <summary>已处理命令 ID 集合（去重，防止重复投递导致重复执行）</summary>
+    private readonly HashSet<string> _handledCommandIds = new(StringComparer.Ordinal);
+
     /// <summary>最近一次状态描述（设置页展示）</summary>
     public string StatusText { get; private set; } = "尚未连接";
 
@@ -36,10 +40,35 @@ public class CsesCloudSyncService : BackgroundService
     /// <summary>最近一次应用的档案版本（deployment id）</summary>
     public string? AppliedProfileVersion { get; private set; }
 
+    /// <summary>最近一次应用的档案文件 ID（profile_config_id，与平台档案列表一一对应）</summary>
+    public string? AppliedProfileConfigId { get; private set; }
+
     /// <summary>是否已连接（凭证有效）</summary>
     public bool IsConnected
     {
         get { lock (_stateLock) return _credentials.IsValid; }
+    }
+
+    /// <summary>已连接的实例 UID（设置页展示）</summary>
+    public string ConnectedInstanceUid
+    {
+        get { lock (_stateLock) return _credentials.IsValid ? _credentials.InstanceUid : ""; }
+    }
+
+    /// <summary>
+    /// 断开连接：清除本地凭证（设备重新接入需新的注册码或重新导入凭据）。
+    /// </summary>
+    public Task DisconnectAsync()
+    {
+        lock (_stateLock)
+        {
+            _credentials = new DeviceCredentials();
+        }
+        try { File.Delete(_plugin.CredentialsPath); }
+        catch { /* 忽略 */ }
+        StatusText = "已断开连接（绑定已移除，可重新连接）";
+        _logger.LogInformation("CSES Cloud 设备已断开连接");
+        return Task.CompletedTask;
     }
 
     private BroadcastNotificationProvider? _notificationProvider;
@@ -61,6 +90,45 @@ public class CsesCloudSyncService : BackgroundService
         _plugin = plugin;
         _settings = plugin.LoadSettings();
         _credentials = DeviceCredentials.Load(plugin.CredentialsPath, _settings.ServerUrl);
+        // 恢复最近应用的档案标识：客户端重启后心跳仍能上报正确的档案关联
+        RestoreAppliedProfile();
+    }
+
+    /// <summary>已应用档案标识的持久化路径（applied-profile.json）。</summary>
+    private string AppliedProfileStatePath => Path.Combine(_plugin.PluginConfigFolder, "applied-profile.json");
+
+    private void PersistAppliedProfile()
+    {
+        try
+        {
+            ConfigureFileHelper.SaveConfig(AppliedProfileStatePath, new AppliedProfileRecord
+            {
+                Name = AppliedProfileName ?? "",
+                Version = AppliedProfileVersion ?? "",
+                ConfigId = AppliedProfileConfigId ?? "",
+            });
+        }
+        catch (Exception e)
+        {
+            _logger.LogDebug(e, "持久化已应用档案标识失败");
+        }
+    }
+
+    private void RestoreAppliedProfile()
+    {
+        try
+        {
+            if (!File.Exists(AppliedProfileStatePath)) return;
+            var rec = ConfigureFileHelper.LoadConfig<AppliedProfileRecord>(AppliedProfileStatePath);
+            if (rec == null) return;
+            AppliedProfileName = string.IsNullOrWhiteSpace(rec.Name) ? AppliedProfileName : rec.Name;
+            AppliedProfileVersion = string.IsNullOrWhiteSpace(rec.Version) ? AppliedProfileVersion : rec.Version;
+            AppliedProfileConfigId = string.IsNullOrWhiteSpace(rec.ConfigId) ? AppliedProfileConfigId : rec.ConfigId;
+        }
+        catch (Exception e)
+        {
+            _logger.LogDebug(e, "恢复已应用档案标识失败");
+        }
     }
 
     /// <summary>
@@ -111,6 +179,16 @@ public class CsesCloudSyncService : BackgroundService
         cred.Save(_plugin.CredentialsPath);
         StatusText = $"已连接到 {result.InstanceUid}";
         _logger.LogInformation("CSES Cloud 设备注册成功：instance={Instance}", result.InstanceUid);
+
+        // 注册成功后立即同步一轮，尽快接收平台已下发的命令（档案 / 设置）
+        try
+        {
+            await PollOnceAsync(CancellationToken.None);
+        }
+        catch (Exception e)
+        {
+            _logger.LogDebug(e, "注册后立即同步失败（将由主循环重试）");
+        }
     }
 
     /// <summary>
@@ -385,6 +463,23 @@ public class CsesCloudSyncService : BackgroundService
             return;
         }
 
+        // 命令去重：同一命令 ID 只执行一次，防止重复投递（WS 推送与轮询重叠、重连重放等）导致重复执行
+        lock (_handledCommandIds)
+        {
+            if (!_handledCommandIds.Add(envelope.CommandId))
+            {
+                _logger.LogWarning("命令 {Type} ({Id}) 重复投递，已忽略", command.Type, envelope.CommandId);
+                return;
+            }
+            if (_handledCommandIds.Count > 500)
+            {
+                // 简单裁剪：保留最近一半
+                var keep = _handledCommandIds.Skip(_handledCommandIds.Count / 2).ToList();
+                _handledCommandIds.Clear();
+                foreach (var id in keep) _handledCommandIds.Add(id);
+            }
+        }
+
         _logger.LogInformation("收到命令 {Type} ({Id})", command.Type, envelope.CommandId);
         try
         {
@@ -406,6 +501,9 @@ public class CsesCloudSyncService : BackgroundService
                     NotificationProvider.DismissCurrent();
                     await ReportAsync(cred, envelope.CommandId, "succeeded");
                     break;
+                case "client.restart":
+                    await HandleClientRestartAsync(cred, envelope);
+                    break;
                 default:
                     // 未识别的命令按成功忽略，避免平台重试
                     await ReportAsync(cred, envelope.CommandId, "succeeded",
@@ -415,6 +513,7 @@ public class CsesCloudSyncService : BackgroundService
         }
         catch (Exception e)
         {
+            StatusText = $"命令 {command.Type} 失败：{e.Message}";
             _logger.LogError(e, "处理命令 {Type} 失败", command.Type);
             await ReportAsync(cred, envelope.CommandId, "failed", new { error = e.Message });
             await TryReportDeviceErrorAsync(cred, "command." + command.Type, e.Message);
@@ -456,6 +555,8 @@ public class CsesCloudSyncService : BackgroundService
             StatusText = $"档案已热替换：{AppliedProfileName}";
         }
         AppliedProfileVersion = GetString(payload, "profile_version_id") ?? GetString(payload, "deployment_id");
+        AppliedProfileConfigId = GetString(payload, "profile_config_id");
+        PersistAppliedProfile();
         _logger.LogInformation("档案已应用：{Profile}", AppliedProfileName);
 
         await ReportAsync(cred, envelope.CommandId, "succeeded", state: BuildState());
@@ -486,6 +587,7 @@ public class CsesCloudSyncService : BackgroundService
         Dictionary<string, object?>? payload)
     {
         var changed = false;
+        var clientApplied = 0;
         if (payload != null && payload.TryGetValue("settings", out var raw) && raw is JsonElement { ValueKind: JsonValueKind.Array } arr)
         {
             var pairs = new List<KeyValuePair<string, object?>>();
@@ -505,6 +607,8 @@ public class CsesCloudSyncService : BackgroundService
                 if (!string.IsNullOrWhiteSpace(key)) pairs.Add(new KeyValuePair<string, object?>(key, value));
             }
             lock (_stateLock) changed = _settings.ApplyPlatformSettings(pairs);
+            // client.* 键写入 ClassIsland 客户端设置（白名单反射）
+            clientApplied = ClientSettingsApplier.Apply(pairs);
         }
         if (changed)
         {
@@ -512,20 +616,49 @@ public class CsesCloudSyncService : BackgroundService
             lock (_stateLock) settings = _settings;
             _plugin.SaveSettings(settings);
         }
-        StatusText = "设置已同步";
+        StatusText = clientApplied > 0 ? $"设置已同步（客户端 {clientApplied} 项）" : "设置已同步";
         await ReportAsync(cred, envelope.CommandId, "succeeded");
+    }
+
+    /// <summary>
+    /// 重启 ClassIsland 客户端（AppBase.Restart）。
+    /// 先上报命令结果再延迟重启，确保平台能收到回执。
+    /// </summary>
+    private async Task HandleClientRestartAsync(DeviceCredentials cred, ServerCommandEnvelope envelope)
+    {
+        var appBase = ClassIsland.Core.AppBase.Current;
+        if (appBase == null)
+        {
+            await ReportAsync(cred, envelope.CommandId, "failed", new { error = "AppBase 尚未就绪，无法重启" });
+            return;
+        }
+        StatusText = "收到重启指令，客户端即将重启";
+        _logger.LogInformation("平台下发重启指令，客户端即将重启");
+        await ReportAsync(cred, envelope.CommandId, "succeeded");
+        // 留出回执发送时间，再静默重启
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        appBase.Restart(true);
     }
 
     private async Task HandleBroadcastShowAsync(DeviceCredentials cred, ServerCommandEnvelope envelope,
         Dictionary<string, object?>? payload)
-    {
-        AdapterSettings settings;
+    {        AdapterSettings settings;
         lock (_stateLock) settings = _settings;
         var title = GetString(payload, "title") ?? "CSES Cloud 广播";
         var body = GetString(payload, "body") ?? "";
+        // 显示时长：命令 payload.duration_seconds 优先，其次平台配置 notification.durationSeconds
+        var durationSeconds = settings.BroadcastDurationSeconds;
+        if (payload != null && payload.TryGetValue("duration_seconds", out var rawDur))
+        {
+            var durText = rawDur is JsonElement je ? (je.ValueKind == JsonValueKind.Number ? je.GetRawText() : je.ToString()) : rawDur.ToString();
+            if (int.TryParse(durText, out var dur) && dur >= 3)
+            {
+                durationSeconds = dur;
+            }
+        }
         if (settings.ShowBroadcastNotifications)
         {
-            NotificationProvider.ShowBroadcast(title, body, settings.BroadcastDurationSeconds);
+            NotificationProvider.ShowBroadcast(title, body, durationSeconds);
         }
         StatusText = "已收到广播：" + title;
         await ReportAsync(cred, envelope.CommandId, "succeeded");
@@ -566,7 +699,7 @@ public class CsesCloudSyncService : BackgroundService
             {
                 ["name"] = AppliedProfileName ?? "",
                 ["version"] = AppliedProfileVersion ?? "",
-                ["config_id"] = AppliedProfileVersion ?? "",
+                ["config_id"] = AppliedProfileConfigId ?? "",
                 ["status"] = string.IsNullOrWhiteSpace(AppliedProfileName) ? "idle" : "applied",
             },
             ["apply_mode"] = settings.ApplyMode,
