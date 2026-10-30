@@ -396,7 +396,7 @@
                 </div>
                 <div class="form-row">
                   <label>分类</label>
-                  <input v-model="kbForm.category" type="text" placeholder="例如：实例管理、校园集控、常见问题" />
+                  <input v-model="kbForm.category" type="text" placeholder="例如：轻编辑器、静态集控、常见问题" />
                 </div>
                 <div class="form-row">
                   <label>内容 <span class="required">*</span></label>

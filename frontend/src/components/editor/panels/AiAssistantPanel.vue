@@ -41,48 +41,8 @@
       </div>
     </div>
 
-    <!-- 资源选择下拉 -->
-    <div v-if="showResourcePanel" class="ai-resource-dropdown">
-      <div class="resource-section" v-if="availableInstances.length > 0">
-        <div class="resource-section-title">实例</div>
-        <div
-          v-for="inst in availableInstances"
-          :key="inst.id"
-          class="resource-option"
-          :class="{ selected: scopeRef === inst.id }"
-          @click="selectResource('instance', inst.id)"
-        >
-          <Icon icon="ri-database-2-line" :size="14" />
-          <span>{{ inst.name }}</span>
-          <Icon v-if="scopeRef === inst.id" icon="ri-check-line" :size="12" class="check" />
-        </div>
-      </div>
-      <div class="resource-section" v-if="availableCampuses.length > 0">
-        <div class="resource-section-title">校园</div>
-        <div
-          v-for="campus in availableCampuses"
-          :key="campus.id"
-          class="resource-option"
-          :class="{ selected: scopeRef === campus.id }"
-          @click="selectResource('campus', campus.id)"
-        >
-          <Icon icon="ri-school-line" :size="14" />
-          <span>{{ campus.name }}</span>
-          <Icon v-if="scopeRef === campus.id" icon="ri-check-line" :size="12" class="check" />
-        </div>
-      </div>
-    </div>
-
-    <!-- 对话框控件（模型/语音/资源） -->
+    <!-- 对话框控件（模型/语音） -->
     <div class="ai-controls">
-      <button
-        class="ctrl-btn"
-        :class="{ active: showResourcePanel }"
-        @click="showResourcePanel = !showResourcePanel"
-        title="关联资源"
-      >
-        <Icon icon="ri-add-circle-line" :size="14" />
-      </button>
       <CustomSelect
         v-model="selectedModel"
         :options="panelModelOptions"
@@ -118,7 +78,7 @@ import { ref, computed, onMounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { marked } from 'marked';
 import CustomSelect from '../../CustomSelect.vue';
-import { aiApi, instancesApi, schoolsApi } from '../../../api';
+import { aiApi } from '../../../api';
 
 marked.use({ breaks: true, gfm: true });
 
@@ -158,9 +118,6 @@ const messagesEl = ref<HTMLElement | null>(null);
 // 控件
 const selectedModel = ref('default');
 const isVoiceRecording = ref(false);
-const showResourcePanel = ref(false);
-const availableInstances = ref<any[]>([]);
-const availableCampuses = ref<any[]>([]);
 const customModels = ref<any[]>([]);
 
 const panelModelOptions = computed(() => {
@@ -173,11 +130,7 @@ const panelModelOptions = computed(() => {
 let recognition: any = null;
 
 const emptyHint = computed(() => {
-  switch (props.scope) {
-    case 'instance': return '向 AI 助理提问关于此实例的问题';
-    case 'campus': return '向 AI 助理提问关于校园管理的问题';
-    default: return '向 AI 助理提问';
-  }
+  return '向 AI 助理提问（可结合当前文件上下文）';
 });
 
 // ===== 会话加载 =====
@@ -206,12 +159,6 @@ function openFullScreen() {
     sessionStorage.setItem('ai_active_session', String(sessionId.value));
   }
   router.push('/console/ai');
-}
-
-// ===== 资源选择 =====
-function selectResource(scope: string, refId: number) {
-  showResourcePanel.value = false;
-  // 通知父组件或直接使用
 }
 
 // ===== 语音输入 =====
@@ -343,18 +290,7 @@ function scrollToBottom() {
   });
 }
 
-// ===== 加载资源列表 =====
-async function loadResources() {
-  try {
-    const instRes = await instancesApi.list();
-    if (Array.isArray(instRes)) availableInstances.value = instRes.slice(0, 20);
-  } catch { /* ignore */ }
-  try {
-    const campusRes = await schoolsApi.joined();
-    if (Array.isArray(campusRes)) availableCampuses.value = campusRes;
-  } catch { /* ignore */ }
-}
-
+// ===== 加载自定义模型 =====
 async function loadCustomModels() {
   try {
     const list = await aiApi.listModels();
@@ -364,7 +300,6 @@ async function loadCustomModels() {
 
 onMounted(() => {
   loadSession();
-  loadResources();
   loadCustomModels();
 });
 </script>
@@ -504,48 +439,6 @@ onMounted(() => {
 @keyframes pulse-recording {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }
-}
-
-/* 资源下拉 */
-.ai-resource-dropdown {
-  max-height: 160px;
-  overflow-y: auto;
-  border-bottom: 1px solid var(--divider-stroke);
-  background: var(--ctrl-fill-default);
-  flex-shrink: 0;
-}
-
-.resource-section-title {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  padding: 6px var(--spacer-2) 2px;
-}
-
-.resource-option {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px var(--spacer-2);
-  font-size: 11px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--fast-duration);
-}
-
-.resource-option:hover {
-  background: var(--subtle-secondary);
-}
-
-.resource-option.selected {
-  color: var(--accent-base);
-  background: var(--accent-bg);
-}
-
-.resource-option .check {
-  margin-left: auto;
-  color: var(--accent-base);
 }
 
 /* 消息区域 */

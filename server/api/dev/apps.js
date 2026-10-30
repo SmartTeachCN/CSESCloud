@@ -93,7 +93,6 @@ module.exports = async (ctx) => {
       developer_username: a.developer_username, is_official: a.is_official,
       forked_from: a.forked_from, forked_by: a.forked_by,
       created_at: a.created_at, updated_at: a.updated_at,
-      control_enabled: a.control_manifest?.enabled === true,
     }));
     Response.success(result);
   }
@@ -178,7 +177,6 @@ module.exports = async (ctx) => {
       editor_html: '', editor_js: '',
       storage_manifest: { collections: [] },
       interface_schema: { endpoints: [] },
-      control_manifest: { enabled: false, protocolVersion: 1, supportedCommands: [], description: '' },
     });
     Auth.logAudit(0, 0, 'create', `开发者 ${effectiveDeveloper} 创建应用 ${name}`);
     Response.success({ _id: app._id, app_key: app.app_key }, '应用创建成功');
@@ -215,12 +213,11 @@ module.exports = async (ctx) => {
       editor_js: 'editor_js',
       storage: 'storage_manifest',
       interface: 'interface_schema',
-      control: 'control_manifest',
     };
     if (!(type in fieldMap)) Response.error('未知的清单类型');
     const field = fieldMap[type];
     let value = body.value ?? null;
-    if (['app_info', 'storage', 'interface', 'control'].includes(type)) {
+    if (['app_info', 'storage', 'interface'].includes(type)) {
       if (value === null || typeof value !== 'object') Response.error('清单数据格式无效');
     }
     const fsUpdate = { updated_at: nowStr() };

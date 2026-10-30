@@ -3,7 +3,6 @@
  *
  * 实例的所有配置文件存储在 cloud_files 表中，通过 directory 字段隔离：
  *   /instances/{instance_uid}/          配置根目录
- *   /instances/{instance_uid}/php/      PHP 后端目录
  *
  * 操作：
  *  - GET  action=list&instance_id=N&dir=        列出指定目录下的文件
@@ -52,7 +51,7 @@ module.exports = async (ctx) => {
     }
   }
 
-  // ===== [公开] 下载文件（供 EA2 客户端等外部调用） =====
+  // ===== [公开] 下载文件（按文件 ID，供外部调用） =====
   if (method === 'GET' && action === 'download') {
     const id = parseInt(query.id ?? 0, 10) || 0;
     if (id <= 0) Response.error('缺少文件 ID');
@@ -63,7 +62,7 @@ module.exports = async (ctx) => {
       ? file.content.toString('utf8')
       : (file.content ?? '');
     const name = file.name ?? 'download';
-    const isJson = String(file.file_type ?? '').toLowerCase() === 'ea2' || String(name).endsWith('.ea2');
+    const isJson = extOf(name) === 'json';
     const contentBytes = Buffer.from(String(content), 'utf8');
     res.set('Content-Type', isJson ? 'application/json; charset=utf-8' : 'application/octet-stream');
     res.set('Content-Disposition', 'attachment; filename="' + addslashes(name) + '"');

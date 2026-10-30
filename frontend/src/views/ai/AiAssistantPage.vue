@@ -92,10 +92,10 @@
           <h2>AI 助理</h2>
           <p>我可以帮你解答关于 CSES Cloud 平台的各种问题</p>
           <div class="suggestion-chips">
-            <button class="chip" @click="sendSuggestion('如何创建一个新实例？')">如何创建实例？</button>
-            <button class="chip" @click="sendSuggestion('如何加入学校？')">如何加入学校？</button>
+            <button class="chip" @click="sendSuggestion('轻编辑器怎么用？')">轻编辑器使用</button>
+            <button class="chip" @click="sendSuggestion('如何把云文件分发为静态集控配置？')">如何分发配置？</button>
             <button class="chip" @click="sendSuggestion('开发者中心如何使用？')">开发者中心使用</button>
-            <button class="chip" @click="sendSuggestion('子用户权限如何管理？')">子用户权限管理</button>
+            <button class="chip" @click="sendSuggestion('数据空间怎么管理云文件？')">数据空间管理</button>
           </div>
         </div>
         <div
@@ -213,42 +213,6 @@
                 <span>上传本地文件</span>
               </button>
             </div>
-
-            <div class="popover-divider" v-if="availableInstances.length > 0 || availableCampuses.length > 0"></div>
-
-            <div class="popover-section" v-if="availableInstances.length > 0">
-              <div class="popover-section-title">实例</div>
-              <div class="popover-resource-list">
-                <div
-                  v-for="inst in availableInstances"
-                  :key="inst.id"
-                  class="popover-resource-item"
-                  :class="{ selected: isResourceSelected('instance', inst.id) }"
-                  @click="toggleResource('instance', inst.id, inst.name)"
-                >
-                  <Icon :icon="getInstanceIcon(inst.service_type)" :size="16" />
-                  <span>{{ inst.name }}</span>
-                  <Icon v-if="isResourceSelected('instance', inst.id)" icon="ri-check-line" :size="14" class="check-icon" />
-                </div>
-              </div>
-            </div>
-
-            <div class="popover-section" v-if="availableCampuses.length > 0">
-              <div class="popover-section-title">校园</div>
-              <div class="popover-resource-list">
-                <div
-                  v-for="campus in availableCampuses"
-                  :key="campus.id"
-                  class="popover-resource-item"
-                  :class="{ selected: isResourceSelected('campus', campus.id) }"
-                  @click="toggleResource('campus', campus.id, campus.name)"
-                >
-                  <Icon icon="ri-school-line" :size="16" />
-                  <span>{{ campus.name }}</span>
-                  <Icon v-if="isResourceSelected('campus', campus.id)" icon="ri-check-line" :size="14" class="check-icon" />
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </Teleport>
@@ -345,7 +309,7 @@ import { ref, computed, onMounted, nextTick, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { marked } from 'marked';
 import CustomSelect from '../../components/CustomSelect.vue';
-import { aiApi, instancesApi, schoolsApi } from '../../api';
+import { aiApi } from '../../api';
 import { useAuth } from '../../composables/useAuth';
 
 // 配置 marked
@@ -387,26 +351,19 @@ const showResourceSelector = ref(false);
 const resourcePopoverEl = ref<HTMLElement | null>(null);
 const currentScope = ref('global');
 const currentScopeRef = ref<number | null>(null);
-const currentScopeName = ref('');
 
 // 编辑器文本（用于响应式禁用发送按钮）
 const editorText = ref('');
 
-// ===== 附件标签（资源 + 文件）=====
+// ===== 附件标签（文件上下文）=====
 interface AttachedTag {
-  type: 'resource' | 'file';
+  type: 'file';
   icon: string;
   name: string;
-  scope?: string;
-  refId?: number;
   file?: File;
 }
 const attachedTags = ref<AttachedTag[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
-
-// ===== 可用资源列表 =====
-const availableInstances = ref<any[]>([]);
-const availableCampuses = ref<any[]>([]);
 
 // ===== 语音输入 =====
 const isVoiceRecording = ref(false);
@@ -444,37 +401,14 @@ const filteredSessions = computed(() => {
   );
 });
 
-// ===== 判断资源是否已选中 =====
-function isResourceSelected(scope: string, refId: number): boolean {
-  return attachedTags.value.some(t => t.type === 'resource' && t.scope === scope && t.refId === refId);
-}
-
 // ===== 获取会话图标 =====
-function getSessionIcon(scope: string): string {
-  switch (scope) {
-    case 'instance': return 'ri-database-2-line';
-    case 'campus': return 'ri-school-line';
-    default: return 'ri-chat-3-line';
-  }
+function getSessionIcon(_scope: string): string {
+  return 'ri-chat-3-line';
 }
 
-// ===== 获取范围标签 =====
-function getScopeLabel(scope: string): string {
-  switch (scope) {
-    case 'instance': return '实例';
-    case 'campus': return '校园';
-    default: return '全局';
-  }
-}
-
-// ===== 获取实例图标 =====
-function getInstanceIcon(serviceType: string): string {
-  const t = (serviceType || '').toLowerCase();
-  if (t.includes('nginx') || t.includes('web')) return 'ri-globe-line';
-  if (t.includes('mysql') || t.includes('redis') || t.includes('数据库')) return 'ri-database-2-line';
-  if (t.includes('ai')) return 'ri-brain-line';
-  if (t.includes('file')) return 'ri-folder-line';
-  return 'ri-cloud-line';
+// ===== 获取范围标签（V3 仅保留全局 scope）=====
+function getScopeLabel(_scope: string): string {
+  return '全局';
 }
 
 // ===== 格式化日期 =====
@@ -539,7 +473,6 @@ function createNewChat() {
   attachedTags.value = [];
   currentScope.value = 'global';
   currentScopeRef.value = null;
-  currentScopeName.value = '';
   clearEditor();
   if (editorEl.value) {
     editorEl.value.focus();
@@ -575,32 +508,11 @@ function sendSuggestion(text: string) {
   sendMessage();
 }
 
-// ===== 资源选择相关 =====
-function toggleResource(scope: string, refId: number, name: string) {
-  const idx = attachedTags.value.findIndex(t => t.type === 'resource' && t.scope === scope && t.refId === refId);
-  if (idx >= 0) {
-    attachedTags.value.splice(idx, 1);
-  } else {
-    attachedTags.value.push({
-      type: 'resource',
-      icon: scope === 'instance' ? 'ri-database-2-line' : 'ri-school-line',
-      name,
-      scope,
-      refId
-    });
-  }
-  updateScopeFromTags();
-  renderResourceChips();
-}
-
+// ===== 文件上下文 =====
 function updateScopeFromTags() {
-  if (attachedTags.value.length === 1 && attachedTags.value[0].type === 'resource') {
-    currentScope.value = attachedTags.value[0].scope!;
-    currentScopeRef.value = attachedTags.value[0].refId!;
-  } else if (attachedTags.value.length === 0) {
-    currentScope.value = 'global';
-    currentScopeRef.value = null;
-  }
+  // V3 仅保留全局 scope，文件作为编辑器上下文附加在消息中
+  currentScope.value = 'global';
+  currentScopeRef.value = null;
 }
 
 function removeTag(idx: number) {
@@ -781,7 +693,7 @@ function renderResourceChips() {
       // 用实际 icon 文本替代 SVG 占位符
       const iconSpan = chip.querySelector('.chip-icon');
       if (iconSpan) {
-        iconSpan.textContent = tag.icon === 'ri-database-2-line' ? '📦' : tag.icon === 'ri-school-line' ? '🏫' : '📎';
+        iconSpan.textContent = '📎';
       }
       frag.appendChild(chip);
       // 添加空格分隔
@@ -932,29 +844,9 @@ async function sendStreaming(content: string) {
   } finally {
     sending.value = false;
     streamingActive.value = false;
-    if (inputEl.value) {
-      inputEl.value.focus();
+    if (editorEl.value) {
+      editorEl.value.focus();
     }
-  }
-}
-
-// ===== 加载可用资源 =====
-async function loadAvailableResources() {
-  try {
-    const instRes = await instancesApi.list();
-    if (Array.isArray(instRes)) {
-      availableInstances.value = instRes;
-    }
-  } catch {
-    // 静默失败
-  }
-  try {
-    const campusRes = await schoolsApi.joined();
-    if (Array.isArray(campusRes)) {
-      availableCampuses.value = campusRes;
-    }
-  } catch {
-    // 静默失败
   }
 }
 
@@ -1049,7 +941,6 @@ async function testModel(id: number) {
 // ===== 初始化 =====
 onMounted(async () => {
   await loadSessions();
-  await loadAvailableResources();
   await loadCustomModels();
   // 从窄屏面板跳转过来的，读取存储的会话ID
   const storedId = sessionStorage.getItem('ai_active_session');
@@ -1641,7 +1532,7 @@ watch(attachedTags, () => {
   pointer-events: none;
 }
 
-/* 资源卡片（内嵌在编辑区中） */
+/* 文件卡片（内嵌在编辑区中） */
 .resource-chip {
   display: inline-flex;
   align-items: center;
@@ -1656,12 +1547,6 @@ watch(attachedTags, () => {
   user-select: none;
   cursor: default;
   white-space: nowrap;
-}
-
-.resource-chip.resource {
-  background: rgba(0, 103, 192, 0.08);
-  color: var(--accent-base);
-  border: 1px solid rgba(0, 103, 192, 0.15);
 }
 
 .resource-chip.file {
@@ -1906,57 +1791,6 @@ watch(attachedTags, () => {
 .popover-action-btn:hover {
   background: var(--ctrl-fill-default);
   border-color: var(--accent-base);
-  color: var(--accent-base);
-}
-
-.popover-divider {
-  height: 1px;
-  background: var(--divider-stroke);
-  margin: 0 var(--spacer-4);
-}
-
-.popover-section-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: var(--spacer-2);
-}
-
-.popover-resource-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spacer-2);
-}
-
-.popover-resource-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: var(--subtle-secondary);
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-xs);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--fast-duration);
-}
-
-.popover-resource-item:hover {
-  background: var(--ctrl-fill-default);
-  color: var(--text-primary);
-}
-
-.popover-resource-item.selected {
-  background: var(--accent-bg);
-  border-color: var(--accent-base);
-  color: var(--accent-base);
-}
-
-.check-icon {
-  margin-left: auto;
   color: var(--accent-base);
 }
 

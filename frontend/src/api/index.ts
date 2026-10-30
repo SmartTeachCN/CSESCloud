@@ -7,8 +7,6 @@ export const authApi = {
   removeSavedLogin: (id: number) => api.delete(`/auth/saved-logins?id=${id}`),
   loginSub: (schoolId: number, username: string, password: string, rememberInList?: boolean) =>
     api.post('/auth/login', { school_id: schoolId, username, password, remember_in_list: rememberInList }),
-  loginInstanceSub: (instanceUid: string, username: string, password: string, rememberInList?: boolean) =>
-    api.post('/auth/login', { instance_uid: instanceUid, username, password, remember_in_list: rememberInList }),
   loginAlliance: (username: string) =>
     api.post('/auth/alliance-login', { username }),
   allianceLoginConfig: (redirect?: string) =>
@@ -20,37 +18,6 @@ export const authApi = {
     api.post('/auth/bind-sub-user', { sub_user_id: subUserId, alias, permissions }),
   listBindings: () => api.get('/auth/bind-sub-user?action=list'),
   unbind: (bindingId: number) => api.post('/auth/bind-sub-user', { action: 'unbind', binding_id: bindingId })
-};
-
-export const instancesApi = {
-  list: () => api.get<any[]>('/instances?action=list'),
-  get: (id: number) => api.get<any>(`/instances?action=get&id=${id}`),
-  create: (body: any) => api.post('/instances?action=create', body),
-  start: (id: number) => api.post('/instances?action=start', { id }),
-  stop: (id: number) => api.post('/instances?action=stop', { id }),
-  restart: (id: number) => api.post('/instances?action=restart', { id }),
-  delete: (id: number) => api.post('/instances?action=delete', { id }),
-  share: (id: number, body: any) => api.post('/instances?action=share', { id, ...body }),
-  batch: (action: string, ids: number[]) => api.post('/instances?action=batch', { action, ids }),
-  setConfig: (id: number, config: any) => api.post('/instances?action=set-config', { id, config })
-};
-
-export const groupsApi = {
-  list: () => api.get<any[]>('/instance-groups?action=list'),
-  create: (name: string) => api.post('/instance-groups?action=create', { name }),
-  update: (id: number, body: any) => api.post('/instance-groups?action=update', { id, ...body }),
-  delete: (id: number) => api.post('/instance-groups?action=delete', { id }),
-  move: (instanceId: number, groupId: number | null) => api.post('/instance-groups?action=move', { instance_id: instanceId, group_id: groupId })
-};
-
-export const schoolsApi = {
-  joined: () => api.get<any[]>('/schools?action=joined'),
-  all: () => api.get<any[]>('/auth/schools'),
-  requestJoin: (schoolId: number, displayName?: string) => api.post('/schools?action=request-join', { school_id: schoolId, display_name: displayName }),
-  myRequests: () => api.get('/schools?action=my-requests'),
-  listRequests: (schoolId: number) => api.get(`/schools?action=join-requests&school_id=${schoolId}`),
-  approve: (requestId: number, approve: boolean) => api.post('/schools?action=approve', { request_id: requestId, approve }),
-  switch: (schoolId: number) => api.post('/schools?action=switch', { school_id: schoolId })
 };
 
 export const aiApi = {
@@ -73,12 +40,6 @@ export const aiApi = {
   updateModel: (id: number, data: any) => api.post('/ai/models?action=update', { id, ...data }),
   deleteModel: (id: number) => api.post('/ai/models?action=delete', { id }),
   testModel: (id: number) => api.post('/ai/models?action=test', { id }),
-};
-
-export const storageApi = {
-  list: (instanceId: number, collectionKey: string) => api.get<any[]>(`/instance-storage?action=list&instance_id=${instanceId}&collection_key=${encodeURIComponent(collectionKey)}`),
-  save: (instanceId: number, collectionKey: string, record: any) => api.post('/instance-storage?action=save', { instance_id: instanceId, collection_key: collectionKey, record }),
-  delete: (instanceId: number, collectionKey: string, recordId: string) => api.post('/instance-storage?action=delete', { instance_id: instanceId, collection_key: collectionKey, record_id: recordId })
 };
 
 /** 将 FS 返回的 _id 映射为 id，保持前端兼容 */
@@ -113,18 +74,6 @@ export const devApi = {
   },
 };
 
-export const subUsersApi = {
-  list: () => api.get<any[]>('/sub-users?action=list'),
-  schoolBindings: () => api.get<any[]>('/sub-users?action=school-bindings'),
-  create: (body: any) => api.post('/sub-users?action=create', body),
-  update: (id: number, body: any) => api.post('/sub-users?action=update', { id, ...body }),
-  delete: (id: number) => api.post('/sub-users?action=delete', { id }),
-  resetPassword: (id: number, password: string) =>
-    api.post('/sub-users?action=reset-password', { id, password }),
-  schoolUnbind: (bindingId: number) =>
-    api.post('/sub-users?action=school-unbind', { binding_id: bindingId })
-};
-
 export const pluginApi = {
   list: async () => { const r = await api.get<any[]>('/dev/plugins?action=list'); return (r || []).map(normalizeItem); },
   get: async (id: number) => { const r = await api.get<any>(`/dev/plugins?action=get&id=${id}`); return normalizeItem(r); },
@@ -144,14 +93,16 @@ export const pluginApi = {
   delete: (id: number) => api.post('/dev/plugins?action=delete', { id })
 };
 
-export const campusApi = {
-  overview: () => api.get<any>('/campus-control?action=overview'),
-  listUnits: () => api.get<any[]>('/campus-control?action=list'),
-  getUnit: (id: number) => api.get<any>(`/campus-control?action=get&id=${id}`),
-  createUnit: (body: any) => api.post('/campus-control?action=create', body),
-  updateUnit: (id: number, body: any) => api.post('/campus-control?action=update', { id, ...body }),
-  deleteUnit: (id: number) => api.post('/campus-control?action=delete', { id }),
-  saveVariables: (id: number, variables: any) => api.post('/campus-control?action=save-variables', { id, variables })
+/** V3 配置实例化 / 静态集控分发 */
+export const distributionsApi = {
+  overview: () => api.get<any>('/distributions?action=overview'),
+  list: () => api.get<any[]>('/distributions?action=list'),
+  get: (id: number) => api.get<any>(`/distributions?action=get&id=${id}`),
+  create: (body: any) => api.post<any>('/distributions?action=create', body),
+  update: (id: number, body: any) => api.post<any>('/distributions?action=update', { id, ...body }),
+  remove: (id: number) => api.post('/distributions?action=delete', { id }),
+  validate: (fileId: number) => api.post<any>('/distributions?action=validate', { file_id: fileId }),
+  manifestUrl: (id: number) => `/api/distributions?action=manifest&id=${id}`
 };
 
 export const hostingApi = {
@@ -260,23 +211,6 @@ export const notificationsApi = {
   delete: (id: number) => api.post('/notifications?action=delete', { id }),
   create: (body: any) => api.post('/notifications?action=create', body),
   recipients: () => api.get<any>('/notifications?action=recipients')
-};
-
-export const instanceFilesApi = {
-  list: (instanceId: number, dir?: string) =>
-    api.get<any>(`/instance-files?action=list&instance_id=${instanceId}${dir ? `&dir=${encodeURIComponent(dir)}` : ''}`),
-  get: (id: number) =>
-    api.get<any>(`/instance-files?action=get&id=${id}`),
-  save: (body: { id?: number; instance_id: number; directory?: string; name: string; content: string; file_type?: string; file_category?: string }) =>
-    api.post('/instance-files?action=save', body),
-  delete: (id: number) =>
-    api.post('/instance-files?action=delete', { id }),
-  resolveEditor: (ext: string) =>
-    api.get<any>(`/instance-files?action=resolve-editor&ext=${encodeURIComponent(ext)}`),
-  storageStats: (instanceId: number) =>
-    api.get<any>(`/instance-files?action=storage-stats&instance_id=${instanceId}`),
-  fileTree: (instanceId: number) =>
-    api.get<any>(`/instance-files?action=file-tree&instance_id=${instanceId}`),
 };
 
 export const dataSpaceApi = {

@@ -236,7 +236,7 @@
         <section v-show="activeTab === 'interface'" class="tab-pane">
           <div class="manifest-hint">
             <Icon icon="ri-information-line" :size="14" />
-            <span>接口清单 (interface_schema)：声明应用对外暴露的数据接口，便于集控侧套餐调用</span>
+            <span>接口清单 (interface_schema)：声明应用对外暴露的数据接口，便于其他应用或外部工具调用</span>
           </div>
           <textarea
             v-model="interfaceText"
@@ -246,105 +246,6 @@
             spellcheck="false"
             placeholder='{ "endpoints": [{ "method": "GET", "path": "/api/...", "description": "..." }] }'
           ></textarea>
-        </section>
-
-        <!-- 设备控制清单 -->
-        <section v-show="activeTab === 'control'" class="tab-pane">
-          <div class="manifest-hint">
-            <Icon icon="ri-information-line" :size="14" />
-            <span>设备控制清单 (control_manifest)：声明此应用所需的设备控制能力。平台提供内置 REST API（<code>/api/control</code>），非 EA2 专属，任何实例侧应用均可使用。</span>
-          </div>
-
-          <div class="control-config">
-            <!-- 启用开关 -->
-            <div class="control-toggle-row">
-              <div class="toggle-info">
-                <h4><Icon icon="ri-remote-control-line" :size="18" /> 启用设备控制</h4>
-                <p>开启后，此应用将获得设备远程控制能力（注册、命令下发、状态上报）。客户端可通过注册码连接到此实例。</p>
-              </div>
-              <label class="switch">
-                <input type="checkbox" v-model="controlForm.enabled" :disabled="readonly" @change="onControlChange" />
-                <span class="switch-slider"></span>
-              </label>
-            </div>
-
-            <template v-if="controlForm.enabled">
-              <div class="control-divider"></div>
-
-              <!-- 协议版本 -->
-              <div class="control-field">
-                <label>协议版本</label>
-                <select v-model.number="controlForm.protocolVersion" :disabled="readonly" @change="onControlChange" class="ctrl-select">
-                  <option :value="1">v1 (REST 轮询)</option>
-                </select>
-                <span class="field-hint">当前平台支持 REST v1 协议，客户端通过轮询获取命令</span>
-              </div>
-
-              <!-- 描述 -->
-              <div class="control-field">
-                <label>API 描述</label>
-                <textarea
-                  v-model="controlForm.description"
-                  :disabled="readonly"
-                  @input="onControlChange"
-                  rows="3"
-                  placeholder="描述此应用的设备控制用途，如：用于 ExamAware 2 客户端远程管理考试配置..."
-                ></textarea>
-              </div>
-
-              <!-- 支持的指令类型 -->
-              <div class="control-field">
-                <label>支持的指令类型</label>
-                <div class="command-list">
-                  <div v-for="(cmd, idx) in controlForm.supportedCommands" :key="idx" class="command-item">
-                    <input
-                      v-model="controlForm.supportedCommands[idx]"
-                      :disabled="readonly"
-                      @input="onControlChange"
-                      placeholder="如：exam-config.prepare"
-                      class="cmd-input"
-                    />
-                    <button v-if="!readonly" class="cmd-remove" @click="removeCommand(idx)" title="移除">
-                      <Icon icon="ri-close-line" :size="14" />
-                    </button>
-                  </div>
-                  <button v-if="!readonly" class="cmd-add" @click="addCommand">
-                    <Icon icon="ri-add-line" :size="12" /> 添加指令类型
-                  </button>
-                </div>
-                <span class="field-hint">声明此应用支持的指令类型，客户端将根据此列表处理对应命令</span>
-              </div>
-
-              <div class="control-divider"></div>
-
-              <!-- API 端点预览 -->
-              <div class="control-api-preview">
-                <h4><Icon icon="ri-code-box-line" :size="16" /> API 端点预览</h4>
-                <p class="preview-hint">部署到实例后，客户端可通过以下 REST API 与此应用的设备控制功能交互：</p>
-                <div class="api-table">
-                  <div class="api-row api-header">
-                    <div class="api-col method">方法</div>
-                    <div class="api-col action">Action</div>
-                    <div class="api-col desc">说明</div>
-                  </div>
-                  <div v-for="ep in apiEndpoints" :key="ep.action" class="api-row">
-                    <div class="api-col method"><span class="method-badge" :class="ep.method">{{ ep.method }}</span></div>
-                    <div class="api-col action"><code>{{ ep.action }}</code></div>
-                    <div class="api-col desc">{{ ep.desc }}</div>
-                  </div>
-                </div>
-                <div class="api-base-url">
-                  <Icon icon="ri-link" :size="14" />
-                  <code>POST /api/control?instance_uid={uid}&action={action}</code>
-                </div>
-              </div>
-            </template>
-
-            <div v-else class="control-disabled-hint">
-              <Icon icon="ri-information-line" :size="16" />
-              <span>设备控制未启用。开启后，可通过平台内置 REST API 实现客户端远程控制。</span>
-            </div>
-          </div>
         </section>
 
         <!-- 实时预览 -->
@@ -393,7 +294,6 @@ const tabs = [
   { id: 'editor_js', icon: 'ri-code-s-slash-line', label: '编辑器 JS' },
   { id: 'storage', icon: 'ri-database-2-line', label: '存储清单' },
   { id: 'interface', icon: 'ri-plug-line', label: '接口清单' },
-  { id: 'control', icon: 'ri-remote-control-line', label: '设备控制' },
   { id: 'preview', icon: 'ri-eye-line', label: '实时预览' }
 ];
 
@@ -415,38 +315,6 @@ const editorHtml = ref('');
 const editorJs = ref('');
 const storageText = ref('');
 const interfaceText = ref('');
-
-// 设备控制清单
-const controlForm = ref({
-  enabled: false,
-  protocolVersion: 1,
-  supportedCommands: [] as string[],
-  description: ''
-});
-
-const apiEndpoints = [
-  { method: 'POST', action: 'device_register', desc: '设备注册（注册码验证）' },
-  { method: 'POST', action: 'command_poll', desc: '设备轮询待执行命令' },
-  { method: 'POST', action: 'command_report', desc: '设备上报命令执行结果' },
-  { method: 'POST', action: 'device_update_state', desc: '更新设备状态（心跳）' },
-  { method: 'POST', action: 'device_errors', desc: '上报设备错误' },
-  { method: 'POST', action: 'command_create', desc: '创建命令（广播/呼叫监考/部署考试）' },
-  { method: 'GET', action: 'events_stream', desc: 'SSE 事件流（服务端推送）' },
-];
-
-function onControlChange() {
-  markDirty('control');
-}
-
-function addCommand() {
-  controlForm.value.supportedCommands.push('');
-  markDirty('control');
-}
-
-function removeCommand(idx: number) {
-  controlForm.value.supportedCommands.splice(idx, 1);
-  markDirty('control');
-}
 
 // ===== Ribbon 可视化编辑器状态 =====
 interface RibbonTool {
@@ -619,14 +487,6 @@ async function loadApp() {
     editorJs.value = res.editor_js || '';
     storageText.value = res.storage_manifest ? JSON.stringify(res.storage_manifest, null, 2) : '';
     interfaceText.value = res.interface_schema ? JSON.stringify(res.interface_schema, null, 2) : '';
-    if (res.control_manifest) {
-      controlForm.value = {
-        enabled: res.control_manifest.enabled || false,
-        protocolVersion: res.control_manifest.protocolVersion || 1,
-        supportedCommands: res.control_manifest.supportedCommands || [],
-        description: res.control_manifest.description || ''
-      };
-    }
     syncRibbonFromAppInfo();
     dirtyTabs.value = {};
   } catch (e: any) {
@@ -669,15 +529,6 @@ async function saveCurrent() {
       const v = JSON.parse(interfaceText.value || '{}');
       await devApi.saveManifest(appId.value, 'interface', v);
       dirtyTabs.value.interface = false;
-    }
-    if (dirtyTabs.value.control) {
-      await devApi.saveManifest(appId.value, 'control', {
-        enabled: controlForm.value.enabled,
-        protocolVersion: controlForm.value.protocolVersion,
-        supportedCommands: controlForm.value.supportedCommands.filter(c => c.trim() !== ''),
-        description: controlForm.value.description
-      });
-      dirtyTabs.value.control = false;
     }
     await loadApp();
     alert('已保存');
@@ -1264,296 +1115,7 @@ onMounted(() => {
   font-size: var(--font-size-sm);
 }
 
-/* ===== 设备控制清单 ===== */
-.control-config {
-  flex: 1;
-  overflow: auto;
-  padding: var(--spacer-2);
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacer-3);
-  max-width: 800px;
-}
-
-.control-toggle-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--spacer-4);
-  padding: var(--spacer-3);
-  background: var(--layer-default);
-  border: 1px solid var(--divider-stroke);
-  border-radius: var(--radius-md);
-}
-
-.toggle-info h4 {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 var(--spacer-1);
-}
-
-.toggle-info p {
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-  margin: 0;
-  line-height: 1.5;
-}
-
-/* Switch toggle */
-.switch {
-  position: relative;
-  display: inline-block;
-  width: 44px;
-  height: 24px;
-  flex-shrink: 0;
-}
-
-.switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.switch-slider {
-  position: absolute;
-  cursor: pointer;
-  inset: 0;
-  background: var(--ctrl-border);
-  border-radius: 24px;
-  transition: background var(--fast-duration);
-}
-
-.switch-slider::before {
-  content: '';
-  position: absolute;
-  width: 18px;
-  height: 18px;
-  left: 3px;
-  bottom: 3px;
-  background: white;
-  border-radius: 50%;
-  transition: transform var(--fast-duration);
-}
-
-.switch input:checked + .switch-slider {
-  background: var(--accent-base);
-}
-
-.switch input:checked + .switch-slider::before {
-  transform: translateX(20px);
-}
-
-.control-divider {
-  height: 1px;
-  background: var(--divider-stroke);
-}
-
-.control-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacer-1);
-}
-
-.control-field label {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.control-field textarea {
-  padding: var(--spacer-2) var(--spacer-3);
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  outline: none;
-  font-family: inherit;
-  resize: vertical;
-}
-
-.control-field textarea:focus { border-color: var(--accent-base); }
-
-.ctrl-select {
-  padding: var(--spacer-2) var(--spacer-3);
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  outline: none;
-  cursor: pointer;
-  width: 200px;
-}
-
-.ctrl-select:focus { border-color: var(--accent-base); }
-
-.field-hint {
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-  margin-top: 2px;
-}
-
-.command-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacer-1);
-}
-
-.command-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-1);
-}
-
-.cmd-input {
-  flex: 1;
-  padding: var(--spacer-1) var(--spacer-2);
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-sm);
-  font-family: var(--font-mono, monospace);
-  color: var(--text-primary);
-  outline: none;
-}
-
-.cmd-input:focus { border-color: var(--accent-base); }
-
-.cmd-remove {
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  color: var(--text-tertiary);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.cmd-remove:hover { background: rgba(196, 43, 28, 0.1); color: var(--status-error); }
-
-.cmd-add {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: var(--spacer-1) var(--spacer-2);
-  background: transparent;
-  border: 1px dashed var(--ctrl-border);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  color: var(--text-secondary);
-  cursor: pointer;
-  align-self: flex-start;
-}
-
-.cmd-add:hover { background: var(--subtle-secondary); color: var(--accent-base); border-color: var(--accent-base); }
-
-.control-api-preview {
-  background: var(--layer-default);
-  border: 1px solid var(--divider-stroke);
-  border-radius: var(--radius-md);
-  padding: var(--spacer-3);
-}
-
-.control-api-preview h4 {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 var(--spacer-1);
-}
-
-.preview-hint {
-  font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-  margin: 0 0 var(--spacer-2);
-}
-
-.api-table {
-  border: 1px solid var(--divider-stroke);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  margin-bottom: var(--spacer-2);
-}
-
-.api-row {
-  display: grid;
-  grid-template-columns: 80px 1.2fr 1fr;
-  gap: var(--spacer-2);
-  padding: var(--spacer-1) var(--spacer-2);
-  align-items: center;
-  font-size: var(--font-size-xs);
-}
-
-.api-row.api-header {
-  background: var(--subtle-secondary);
-  font-weight: 600;
-  color: var(--text-tertiary);
-}
-
-.api-row:not(.api-header) {
-  border-top: 1px solid var(--divider-stroke);
-}
-
-.api-col code {
-  font-size: 10px;
-  font-family: var(--font-mono, monospace);
-  background: var(--subtle-secondary);
-  padding: 1px 4px;
-  border-radius: var(--radius-xs);
-  color: var(--text-secondary);
-}
-
-.method-badge {
-  display: inline-flex;
-  padding: 1px 6px;
-  border-radius: var(--radius-full);
-  font-size: 10px;
-  font-weight: 600;
-  font-family: var(--font-mono, monospace);
-}
-
-.method-badge.POST { background: rgba(0, 103, 192, 0.1); color: #0067C0; }
-.method-badge.GET { background: rgba(16, 124, 16, 0.1); color: #107C10; }
-
-.api-base-url {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  padding: var(--spacer-2);
-  background: var(--subtle-secondary);
-  border-radius: var(--radius-sm);
-}
-
-.api-base-url code {
-  font-size: 11px;
-  font-family: var(--font-mono, monospace);
-  color: var(--text-secondary);
-}
-
-.control-disabled-hint {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  padding: var(--spacer-4);
-  background: var(--subtle-secondary);
-  border: 1px solid var(--divider-stroke);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
-}
-
-/* 只读模式 */
+/* ===== 只读模式 ===== */
 .readonly-pill {
   display: inline-flex;
   align-items: center;

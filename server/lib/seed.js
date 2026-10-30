@@ -302,7 +302,6 @@ module.exports = function seed() {
     editor_js: sampleEditorJs,
     storage_manifest: typeof sampleStorageManifest === 'string' ? JSON.parse(sampleStorageManifest) : sampleStorageManifest,
     interface_schema: typeof sampleInterfaceSchema === 'string' ? JSON.parse(sampleInterfaceSchema) : sampleInterfaceSchema,
-    control_manifest: { enabled: false, protocolVersion: 1, supportedCommands: [], description: '' },
     created_at: now,
   });
   AppFS.writeUser('admin', 'smart_classroom_v1', { status: 'published', is_shared: true, updated_at: now });
@@ -324,7 +323,6 @@ module.exports = function seed() {
       ] },
     ] },
     interface_schema: { endpoints: [] },
-    control_manifest: { enabled: false, protocolVersion: 1, supportedCommands: [], description: '' },
     created_at: now,
   });
 
@@ -374,59 +372,13 @@ module.exports = function seed() {
     editor_js: '// AI 推荐编辑器 JS\nwindow.AIRecommend = {\n  async load() { const r = await window.CSES.listStorage("learning_paths"); console.log("paths:", r); },\n  async generate() { const sid = prompt("学生ID："); if(!sid) return; await window.CSES.saveStorage("learning_paths", { student_id: sid, subject: "数学", recommendations: [], confidence: 0.85, generated_at: new Date().toISOString() }); this.load(); }\n};\ndocument.addEventListener("DOMContentLoaded", () => window.AIRecommend.load());',
     storage_manifest: typeof sharedAiStorage === 'string' ? JSON.parse(sharedAiStorage) : sharedAiStorage,
     interface_schema: { endpoints: [{ method: 'GET', path: '/api/instance-storage.php?action=list', description: '查询学习路径' }] },
-    control_manifest: { enabled: false, protocolVersion: 1, supportedCommands: [], description: '' },
     created_at: now,
   });
   AppFS.writeUser('dev_ai', 'ai_learning_path_v2', { status: 'published', is_shared: true, updated_at: now });
 
-  // ===== 集控侧套餐示例（引用智慧课堂云服务） =====
-  const samplePackageManifest = JSON.stringify({
-    name: '智慧课堂综合集控',
-    version: '1.0.0',
-    description: '综合多个客户端实例，向教师提供统一化课堂服务',
-    author: 'admin',
-    target_audience: 'teacher',
-    tags: ['课堂', '综合'],
-    algorithm: '基于学生学习数据与课堂表现，综合计算个性化教学建议',
-    data_flow: '采集 -> 清洗 -> 综合分析 -> 个性化推荐',
-  });
-
   // 示例应用通过 AppFS 存放在文件系统（smart_classroom_v1 / homework_eval_v1），
   // SQL 的 apps 表在种子阶段没有对应行，故此处 id 允许为 null（消费方按 app_key 处理）
   const appId1 = DB.scalar("SELECT id FROM apps WHERE app_key = 'smart_classroom_v1'") ?? null;
-  const appId2 = DB.scalar("SELECT id FROM apps WHERE app_key = 'homework_eval_v1'") ?? null;
-
-  const sampleCallingInstances = JSON.stringify({
-    instances: [
-      { app_id: appId1, app_key: 'smart_classroom_v1', app_name: '智慧课堂云服务', alias: '主课堂', role: 'primary' },
-      { app_id: appId2, app_key: 'homework_eval_v1', app_name: '作业评测服务', alias: '作业侧', role: 'secondary' },
-    ],
-  });
-
-  const sampleVariableManifest = JSON.stringify({
-    variables: [
-      { key: 'school_term', name: '当前学期', type: 'string', default: '2026秋季', description: '当前学年学期' },
-      { key: 'active_grade', name: '活跃年级', type: 'string', default: '三年级' },
-      { key: 'enable_ai_recommend', name: '启用AI推荐', type: 'boolean', default: true, description: '是否启用综合算法的AI推荐' },
-      { key: 'max_students_per_class', name: '每班最大学生数', type: 'number', default: 50 },
-    ],
-  });
-
-  const pkgId1 = DB.insert('cc_packages', {
-    developer_username: 'admin',
-    package_key: 'smart_classroom_pkg_v1',
-    name: '智慧课堂综合集控',
-    version: '1.0.0',
-    description: '综合多个客户端实例，向教师提供统一化课堂服务',
-    status: 'published',
-    package_manifest: samplePackageManifest,
-    calling_instances_manifest: sampleCallingInstances,
-    editor_html: '<div class="cc-pkg-editor"><h3>智慧课堂综合集控</h3><div id="cc-stats"></div><div id="cc-recommend"></div></div>',
-    editor_js: '// 集控编辑器 JS\n// 平台注入 CCU_VARIABLES 与 CCU_ID 全局变量\nconsole.log("集控单元 ID:", CCU_ID, "变量:", CCU_VARIABLES);',
-    variable_manifest: sampleVariableManifest,
-    created_at: now,
-    updated_at: now,
-  });
 
   // ===== 将第一个实例关联到智慧课堂云服务应用，便于演示自动生成编辑器 =====
   if (appId1 && allInstanceIds[0] !== undefined) {
@@ -481,18 +433,6 @@ module.exports = function seed() {
       status: 'synced',
       created_at: now,
       updated_at: now,
-    });
-
-    // ===== 示例：校园集控单元（集控 ID 与实例 ID 分离） =====
-    DB.insert('campus_control_units', {
-      school_id: 1,
-      instance_id: demoInstanceId,
-      cc_package_id: pkgId1,
-      name: '三年级综合集控',
-      config: '{}',
-      variables: JSON.stringify({ school_term: '2026秋季', active_grade: '三年级', enable_ai_recommend: true, max_students_per_class: 45 }),
-      status: 'active',
-      created_at: now,
     });
   }
 

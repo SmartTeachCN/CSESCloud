@@ -127,7 +127,7 @@ module.exports = async (ctx) => {
 
     if (resourceName === '') Response.error('资源名称不能为空');
     if (expiryDays < 1 || expiryDays > 90) Response.error('有效期必须在 1-90 天之间');
-    if (!['cloud_file', 'instance'].includes(resourceType)) Response.error('无效的资源类型');
+    if (resourceType !== 'cloud_file') Response.error('无效的资源类型');
     if (!['view', 'edit'].includes(permission)) Response.error('无效的权限设置');
 
     // 验证资源是否存在且属于当前用户
@@ -142,8 +142,6 @@ module.exports = async (ctx) => {
         ownerCheck = DB.one(`SELECT id FROM web_hosting_files WHERE id = ?`, [resourceId]);
       }
       if (!ownerCheck) Response.error('无权分享此文件');
-    } else if (resourceType === 'instance') {
-      if (!Auth.canWriteInstance(resourceId)) Response.error('无权分享此实例');
     }
 
     const now = nowStr();
@@ -488,7 +486,7 @@ module.exports = async (ctx) => {
 
   // ===== 列出分享给我的 =====
   if (method === 'GET' && action === 'list-shared-to-me') {
-    const type = query.type ?? 'all'; // 'all' / 'cloud_file' / 'instance'
+    const type = query.type ?? 'all'; // 'all' / 'cloud_file'
 
     let typeFilter = '';
     const params = [userId];
@@ -700,19 +698,6 @@ function getShareResourceData(type, id)
     return null;
   }
 
-  if (type === 'instance') {
-    const ins = DB.one(`SELECT * FROM instances WHERE id = ?`, [id]);
-    if (!ins) return null;
-    return {
-      id: ins.id,
-      name: ins.name,
-      instance_uid: ins.instance_uid,
-      service_type: ins.service_type,
-      status: ins.status,
-      created_at: ins.created_at,
-    };
-  }
-
   return null;
 }
 
@@ -725,7 +710,7 @@ function sendShareNotification(targetUserId, targetUsername, fromUsername, resou
   const targetUser = DB.one(`SELECT school_id FROM users WHERE id = ?`, [targetUserId]);
   if (targetUser) schoolId = parseInt(targetUser.school_id, 10) || 0;
 
-  const typeLabels = { cloud_file: '文件', instance: '实例' };
+  const typeLabels = { cloud_file: '文件' };
   const resourceLabel = typeLabels[resourceType] ?? '资源';
 
   let title = '';

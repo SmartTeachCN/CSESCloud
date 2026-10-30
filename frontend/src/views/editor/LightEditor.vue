@@ -17,9 +17,23 @@
         <!-- 云文件区域 -->
         <div class="cloud-section">
           <div class="cloud-divider">
-            <span>云文件</span>
+            <span>{{ sidebarView === 'files' ? '云文件' : '配置实例' }}</span>
             <div class="cloud-divider-line"></div>
-            <div class="cloud-plus-menu-wrapper">
+            <div class="sidebar-view-switch">
+              <button
+                class="view-switch-btn"
+                :class="{ active: sidebarView === 'files' }"
+                title="云文件"
+                @click="switchSidebarView('files')"
+              >文件</button>
+              <button
+                class="view-switch-btn"
+                :class="{ active: sidebarView === 'instances' }"
+                title="配置实例"
+                @click="switchSidebarView('instances')"
+              >实例</button>
+            </div>
+            <div class="cloud-plus-menu-wrapper" v-if="sidebarView === 'files'">
               <button class="cloud-plus-btn" @click="showCloudPlusMenu = !showCloudPlusMenu" title="操作">
                 <Icon icon="ri-add-line" :size="14" />
               </button>
@@ -47,6 +61,15 @@
                 </button>
               </div>
             </div>
+            <button
+              v-else
+              class="cloud-plus-btn"
+              :disabled="overviewLoading"
+              title="刷新实例列表"
+              @click="loadOverview()"
+            >
+              <Icon :icon="overviewLoading ? 'ri-loader-4-line' : 'ri-refresh-line'" :size="14" :class="{ spin: overviewLoading }" />
+            </button>
           </div>
           <input type="file" ref="cloudUploadInput" @change="handleCloudUpload" hidden />
           <div v-if="!isLoggedIn" class="cloud-login-prompt">
@@ -54,7 +77,7 @@
             <div class="login-text">登录以使用云文件</div>
             <button class="login-btn" @click="goLogin">登录</button>
           </div>
-          <div v-else class="cloud-file-list">
+          <div v-else-if="sidebarView === 'files'" class="cloud-file-list">
             <div v-if="cloudLoading" class="cloud-loading">加载中...</div>
             <div
               v-for="file in cloudFiles"
@@ -66,6 +89,13 @@
             >
               <span class="cloud-file-icon"><Icon :icon="file.icon" :size="16" /></span>
               <span class="cloud-file-name">{{ file.name }}</span>
+              <span
+                v-if="distributedCount(file) > 0"
+                class="cloud-file-dist-badge"
+                :title="'已分发 ' + distributedCount(file) + ' 个配置实例'"
+              >
+                <Icon icon="ri-git-branch-line" :size="9" /> 已分发
+              </span>
               <span v-if="file.is_shared && file.source !== 'shared'" class="cloud-file-shared-badge" title="已分享">
                 <Icon icon="ri-share-line" :size="10" />
               </span>
@@ -77,6 +107,79 @@
             <div v-if="!cloudLoading && cloudFiles.length === 0" class="cloud-empty">
               <span>暂无云文件</span>
             </div>
+          </div>
+
+          <!-- 配置实例视图（文件 / 实例切换） -->
+          <div v-else class="instance-panel">
+            <div v-if="overviewLoading && instances.length === 0" class="cloud-loading">加载中...</div>
+            <div v-else-if="overviewError && instances.length === 0" class="instance-error">
+              <Icon icon="ri-error-warning-line" :size="16" />
+              <span class="instance-error-text">{{ overviewError }}</span>
+              <button class="instance-retry" @click="loadOverview()">重试</button>
+            </div>
+            <div v-else-if="instances.length === 0" class="cloud-empty instance-empty">
+              <div class="instance-empty-icon"><Icon icon="ri-git-branch-line" :size="28" /></div>
+              <div>暂无配置实例</div>
+              <div class="instance-empty-hint">在文件上右键 →「分发配置」</div>
+            </div>
+            <template v-else>
+              <div class="instance-list">
+                <div v-for="inst in instances" :key="inst.id" class="instance-item">
+                  <div class="instance-item-head">
+                    <span class="instance-name" :title="inst.name">{{ inst.name }}</span>
+                    <span
+                      class="instance-status"
+                      :class="inst.valid ? 'ok' : 'warn'"
+                      :title="inst.valid ? '源文件校验正常' : (inst.warning || '源文件异常')"
+                    >
+                      <Icon :icon="inst.valid ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'" :size="10" />
+                      <span>{{ inst.valid ? '正常' : '警告' }}</span>
+                    </span>
+                  </div>
+                  <div class="instance-file" :title="inst.source_file_name || '源文件已删除'">
+                    <Icon icon="ri-file-2-line" :size="10" />
+                    <span>{{ inst.source_file_name || '源文件已删除' }}</span>
+                  </div>
+                  <div class="instance-meta">
+                    <button
+                      class="instance-group"
+                      :title="'实例组标识：' + (inst.group_dir_id || '-') + '（点击复制）'"
+                      @click.stop="copyInstanceGroupId(inst)"
+                    >
+                      <Icon :icon="copiedInstanceKey === 'group-' + inst.id ? 'ri-check-line' : 'ri-file-copy-line'" :size="9" />
+                      <span>{{ inst.group_dir_id || '-' }}</span>
+                    </button>
+                    <span class="instance-time">{{ formatInstanceTime(inst.updated_at) }}</span>
+                  </div>
+                  <div class="instance-actions">
+                    <button title="打开源文件" @click.stop="openInstanceSourceFile(inst)">
+                      <Icon icon="ri-folder-open-line" :size="13" />
+                    </button>
+                    <button title="编辑实例" @click.stop="openInstanceEditor(inst)">
+                      <Icon icon="ri-edit-line" :size="13" />
+                    </button>
+                    <button
+                      title="复制清单地址"
+                      @click.stop="copyInstanceManifest(inst)"
+                    >
+                      <Icon :icon="copiedInstanceKey === 'manifest-' + inst.id ? 'ri-check-line' : 'ri-file-copy-line'" :size="13" />
+                    </button>
+                    <button title="下载 ClassIsland 清单文件" @click.stop="downloadInstanceManifest(inst)">
+                      <Icon icon="ri-download-line" :size="13" />
+                    </button>
+                    <button class="danger" title="删除实例" @click.stop="deleteInstance(inst)">
+                      <Icon icon="ri-delete-bin-line" :size="13" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="instance-refresh-row">
+                <button class="instance-refresh-btn" :disabled="overviewLoading" @click="loadOverview()">
+                  <Icon :icon="overviewLoading ? 'ri-loader-4-line' : 'ri-refresh-line'" :size="12" :class="{ spin: overviewLoading }" />
+                  <span>{{ overviewLoading ? '刷新中...' : '刷新实例列表' }}</span>
+                </button>
+              </div>
+            </template>
           </div>
         </div>
 
@@ -263,6 +366,9 @@
                 </button>
                 <button class="ctx-item" @click="handleShareCloudFile(cloudCtxMenu.file!); cloudCtxMenu.visible = false" v-if="cloudCtxMenu.file && cloudCtxMenu.file.source !== 'shared'">
                   <Icon icon="ri-share-forward-line" :size="14" /> 分享
+                </button>
+                <button class="ctx-item" @click="openDistributionDialog(cloudCtxMenu.file!); cloudCtxMenu.visible = false" v-if="cloudCtxMenu.file && cloudCtxMenu.file.source === 'owned'">
+                  <Icon icon="ri-git-branch-line" :size="14" /> 分发配置
                 </button>
                 <button class="ctx-item" @click="downloadCloudFile(cloudCtxMenu.file!); cloudCtxMenu.visible = false">
                   <Icon icon="ri-download-line" :size="14" /> 下载
@@ -521,6 +627,25 @@
     @created="loadCloudFiles"
     @updated="loadCloudFiles"
   />
+
+  <!-- 分发配置对话框（云文件右键 → 分发配置） -->
+  <DistributionDialog
+    :visible="showDistributionDialog"
+    :file="distributionFile"
+    :overview="distributionOverview"
+    @close="showDistributionDialog = false"
+    @saved="onDistributionSaved"
+  />
+
+  <!-- 配置实例编辑对话框（实例视图 → 编辑） -->
+  <InstanceManagerDialog
+    :visible="showInstanceDialog"
+    :instance="editingInstance"
+    :group-dir-id="groupDirId"
+    :cloud-files="ownedCloudFiles"
+    @close="showInstanceDialog = false"
+    @saved="onInstanceSaved"
+  />
 </template>
 
 <script setup lang="ts">
@@ -536,7 +661,9 @@ import OperationHistoryPanel from '../../components/editor/panels/OperationHisto
 import VersionHistoryPanel from '../../components/editor/panels/VersionHistoryPanel.vue';
 import WorkspaceConfig from '../../components/editor/panels/WorkspaceConfig.vue';
 import StatusBarExtensions from '../../components/editor/panels/StatusBarExtensions.vue';
-import { pluginApi } from '../../api';
+import DistributionDialog from '../../components/editor/DistributionDialog.vue';
+import InstanceManagerDialog from '../../components/editor/InstanceManagerDialog.vue';
+import { pluginApi, distributionsApi } from '../../api';
 import { useAuth } from '../../composables/useAuth';
 import { useTabContextMenu } from '../../composables/useTabContextMenu';
 import { api } from '../../api/client';
@@ -582,6 +709,37 @@ interface CloudFile {
   source?: string;
   shared_from?: string;
   shared_permission?: string;
+}
+
+/** 配置实例 DTO（对应 spec 3.4 的 InstanceDTO，接口未就绪时字段可缺失） */
+interface DistributionInstance {
+  id: number;
+  instance_uid?: string;
+  name: string;
+  app_key?: string;
+  source_file_id?: number;
+  source_file_name?: string;
+  source_file_type?: string;
+  source_updated_at?: string;
+  group_id?: number;
+  group_dir_id?: string;
+  organization_name?: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  version?: number;
+  urls?: { manifest?: string; file_template?: string };
+  valid?: boolean;
+  warning?: string;
+}
+
+/** GET /distributions?action=overview 的返回结构 */
+interface DistributionOverview {
+  group?: { id?: number; dir_id?: string; name?: string } | null;
+  base_url?: string;
+  manifest_url?: string;
+  file_url_template?: string;
+  instances?: DistributionInstance[];
 }
 
 const openTabs = ref<EditorFile[]>([]);
@@ -840,6 +998,8 @@ async function loadCloudFiles() {
 
 function refreshCloudFiles() {
   loadCloudFiles();
+  // 同步刷新实例徽标（失败静默）
+  if (isLoggedIn.value) loadOverview(true);
 }
 
 function formatFileSize(bytes: number): string {
@@ -991,6 +1151,8 @@ async function deleteCloudFile(file: CloudFile) {
       closeTab(currentFile.value);
     }
     await loadCloudFiles();
+    // 源文件删除后实例可能变为警告状态，静默刷新实例列表
+    loadOverview(true);
   } catch (e: any) {
     console.error('删除云文件失败', e);
   }
@@ -1045,6 +1207,8 @@ async function confirmRename() {
     }
     await loadCloudFiles();
     renameTargetFile = null;
+    // 源文件改名后同步刷新实例列表中展示的源文件名
+    loadOverview(true);
   } catch (e: any) {
     console.error('重命名失败', e);
   }
@@ -1055,6 +1219,231 @@ function handleShareCloudFile(file: CloudFile) {
   openCloudFile(file).then(() => {
     showShareDialog.value = true;
   });
+}
+
+// ===== 配置实例（分发配置） =====
+const sidebarView = ref<'files' | 'instances'>('files');
+const distributionOverview = ref<DistributionOverview | null>(null);
+const distributionOverviewLoaded = ref(false);
+const overviewLoading = ref(false);
+const overviewError = ref('');
+const showDistributionDialog = ref(false);
+const distributionFile = ref<CloudFile | null>(null);
+const showInstanceDialog = ref(false);
+const editingInstance = ref<DistributionInstance | null>(null);
+const copiedInstanceKey = ref('');
+let copiedInstanceTimer: ReturnType<typeof setTimeout> | null = null;
+
+const groupDirId = computed(() => distributionOverview.value?.group?.dir_id || '');
+
+/** 实例列表（按更新时间倒序，缺失字段时降级） */
+const instances = computed<DistributionInstance[]>(() => {
+  const list = distributionOverview.value?.instances || [];
+  return [...list].sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+});
+
+/** 每个云文件已分发的配置实例数量（用于文件列表徽标） */
+const distributedCounts = computed<Map<number, number>>(() => {
+  const map = new Map<number, number>();
+  const list = distributionOverview.value?.instances || [];
+  for (const inst of list) {
+    const fileId = Number(inst.source_file_id);
+    if (!Number.isFinite(fileId)) continue;
+    map.set(fileId, (map.get(fileId) || 0) + 1);
+  }
+  return map;
+});
+
+/** 可作为源文件的云文件（仅自己拥有的文件，分享文件不可用于分发） */
+const ownedCloudFiles = computed(() => {
+  return cloudFiles.value
+    .filter((f) => f.source !== 'shared')
+    .map((f) => ({ id: f.id, name: f.name }));
+});
+
+function distributedCount(file: CloudFile): number {
+  return distributedCounts.value.get(Number(file.id)) || 0;
+}
+
+function normalizeInstance(raw: any): DistributionInstance | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = Number(raw.id);
+  if (!Number.isFinite(id)) return null;
+  const sourceFileId = Number(raw.source_file_id);
+  const urls = raw.urls && typeof raw.urls === 'object'
+    ? { manifest: raw.urls.manifest || '', file_template: raw.urls.file_template || '' }
+    : undefined;
+  return {
+    id,
+    instance_uid: typeof raw.instance_uid === 'string' ? raw.instance_uid : '',
+    name: String(raw.name ?? ''),
+    app_key: typeof raw.app_key === 'string' ? raw.app_key : '',
+    source_file_id: Number.isFinite(sourceFileId) ? sourceFileId : undefined,
+    source_file_name: typeof raw.source_file_name === 'string' ? raw.source_file_name : '',
+    source_file_type: typeof raw.source_file_type === 'string' ? raw.source_file_type : '',
+    source_updated_at: typeof raw.source_updated_at === 'string' ? raw.source_updated_at : '',
+    group_id: typeof raw.group_id === 'number' ? raw.group_id : undefined,
+    group_dir_id: typeof raw.group_dir_id === 'string' ? raw.group_dir_id : '',
+    organization_name: typeof raw.organization_name === 'string' ? raw.organization_name : '',
+    status: typeof raw.status === 'string' ? raw.status : '',
+    created_at: typeof raw.created_at === 'string' ? raw.created_at : '',
+    updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : '',
+    version: typeof raw.version === 'number' ? raw.version : undefined,
+    urls,
+    // 接口缺失 valid 字段时按“正常”处理，避免误报警告
+    valid: raw.valid !== false,
+    warning: typeof raw.warning === 'string' ? raw.warning : '',
+  };
+}
+
+function normalizeOverview(raw: any): DistributionOverview {
+  const rawInstances = Array.isArray(raw?.instances) ? raw.instances : [];
+  const normalized = rawInstances
+    .map(normalizeInstance)
+    .filter((item: DistributionInstance | null): item is DistributionInstance => !!item);
+  return {
+    group: raw?.group && typeof raw.group === 'object' ? raw.group : null,
+    base_url: typeof raw?.base_url === 'string' ? raw.base_url : '',
+    manifest_url: typeof raw?.manifest_url === 'string' ? raw.manifest_url : '',
+    file_url_template: typeof raw?.file_url_template === 'string' ? raw.file_url_template : '',
+    instances: normalized,
+  };
+}
+
+/** 加载实例总览；silent=true 时用于后台刷新（失败不打断当前列表） */
+async function loadOverview(silent = false) {
+  if (!isLoggedIn.value) return;
+  overviewLoading.value = true;
+  if (!silent) overviewError.value = '';
+  try {
+    const data = await distributionsApi.overview();
+    distributionOverview.value = normalizeOverview(data);
+    distributionOverviewLoaded.value = true;
+    overviewError.value = '';
+  } catch (e: any) {
+    distributionOverviewLoaded.value = true;
+    if (!silent || !distributionOverview.value) {
+      overviewError.value = e?.message || '配置实例加载失败，请稍后重试';
+    }
+  } finally {
+    overviewLoading.value = false;
+  }
+}
+
+function switchSidebarView(view: 'files' | 'instances') {
+  sidebarView.value = view;
+  if (view === 'instances' && (!distributionOverviewLoaded.value || overviewError.value)) {
+    loadOverview();
+  }
+}
+
+function setCopiedInstanceKey(key: string) {
+  copiedInstanceKey.value = key;
+  if (copiedInstanceTimer) clearTimeout(copiedInstanceTimer);
+  copiedInstanceTimer = setTimeout(() => {
+    if (copiedInstanceKey.value === key) copiedInstanceKey.value = '';
+  }, 2000);
+}
+
+async function copyInstanceGroupId(inst: DistributionInstance) {
+  const dirId = inst.group_dir_id || groupDirId.value;
+  if (!dirId) return;
+  try {
+    await navigator.clipboard.writeText(dirId);
+    setCopiedInstanceKey(`group-${inst.id}`);
+  } catch {
+    alert('复制失败，请手动复制实例组标识：' + dirId);
+  }
+}
+
+function formatInstanceTime(value?: string): string {
+  if (!value) return '未知';
+  const text = String(value);
+  return text.length > 16 ? text.slice(0, 16) : text;
+}
+
+/** 打开分发配置对话框；确保已有实例组信息后再打开 */
+async function openDistributionDialog(file: CloudFile) {
+  if (!isLoggedIn.value) {
+    alert('请先登录后再使用「分发配置」');
+    return;
+  }
+  if (file.source === 'shared') {
+    alert('分享文件不能配置分发，请对自己拥有的云文件使用「分发配置」');
+    return;
+  }
+  distributionFile.value = file;
+  const hadOverview = !!distributionOverview.value;
+  if (!hadOverview) {
+    await loadOverview(true);
+  }
+  showDistributionDialog.value = true;
+  // 已有实例列表时后台静默刷新，确保对话框内“同名实例 → 更新”的判断是最新的
+  if (hadOverview) {
+    void loadOverview(true);
+  }
+}
+
+async function onDistributionSaved() {
+  await Promise.all([loadOverview(true), loadCloudFiles()]);
+}
+
+async function openInstanceSourceFile(inst: DistributionInstance) {
+  const fileId = Number(inst.source_file_id);
+  const target = cloudFiles.value.find((f) => Number(f.id) === fileId && f.source !== 'shared');
+  if (!target) {
+    alert('源文件不在当前云文件列表中，可能已被删除或尚未加载，请刷新后重试');
+    return;
+  }
+  await openCloudFile(target);
+}
+
+function openInstanceEditor(inst: DistributionInstance) {
+  editingInstance.value = inst;
+  showInstanceDialog.value = true;
+}
+
+async function onInstanceSaved() {
+  await Promise.all([loadOverview(true), loadCloudFiles()]);
+}
+
+async function copyInstanceManifest(inst: DistributionInstance) {
+  const url = inst.urls?.manifest || distributionOverview.value?.manifest_url || '';
+  if (!url) {
+    alert('清单地址暂不可用，请刷新实例列表后重试');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    setCopiedInstanceKey(`manifest-${inst.id}`);
+  } catch {
+    alert('复制失败，请手动复制清单地址：' + url);
+  }
+}
+
+function downloadInstanceManifest(inst: DistributionInstance) {
+  const id = Number(inst.id);
+  if (!Number.isFinite(id)) return;
+  const link = document.createElement('a');
+  link.href = distributionsApi.manifestUrl(id);
+  link.download = `ClassIsland-Management-${inst.group_dir_id || 'config'}.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+async function deleteInstance(inst: DistributionInstance) {
+  if (!confirm(`确定删除配置实例「${inst.name}」吗？\n删除后 ClassIsland 将无法再同步该实例的配置。`)) return;
+  try {
+    await distributionsApi.remove(Number(inst.id));
+    if (editingInstance.value?.id === inst.id) {
+      showInstanceDialog.value = false;
+      editingInstance.value = null;
+    }
+    await Promise.all([loadOverview(true), loadCloudFiles()]);
+  } catch (e: any) {
+    alert('删除失败：' + (e?.message || '未知错误'));
+  }
 }
 
 // ===== 插件系统（仅用于顶栏指示器） =====
@@ -1670,7 +2059,11 @@ function goLogin() {
 
 onMounted(() => {
   loadPlugins();
-  if (isLoggedIn.value) loadCloudFiles();
+  if (isLoggedIn.value) {
+    loadCloudFiles();
+    // 配置实例总览：失败静默（实例视图内会展示错误与重试入口）
+    loadOverview(true);
+  }
 });
 </script>
 
@@ -1748,6 +2141,34 @@ onMounted(() => {
   flex: 1;
   height: 1px;
   background: var(--divider-stroke);
+}
+
+/* 云文件 / 配置实例 视图切换 */
+.sidebar-view-switch {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 1px;
+  background: var(--subtle-secondary);
+  border-radius: var(--radius-sm);
+}
+.view-switch-btn {
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-xs);
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.view-switch-btn:hover { color: var(--text-primary); }
+.view-switch-btn.active {
+  background: var(--layer-default);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 }
 
 /* 加号菜单 */
@@ -1834,8 +2255,193 @@ onMounted(() => {
 .cloud-file-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cloud-file-size { font-size: var(--font-size-xs); color: var(--text-tertiary); flex-shrink: 0; }
 .cloud-file-shared-badge { display: inline-flex; align-items: center; color: var(--status-success); flex-shrink: 0; }
+.cloud-file-dist-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+  font-size: 9px;
+  line-height: 1.4;
+  color: var(--status-warning);
+  background: rgba(255, 140, 0, 0.12);
+  padding: 0 3px;
+  border-radius: var(--radius-xs);
+}
 .cloud-file-shared-from-badge { display: inline-flex; align-items: center; gap: 2px; font-size: 9px; color: var(--accent-base); background: var(--accent-bg); padding: 0 4px; border-radius: var(--radius-xs); flex-shrink: 0; }
 .cloud-empty { text-align: center; padding: var(--spacer-4); font-size: var(--font-size-xs); color: var(--text-tertiary); }
+
+/* ===== 配置实例视图（侧栏） ===== */
+.instance-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.instance-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-2);
+  padding-bottom: var(--spacer-2);
+}
+.instance-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--spacer-2);
+  background: var(--subtle-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+.instance-item:hover { border-color: var(--divider-stroke); }
+.instance-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  min-width: 0;
+}
+.instance-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.instance-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  font-size: 9px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+}
+.instance-status.ok { color: var(--status-success); background: rgba(16, 124, 16, 0.1); }
+.instance-status.warn { color: var(--status-warning); background: rgba(255, 140, 0, 0.12); }
+.instance-file {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  min-width: 0;
+}
+.instance-file span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.instance-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacer-1);
+  min-width: 0;
+}
+.instance-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: 70%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.instance-group:hover { color: var(--accent-base); }
+.instance-group span { overflow: hidden; text-overflow: ellipsis; }
+.instance-time {
+  flex-shrink: 0;
+  font-size: 9px;
+  color: var(--text-tertiary);
+}
+.instance-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 2px;
+}
+.instance-actions button {
+  width: 22px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.instance-actions button:hover { background: var(--subtle-pressed); color: var(--text-primary); }
+.instance-actions button.danger:hover { background: rgba(220, 38, 38, 0.08); color: var(--status-error); }
+.instance-refresh-row {
+  padding-top: var(--spacer-2);
+  border-top: 1px solid var(--divider-stroke);
+  display: flex;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.instance-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px var(--spacer-2);
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-xs);
+  font-size: 10px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.instance-refresh-btn:hover:not(:disabled) { background: var(--subtle-secondary); color: var(--text-primary); }
+.instance-refresh-btn:disabled { opacity: 0.6; cursor: default; }
+.instance-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+.instance-empty-icon { color: var(--text-tertiary); opacity: 0.6; margin-bottom: var(--spacer-1); }
+.instance-empty-hint { font-size: 10px; color: var(--text-tertiary); }
+.instance-error {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacer-2);
+  padding: var(--spacer-4) var(--spacer-2);
+  text-align: center;
+  color: var(--status-error);
+  font-size: var(--font-size-xs);
+}
+.instance-error-text { line-height: 1.5; word-break: break-all; }
+.instance-retry {
+  padding: 2px var(--spacer-3);
+  border: 1px solid var(--ctrl-border-rest);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.instance-retry:hover { background: var(--subtle-secondary); color: var(--text-primary); }
 
 .sidebar-footer { padding: var(--spacer-3); border-top: 1px solid var(--divider-stroke); background: var(--subtle-secondary); }
 .storage-info { display: flex; flex-direction: column; gap: var(--spacer-1); }

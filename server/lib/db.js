@@ -55,6 +55,8 @@ function pdo() {
   if (isNew) {
     migrate();
     seed();
+    // 新建数据库同样补齐增量列/索引，保证 schema.sql 与迁移逻辑一致
+    ensureSchema();
   } else {
     // 已有数据库：执行增量迁移（补充新表/新字段）
     ensureSchema();
@@ -76,12 +78,19 @@ function ensureSchema() {
   addMissingColumn('instances', 'app_id', 'INTEGER');
   addMissingColumn('instances', 'app_key', 'TEXT');
 
-  // 实例所有者、唯一ID、组、配置（计划新增字段）
+  // 实例所有者、唯一ID、组、配置
   addMissingColumn('instances', 'owner_user_id', 'INTEGER');
   addMissingColumn('instances', 'owner_type', "TEXT NOT NULL DEFAULT 'sub'");
   addMissingColumn('instances', 'instance_uid', 'TEXT');
   addMissingColumn('instances', 'group_id', 'INTEGER');
   addMissingColumn('instances', 'config', 'TEXT');
+  // V3：配置实例（轻编辑器文件分发）使用的源文件与更新时间
+  addMissingColumn('instances', 'source_file_id', 'INTEGER');
+  addMissingColumn('instances', 'updated_at', 'TEXT');
+
+  // V3：实例组对外公开标识（静态集控 URL 使用）
+  addMissingColumn('instance_groups', 'dir_id', 'TEXT');
+  addMissingColumn('instance_groups', 'updated_at', 'TEXT');
 
   // 子用户权限（JSON）
   addMissingColumn('users', 'permissions', 'TEXT');
@@ -101,7 +110,6 @@ function ensureSchema() {
   addMissingColumn('apps', 'forked_from', 'INTEGER');
   addMissingColumn('apps', 'forked_by', 'TEXT');
   addMissingColumn('apps', 'is_official', 'INTEGER NOT NULL DEFAULT 0');
-  addMissingColumn('apps', 'control_manifest', 'TEXT');
 
   // users 表：个人中心扩展字段
   addMissingColumn('users', 'department', 'TEXT');
@@ -117,14 +125,10 @@ function ensureSchema() {
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_cloud_files_directory ON cloud_files(directory)'); } catch (_) {}
   try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_cloud_files_path ON cloud_files(instance_id, directory, name)'); } catch (_) {}
 
-  // ea2_devices 设备备注
-  addMissingColumn('ea2_devices', 'notes', "TEXT DEFAULT ''");
-  // ea2_devices 连接协议（poll=长REST轮询 / ws=WebSocket）
-  addMissingColumn('ea2_devices', 'protocol', "TEXT DEFAULT 'poll'");
-  // 上一次 REST 轮询时间（用于频率限制）
-  addMissingColumn('ea2_devices', 'last_poll_at', 'TEXT');
-  // 实例级 REST 轮询频率限制（秒，默认 300=5分钟）
-  addMissingColumn('instances', 'ea2_poll_interval_seconds', 'INTEGER NOT NULL DEFAULT 300');
+  // V3：配置实例 / 静态集控索引
+  try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_instance_groups_dir_id ON instance_groups(dir_id)'); } catch (_) {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_instances_source_file ON instances(source_file_id)'); } catch (_) {}
+  try { db.exec("UPDATE instances SET updated_at = created_at WHERE updated_at IS NULL"); } catch (_) {}
 
   // 网页空间审查系统
   addMissingColumn('web_hosting_spaces', 'review_status', "TEXT NOT NULL DEFAULT 'published'");
@@ -138,6 +142,15 @@ function ensureSchema() {
   try {
     db.exec("UPDATE web_hosting_files SET published_content = content, published_size = file_size WHERE published_content IS NULL AND is_directory = 0");
   } catch (_) {}
+
+  // V3：动态集控（EA2 设备/命令、校园集控单元、集控侧套餐）已整体移除。
+  // 旧版本升级时清理遗留表，避免继续保留无消费方的动态集控数据（新库不会创建这些表）。
+  for (const obsolete of [
+    'ea2_commands', 'ea2_device_credentials', 'ea2_enrollment_codes', 'ea2_devices',
+    'campus_control_units', 'cc_packages',
+  ]) {
+    try { db.exec('DROP TABLE IF EXISTS ' + obsolete); } catch (_) { /* 忽略清理失败 */ }
+  }
 }
 
 /** 为表添加缺失的列（SQLite 不支持 IF NOT EXISTS，用 try-catch） */

@@ -312,18 +312,6 @@ function makeAuth(req, res) {
       }
     },
 
-    /** 切换当前学校（联盟账户可用） */
-    switchSchool(schoolId) {
-      self.init();
-      if (!req.session.auth) return false;
-      const school = DB.one('SELECT * FROM schools WHERE id = ?', [schoolId]);
-      if (!school) return false;
-      req.session.auth.school_id = school.id;
-      req.session.auth.school_name = school.name;
-      req.sessionDirty = true;
-      return true;
-    },
-
     /** 写审计日志 */
     logAudit(schoolId, userId, action, target, status = 'success', extra = {}) {
       try {
@@ -342,53 +330,12 @@ function makeAuth(req, res) {
       }
     },
 
-    /** 实例子用户登录：通过 instance_uid + username + password */
-    loginInstanceSubUser(instanceUid, username, password) {
-      const instance = DB.one('SELECT * FROM instances WHERE instance_uid = ?', [instanceUid]);
-      if (!instance) return false;
-      const user = DB.one(
-        `SELECT u.*, s.name AS school_name FROM users u
-         JOIN schools s ON s.id = u.school_id
-         WHERE u.school_id = ? AND u.username = ? AND u.status = 'active'`,
-        [instance.school_id, username]
-      );
-      if (!user || !bcrypt.compareSync(String(password), user.password_hash)) return false;
-      self.init();
-      req.session.auth = {
-        type: 'instance_sub',
-        user_id: user.id,
-        school_id: user.school_id,
-        school_name: user.school_name,
-        instance_id: instance.id,
-        instance_uid: instanceUid,
-        username: user.username,
-        display_name: user.display_name,
-        role: user.role,
-        email: user.email,
-      };
-      self.logAudit(user.school_id, user.id, 'login', `实例子用户登录 instance=${instanceUid}`, 'success');
-      return true;
-    },
-
-    /** 当前是否实例子用户 */
-    isInstanceSub() {
-      const u = self.user();
-      return !!(u && (u.type || '') === 'instance_sub');
-    },
-
-    /** 当前实例 ID（实例子用户登录时） */
-    instanceId() {
-      const u = self.user();
-      return (u && (u.type || '') === 'instance_sub') ? parseInt(u.instance_id, 10) : 0;
-    },
-
     /** 当前所有者 key：用于查询实例组/共享 */
     ownerKey() {
       const u = self.user();
       if (!u) return '';
       const type = u.type || 'sub';
       if (type === 'alliance') return 'alliance:' + (u.username || '');
-      if (type === 'instance_sub') return 'sub:inst:' + (u.instance_id || 0) + ':' + (u.user_id || 0);
       return 'sub:school:' + (u.school_id || 0) + ':' + (u.user_id || 0);
     },
 
@@ -428,25 +375,9 @@ function makeAuth(req, res) {
       );
     },
 
-    /** 列出某学校所有子用户的联盟绑定关系（供学校管理员查看） */
-    listSchoolBindings(schoolId) {
-      return DB.all(
-        `SELECT b.*, u.username AS sub_username, u.display_name AS sub_display_name, u.role AS sub_role
-         FROM alliance_account_bindings b
-         JOIN users u ON u.id = b.sub_user_id
-         WHERE b.school_id = ? ORDER BY b.id DESC`,
-        [schoolId]
-      );
-    },
-
     /** 解绑子用户 */
     unbindSubUser(allianceUsername, bindingId) {
       return DB.delete('alliance_account_bindings', 'id = ? AND alliance_username = ?', [bindingId, allianceUsername]) > 0;
-    },
-
-    /** 学校管理员解绑本校子用户的联盟绑定 */
-    schoolUnbind(schoolId, bindingId) {
-      return DB.delete('alliance_account_bindings', 'id = ? AND school_id = ?', [bindingId, schoolId]) > 0;
     },
 
     /** 列出保留登录条目 */
@@ -454,19 +385,19 @@ function makeAuth(req, res) {
       return DB.all('SELECT * FROM saved_login_entries ORDER BY id DESC');
     },
 
-    /** 保存保留登录条目（去重） */
+    /** 保存保留登录条目（按类型 + 学校 + 用户名去重） */
     saveLogin(entry) {
       const exists = DB.one(
         `SELECT id FROM saved_login_entries WHERE entry_type = ? AND sub_username = ?
-         AND COALESCE(school_id,0) = ? AND COALESCE(instance_uid,'') = ?`,
-        [entry.entry_type, entry.sub_username, parseInt(entry.school_id || 0, 10), entry.instance_uid || '']
+         AND COALESCE(school_id,0) = ?`,
+        [entry.entry_type, entry.sub_username, parseInt(entry.school_id || 0, 10)]
       );
       if (exists) return exists.id;
       return DB.insert('saved_login_entries', {
         entry_type: entry.entry_type,
         display_label: entry.display_label,
         school_id: entry.school_id ?? null,
-        instance_uid: entry.instance_uid ?? null,
+        instance_uid: null,
         sub_username: entry.sub_username,
         created_at: nowStr(),
       });
@@ -488,47 +419,10 @@ function makeAuth(req, res) {
       );
     },
 
-    /** 创建加入学校申请（避免重复） */
-    createJoinRequest(schoolId, allianceUsername, displayName = '') {
-      const exists = DB.one(
-        "SELECT id FROM school_join_requests WHERE school_id = ? AND applicant_username = ? AND status = 'pending'",
-        [schoolId, allianceUsername]
-      );
-      if (exists) return false;
-      DB.insert('school_join_requests', {
-        school_id: schoolId,
-        applicant_username: allianceUsername,
-        applicant_display_name: displayName || allianceUsername,
-        status: 'pending',
-        created_at: nowStr(),
-      });
-      return true;
-    },
-
-    /** 列出某学校的加入申请 */
-    listJoinRequests(schoolId) {
-      return DB.all('SELECT * FROM school_join_requests WHERE school_id = ? ORDER BY id DESC', [schoolId]);
-    },
-
-    /** 审批加入申请 */
-    approveJoinRequest(requestId, reviewerId, approve = true) {
-      const r = DB.one('SELECT * FROM school_join_requests WHERE id = ?', [requestId]);
-      if (!r) return false;
-      DB.update('school_join_requests', {
-        status: approve ? 'approved' : 'rejected',
-        reviewer_id: reviewerId,
-        reviewed_at: nowStr(),
-      }, 'id = ?', [requestId]);
-      return true;
-    },
-
     /** 校验当前用户对实例的访问权限（owner 或共享给当前用户） */
     canAccessInstance(instanceId) {
       const u = self.user();
       if (!u) return false;
-      if (self.isInstanceSub()) {
-        return parseInt(u.instance_id, 10) === parseInt(instanceId, 10);
-      }
       const inst = DB.one('SELECT * FROM instances WHERE id = ?', [instanceId]);
       if (!inst) return false;
       // 所有者
@@ -549,9 +443,7 @@ function makeAuth(req, res) {
 
     /** 校验当前用户对实例的写权限 */
     canWriteInstance(instanceId) {
-      if (!self.canAccessInstance(instanceId)) return false;
-      // 实例子用户默认只读，需主用户授权（这里简化：实例子用户有写权限，前端模态确认权限范围）
-      return true;
+      return self.canAccessInstance(instanceId);
     },
   };
 

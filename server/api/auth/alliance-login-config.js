@@ -19,7 +19,7 @@ module.exports = async (ctx) => {
   Auth.init();
   req.session.alliance_oauth = {
     state,
-    redirect: /^\/(?!\/)/.test(redirect) ? redirect : '/console/instances',
+    redirect: /^\/(?!\/)/.test(redirect) ? redirect : '/console/editor/light',
     redirect_uri: allianceOauth.resolveRedirectUri(req),
   };
 

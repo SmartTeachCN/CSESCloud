@@ -8,7 +8,8 @@
  *  POST action=delete                删除会话
  *
  * 规则引擎说明：
- *  - 基于关键词匹配与上下文（scope / scope_ref）返回模板回复
+ *  - 基于关键词匹配与用户上下文生成模板回复
+ *  - 会话 scope 固定为 global；文件上下文由客户端以「[编辑器上下文]」片段随消息传入
  *  - 可根据需要扩展为调用外部 LLM API
  */
 const DB = require('../../lib/db');
@@ -258,7 +259,7 @@ module.exports = async (ctx) => {
     history = history.slice().reverse();
 
     // 规则引擎生成回复
-    const reply = await generateReply(content, scope, scopeRef, history, user, model, ownerKey);
+    const reply = await generateReply(content, history, user, model, ownerKey);
 
     // 保存 AI 回复
     const aiTime = nowStr();
@@ -353,15 +354,15 @@ module.exports = async (ctx) => {
     let fullReply = '';
     if (process.env.AI_DEBUG) console.log('[ai-debug] model=%s ownerKey=%s editorCtx=%s', model, ownerKey, editorContext ? 'yes' : 'no');
     if (model !== 'default' && !phpEmpty(ownerKey) && editorContext && !phpEmpty(editorContext.fileContent)) {
-      fullReply = await runAgentLoop(model, content, scope, scopeRef, history, ownerKey, editorContext, sessionId, sse);
+      fullReply = await runAgentLoop(model, content, history, ownerKey, editorContext, sessionId, sse);
     } else if (model !== 'default' && !phpEmpty(ownerKey)) {
-      fullReply = await streamRealAI(model, content, scope, scopeRef, history, ownerKey, sse);
+      fullReply = await streamRealAI(model, content, history, ownerKey, sse);
       if (process.env.AI_DEBUG) console.log('[ai-debug] streamRealAI returned len=%d', (fullReply ?? '').length);
     }
 
     if (phpEmpty(fullReply)) {
       // 回退规则引擎（本地生成，打字机节奏输出）
-      fullReply = await generateReply(content, scope, scopeRef, history, user, 'default', '');
+      fullReply = await generateReply(content, history, user, 'default', '');
       await streamOutTypewriter(sse, fullReply);
     }
 
@@ -396,12 +397,13 @@ module.exports = async (ctx) => {
 };
 
 /**
- * 规则引擎：基于关键词、scope 与上下文生成回复
+ * 规则引擎：基于关键词与用户上下文生成回复
+ * V3：仅保留全局 scope；文件上下文由客户端以「[编辑器上下文]」片段随消息传入
  */
-async function generateReply(content, scope, scopeRef, history, user, model = 'default', ownerKey = '') {
+async function generateReply(content, history, user, model = 'default', ownerKey = '') {
   // 如果指定了非默认模型，尝试调用真实 AI
   if (model !== 'default' && !phpEmpty(ownerKey)) {
-    const aiReply = await callRealAI(model, content, scope, scopeRef, history, ownerKey);
+    const aiReply = await callRealAI(model, content, history, ownerKey);
     if (aiReply !== null) {
       return aiReply;
     }
@@ -445,127 +447,77 @@ async function generateReply(content, scope, scopeRef, history, user, model = 'd
 
   // ===== 通用问候 =====
   if (/(你好|您好|hi|hello|嗨|hey)/u.test(text)) {
-    return `你好，${displayName}！我是 CSES Cloud 的 AI 助理。你可以问我关于实例管理、校园集控、编辑器使用等问题，我会尽力帮你解答。`;
+    return `你好，${displayName}！我是 CSES Cloud 的 AI 助理。你可以问我关于轻编辑器、配置分发、静态集控、开发者中心等问题，我会尽力帮你解答。`;
   }
 
   // ===== 帮助 / 功能 =====
   if (/(帮助|help|怎么用|使用说明|功能|能做什么|你能做什么)/u.test(text)) {
     return '我可以帮你：\n' +
-      '1. 解答实例云控的问题（创建、共享、批量操作等）\n' +
-      '2. 解答校园集控的问题（子用户管理、班级、加入学校等）\n' +
-      '3. 解答编辑器使用问题（Ribbon 工具、配置管理器、查找替换等）\n' +
-      '4. 解答登录与权限问题\n' +
-      '5. 提供开发者平台相关问题指引\n\n' +
+      '1. 解答轻编辑器的问题（云文件编辑、配置实例管理、分发配置）\n' +
+      '2. 解答静态集控的问题（ClassIsland 清单、数据源、接入方式）\n' +
+      '3. 解答开发者中心问题（云应用、编辑器插件、共享市场）\n' +
+      '4. 解答数据空间、登录与账户相关问题\n' +
+      '5. 解答 AI 助理与模型配置问题\n\n' +
       '请直接描述你的问题。';
   }
 
-  // ===== 实例云控相关问题 =====
-  if (scope === 'instance' || /(实例|instance|云控|云控实例)/u.test(text)) {
-    if (/(创建|新建|添加).*(实例|instance)/u.test(text)) {
-      return '创建实例步骤：\n1. 进入实例云控页面\n2. 点击右上角「新建实例」按钮\n3. 填写实例名称、服务类型等信息\n4. 提交即可创建\n\n实例创建后默认归你所有，可通过分组进行分类管理。';
-    }
-    if (/(共享|分享|share)/u.test(text)) {
-      return '共享实例：在实例卡片上右键，选择「共享」，输入对方用户名即可。被共享用户会在其实例列表中看到此实例，但只能编辑不能删除。';
-    }
-    if (/(删除|delete|移除)/u.test(text)) {
-      return '删除实例：右键实例卡片选择「删除」，或选中实例后点击批量操作栏的「删除」按钮。\n注意：删除操作不可恢复，会同时删除该实例的所有配置与数据。';
-    }
-    if (/(分组|group|分类)/u.test(text)) {
-      return '实例分组：\n1. 点击实例列表页的「+新建分组」按钮创建分组\n2. 拖拽实例卡片到目标分组即可完成分类\n3. 可在分组上右键进行重命名或删除\n\n分组仅用于组织视图，不影响实例本身。';
-    }
-    if (/(批量|batch)/u.test(text)) {
-      return '批量操作：\n1. 在实例列表中勾选多个实例的复选框\n2. 顶部会显示批量操作栏\n3. 可执行启动/停止/重启/移动分组/删除等操作';
-    }
-    if (/(配置|config|设置)/u.test(text)) {
-      return '实例配置：\n1. 单击实例卡片进入编辑器\n2. 左侧编辑器区域可编辑实例数据\n3. 右侧 split-area 切换到「实例属性」面板可查看实例元信息\n4. Ribbon 工具栏的「保存」按钮可保存当前配置';
-    }
-    if (scope === 'instance' && !phpEmpty(scopeRef)) {
-      return `当前实例 ID：${scopeRef}\n\n你可以问我关于此实例的配置、共享、批量操作等问题，例如：\n- 如何修改此实例的配置？\n- 如何将此实例共享给他人？\n- 此实例的运行状态如何？`;
-    }
-    return '关于实例云控，你可以问我：\n- 如何创建实例？\n- 如何共享实例？\n- 如何进行批量操作？\n- 如何使用分组管理？\n- 如何修改实例配置？';
-  }
-
-  // ===== 校园集控相关问题 =====
-  if (scope === 'campus' || /(校园|campus|学校|school|班级|class|子用户|sub.user|教师|teacher|学生|student)/u.test(text)) {
-    if (/(加入|join).*(学校|school)/u.test(text)) {
-      return '加入学校流程：\n1. 在校园集控页面（未加入学校时）点击「加入学校」按钮\n2. 在弹窗中搜索目标学校\n3. 点击「申请加入」并填写展示名称\n4. 等待学校管理员审批通过后即视为加入成功\n\n你可以在「我的申请」中查看审批进度。';
-    }
-    if (/(切换|switch).*(学校|school)/u.test(text)) {
-      return '切换学校：\n1. 在校园集控左侧栏顶部的「学校切换器」中点击\n2. 选择已加入的学校即可切换\n3. 切换后所有校园数据将基于新学校上下文';
-    }
-    if (/(子用户|sub.user|添加.*用户|添加.*学生|添加.*教师)/u.test(text)) {
-      return '子用户管理：\n1. 进入「校园集控 → 子用户管理」\n2. 点击「添加子用户」\n3. 填写用户名、密码、角色（管理员/教师/学生）等信息\n4. 在权限配置区勾选该用户可执行的权限\n5. 提交即可创建\n\n子用户绑定到联盟账户后，将遵循此权限设置。';
-    }
-    if (/(绑定|bind|联盟.*绑定)/u.test(text)) {
-      return '联盟账户绑定：\n1. 学校管理员可在「子用户管理 → 联盟绑定」查看本校所有绑定关系\n2. 子用户使用联盟账户登录后可主动绑定\n3. 绑定后，该子用户会出现在联盟账户的实例集控列表中（带标识标签）\n4. 子用户的所有操作遵循学校管理员设置的权限\n\n学校管理员可随时解绑任一绑定关系。';
-    }
-    if (/(权限|permission|角色|role)/u.test(text)) {
-      return '权限系统：\n- 子用户的权限由学校管理员在创建/编辑时设置\n- 权限包括：创建实例、编辑实例、删除实例、共享实例、查看校园、管理校园、管理子用户等\n- 绑定到联盟账户后，联盟用户操作该子用户身份时遵循这些权限\n- 学校管理员可随时修改权限';
-    }
-    if (/(班级|class|学生.*列表)/u.test(text)) {
-      return '班级管理：\n- 在「校园集控 → 班级列表」中可查看所有班级\n- 班级信息包括名称、学生人数、班主任、状态等\n- 校园概览页可查看班级状态总览';
-    }
-    if (/(概览|overview|统计|指标)/u.test(text)) {
-      return '校园概览：\n- 显示当前学校的班级、学生、教师、实例、集控单元、今日操作等关键指标\n- 班级状态总览可按全部/在线/离线筛选\n- 右侧显示快捷操作与最近活动';
-    }
-    return '关于校园集控，你可以问我：\n- 如何加入学校？\n- 如何切换学校？\n- 如何添加子用户？\n- 如何管理权限？\n- 如何进行联盟账户绑定？\n- 如何查看校园概览？';
-  }
-
   // ===== 编辑器相关问题 =====
-  if (/(编辑器|editor|ribbon|配置管理器|查找替换|编辑历史|实例属性)/u.test(text)) {
+  if (/(编辑器|editor|ribbon|查找替换|编辑历史|版本历史|自动保存)/u.test(text)) {
     if (/(ribbon|工具栏|工具)/u.test(text)) {
-      return 'Ribbon 工具栏：\n- 位于编辑器顶部\n- 由开发者定义工具组与具体工具\n- 每个工具组有标题与一组工具按钮\n- 右侧有「自动保存」开关与「保存」按钮';
-    }
-    if (/(配置管理器|config.manager)/u.test(text)) {
-      return '配置管理器：\n- 位于编辑器左侧主区域\n- 由开发者定义的配置清单自动渲染\n- 支持 text/number/boolean/select 等多种字段类型\n- 每个实例的配置严格分开，避免数据泄露\n- 可点击「新增」添加记录，行内编辑后保存';
+      return 'Ribbon 工具栏：\n- 位于编辑器顶部\n- 由开发者定义的编辑器插件提供工具组与具体工具\n- 每个工具组有标题与一组工具按钮\n- 右侧有「自动保存」开关与「保存」按钮';
     }
     if (/(查找替换|find|replace)/u.test(text)) {
-      return '查找替换：\n- 在编辑器右侧 split-area 切换到「查找替换」面板\n- 输入查找内容与替换内容\n- 支持单次替换与全部替换';
+      return '查找替换：\n- 在编辑器右侧面板切换到「查找替换」\n- 输入查找内容与替换内容\n- 支持单次替换与全部替换';
     }
-    if (/(编辑历史|history)/u.test(text)) {
-      return '编辑历史：\n- 在编辑器右侧 split-area 切换到「编辑历史」面板\n- 显示该实例的所有编辑记录\n- 可查看每次修改的时间、操作者与变更内容';
+    if (/(编辑历史|版本历史|history)/u.test(text)) {
+      return '编辑历史 / 版本历史：\n- 在编辑器右侧面板切换到「编辑历史」或「版本历史」\n- 显示文件的修改记录、操作者与变更内容\n- 可查看或恢复历史版本（视当前文件来源而定）';
     }
-    if (/(实例属性|props|属性)/u.test(text)) {
-      return '实例属性：\n- 在编辑器右侧 split-area 切换到「实例属性」面板\n- 显示实例的元信息（名称、所有者、创建时间等）\n- 可修改实例名称、描述等信息';
+    return '编辑器功能：\n- 轻编辑器管理云文件与配置实例\n- Ribbon 工具栏：插件提供的快捷工具\n- AI 助理：实时问答与代码辅助\n- 编辑历史 / 版本历史：查看变更记录\n- 查找替换：批量修改内容\n- 自动保存与手动保存';
+  }
+
+  // ===== 配置分发 / 静态集控相关问题 =====
+  if (/(分发|distribut|静态集控|static.?control|classisland|清单|manifest)/u.test(text)) {
+    if (/(分发|distribut)/u.test(text)) {
+      return '分发配置：\n1. 在轻编辑器的云文件列表中找到 CSES 配置文件\n2. 右键选择「分发配置」（仅自己拥有的文件）\n3. 确认 CSES 校验结果，填写实例标识与组织名称\n4. 提交后得到清单地址与数据源模板\n\n分发后的配置会出现在「文件 / 实例」视图的实例列表中，可随时编辑、复制清单或取消分发。';
     }
-    return '编辑器功能：\n- Ribbon 工具栏：开发者定义的快捷工具\n- 配置管理器：实例数据编辑\n- AI 助理：实时问答\n- 编辑历史：查看变更记录\n- 查找替换：批量修改\n- 实例属性：元信息管理';
+    if (/(接入|加入|classisland|客户端|使用)/u.test(text)) {
+      return 'ClassIsland 接入静态集控：\n1. 在轻编辑器完成「分发配置」，复制清单地址（manifest 地址）\n2. 在 ClassIsland 中选择「加入管理」，粘贴清单地址\n3. 客户端会按清单拉取六类数据源（ClassPlans / TimeLayouts / Subjects / Policy / Credentials / Settings）\n4. 源文件保存后数据立即更新，无需重新分发';
+    }
+    return '静态集控：\n- 轻编辑器把 CSES 配置文件分发为 ClassIsland 2.0 静态集控数据源\n- 每个配置实例有唯一的实例标识与实例组标识\n- 支持清单地址访问与六类数据源\n- 取消分发后对应地址立即失效';
   }
 
   // ===== 登录相关问题 =====
   if (/(登录|login|登入|账号|account)/u.test(text)) {
     if (/(联盟|alliance|智教联盟)/u.test(text)) {
-      return '智教联盟登录：\n- 在登录页选择「智教联盟登录」\n- 输入联盟账户用户名\n- 系统会自动授权登录\n- 登录后可在校园集控侧栏切换/加入学校';
+      return '智教联盟登录：\n- 在登录页选择「智教联盟登录」\n- 输入联盟账户用户名\n- 系统会自动授权登录\n- 登录后进入轻编辑器，可在控制台切换数据空间与开发者中心';
     }
-    if (/(子用户|sub|school.*sub)/u.test(text)) {
-      return '子用户登录：\n- 在登录页下拉框中选择学校\n- 输入用户名与密码\n- 勾选「保留在列表中」可在下次登录时直接选择\n\n若为实例子用户，在下拉框第一项「实例子用户」中输入实例 ID 即可。';
+    if (/(子用户|sub)/u.test(text)) {
+      return '子用户登录：\n- 在登录页下拉框中选择学校\n- 输入用户名与密码\n- 勾选「保留在列表中」可在下次登录时直接选择';
     }
-    if (/(实例.*子用户|instance.*sub|instance.*uid)/u.test(text)) {
-      return '实例子用户登录：\n- 在登录页下拉框中选择第一项「实例子用户」\n- 输入实例 ID（实例 UID）\n- 输入子用户名与密码\n- 登录后只能访问对应实例的编辑器';
-    }
-    return '登录方式：\n1. 智教联盟账户登录（主要）\n2. 子用户登录：选择学校后输入用户名密码\n3. 实例子用户登录：输入实例 ID 后登录\n\n登录一次后可选择保留登录条目，下次直接选择登录。';
+    return '登录方式：\n1. 智教联盟账户登录（主要）\n2. 子用户登录：选择学校后输入用户名密码\n\n登录一次后可选择保留登录条目，下次直接选择登录。';
   }
 
-  // ===== 开发者平台相关问题 =====
-  if (/(开发者|developer|dev|开发.*平台|app|编辑器.*共享)/u.test(text)) {
-    if (/(创建.*app|新建.*app|创建.*应用)/u.test(text)) {
-      return '创建应用：\n1. 进入「开发者中心」\n2. 点击「新建应用」\n3. 填写应用名称、类型等信息\n4. 在应用详情页可编辑编辑器 HTML/JS、配置清单、Ribbon 工具等\n5. 点击「发布」后应用进入共享列表';
+  // ===== 开发者中心相关问题 =====
+  if (/(开发者|developer|dev|开发.*平台|云应用|插件|plugin|共享市场)/u.test(text)) {
+    if (/(创建.*app|新建.*app|创建.*应用|新建应用)/u.test(text)) {
+      return '创建云应用：\n1. 进入「开发者中心」\n2. 点击「新建应用」\n3. 填写应用名称、类型等信息\n4. 在应用详情页可编辑编辑器 HTML/JS、存储清单、接口清单等\n5. 点击「发布」后应用进入共享列表';
     }
-    if (/(共享|分享|publish|发布)/u.test(text)) {
-      return '应用共享：\n- 在开发者中心编辑应用代码后点击「发布」\n- 发布后应用会出现在共享列表中\n- 其他用户可查看并使用/修改此应用\n- 实例创建时可选择已发布的应用作为模板';
+    if (/(插件|plugin)/u.test(text)) {
+      return '编辑器插件：\n- 在开发者中心「插件」中创建或安装插件\n- 插件可扩展编辑器 Ribbon 工具栏与自定义编辑器界面\n- 官方插件（如 CSES 编辑器、ClassIsland 档案编辑器）可在共享市场查看与使用';
     }
-    if (/(配置清单|manifest)/u.test(text)) {
-      return '配置清单：\n- 由开发者定义的结构化配置\n- 用于编辑器渲染与 API 层操作\n- 包含字段 key、label、type（text/number/boolean/select 等）\n- 实例创建后会基于清单自动生成配置管理器界面';
+    if (/(共享|分享|publish|发布|市场)/u.test(text)) {
+      return '应用共享：\n- 在开发者中心编辑应用后点击「发布」\n- 发布后应用会出现在共享市场列表中\n- 其他用户可查看、fork 并使用此应用';
     }
-    return '开发者中心：\n- 创建应用并定义编辑器、配置清单、Ribbon 工具\n- 发布应用共享给其他用户\n- 支持传统文件夹式 index.html 入口\n- 配置清单驱动渲染';
+    return '开发者中心：\n- 创建云应用并定义编辑器、存储与接口清单\n- 开发编辑器插件扩展 Ribbon 工具\n- 发布应用/插件到共享市场\n- 查看与管理自己的应用与插件';
   }
 
   // ===== 平台介绍 =====
   if (/(平台|platform|是什么|介绍|introduce|关于)/u.test(text)) {
-    return 'CSES Cloud 智教云是一个云端教学管理平台，主要面向学校管理员、教师与学生，提供对第三方教学软件的统一集控能力。\n\n核心功能：\n- 实例云控：管理单个教学实例\n- 校园集控：管理校园整体教学环境\n- 编辑器：开发者定义的可视化编辑界面\n- 联盟账户：跨学校身份与权限管理';
+    return 'CSES Cloud 智教云是一个面向学校与教师的云端教学管理平台。\n\n核心功能：\n- 轻编辑器：在线编辑 CSES 云文件、管理配置实例\n- 配置分发 / 静态集控：把配置文件分发为 ClassIsland 2.0 静态集控数据源\n- 数据空间：云端文件与网页托管\n- 开发者中心：云应用、编辑器插件与共享市场\n- 联盟账户：跨学校身份与权限管理';
   }
 
   // ===== 默认回复 =====
-  return '我暂时无法理解你的问题。你可以尝试问我：\n- 如何创建实例？\n- 如何加入学校？\n- 如何使用编辑器？\n- 如何进行联盟账户绑定？\n- 平台是什么？\n\n或者直接描述你的需求，我会尽力帮你。';
+  return '我暂时无法理解你的问题。你可以尝试问我：\n- 如何使用轻编辑器？\n- 如何分发配置 / 接入 ClassIsland？\n- 如何使用开发者中心？\n- 平台是什么？\n\n或者直接描述你的需求，我会尽力帮你。';
 }
 
 /** ai_models 建表语句（callRealAI / streamRealAI 共用） */
@@ -586,7 +538,7 @@ const AI_MODELS_DDL = `CREATE TABLE IF NOT EXISTS ai_models (
  * 调用真实 AI 模型
  * @returns {Promise<string|null>} 回复内容，失败返回 null
  */
-async function callRealAI(modelName, content, scope, scopeRef, history, ownerKey) {
+async function callRealAI(modelName, content, history, ownerKey) {
   // 确保 ai_models 表存在
   DB.pdo().exec(AI_MODELS_DDL);
 
@@ -630,10 +582,10 @@ async function callRealAI(modelName, content, scope, scopeRef, history, ownerKey
   const modelId = model.model_id ?? modelName;
   const endpoint = model.endpoint ?? '';
 
-  // 构建系统提示词
+  // 构建系统提示词（V3：轻编辑器 + 配置分发/静态集控；不再注入实例/校园资源上下文）
   const systemPrompt = '你是 CSES Cloud 智教云平台的 AI 助理。你的职责是帮助用户解答关于平台的各种问题。\n' +
-    '平台功能包括：实例云控、校园集控、编辑器、班级主页、开发者中心等。\n' +
-    `当前上下文：scope=${scope}` + (!phpEmpty(scopeRef) ? `, scope_ref=${scopeRef}` : '') + '\n' +
+    '平台功能包括：轻编辑器（云文件与配置实例管理）、配置分发、静态集控、数据空间、开发者中心、联盟账户等。\n' +
+    '如果用户消息中包含「[编辑器上下文]」，请结合其中的当前文件与文件内容回答。\n' +
     '请用中文简洁、专业地回答用户问题。';
 
   // 构建消息列表
@@ -726,7 +678,7 @@ async function callRealAI(modelName, content, scope, scopeRef, history, ownerKey
  * 流式调用真实 AI 模型：上游 token 边收边透传到前端 SSE
  * @returns {Promise<string>} 完整回复内容（失败返回 ''，由主流程回退规则引擎）
  */
-async function streamRealAI(modelName, content, scope, scopeRef, history, ownerKey, sse) {
+async function streamRealAI(modelName, content, history, ownerKey, sse) {
   // 确保 ai_models 表存在
   DB.pdo().exec(AI_MODELS_DDL);
 
@@ -765,8 +717,8 @@ async function streamRealAI(modelName, content, scope, scopeRef, history, ownerK
   const endpoint = model.endpoint ?? '';
 
   const systemPrompt = '你是 CSES Cloud 智教云平台的 AI 助理。你的职责是帮助用户解答关于平台的各种问题。\n' +
-    '平台功能包括：实例云控、校园集控、编辑器、班级主页、开发者中心等。\n' +
-    `当前上下文：scope=${scope}` + (!phpEmpty(scopeRef) ? `, scope_ref=${scopeRef}` : '') + '\n' +
+    '平台功能包括：轻编辑器（云文件与配置实例管理）、配置分发、静态集控、数据空间、开发者中心、联盟账户等。\n' +
+    '如果用户消息中包含「[编辑器上下文]」，请结合其中的当前文件与文件内容回答。\n' +
     '请用中文简洁、专业地回答用户问题。';
   const messages = [{ role: 'system', content: systemPrompt }];
   for (const h of history) {
@@ -808,7 +760,7 @@ async function streamRealAI(modelName, content, scope, scopeRef, history, ownerK
     }
 
     // google 等不支持流式代理的 provider：非流式请求后快速分块输出
-    fullReply = await callRealAI(modelName, content, scope, scopeRef, history, ownerKey);
+    fullReply = await callRealAI(modelName, content, history, ownerKey);
     if (fullReply) {
       await streamOutTypewriter(sse, fullReply, 5, 10);
     }
@@ -1050,7 +1002,7 @@ async function aiHttpPost(url, data, headers = []) {
  *  - tool_calls delta 按 index 聚合成完整调用后本地执行，再进入下一轮
  * 客户端断连时通过会话信号中止上游请求，已累积内容照常入库
  */
-async function runAgentLoop(modelName, content, scope, scopeRef, history, ownerKey, editorContext, sessionId, sse) {
+async function runAgentLoop(modelName, content, history, ownerKey, editorContext, sessionId, sse) {
   // 提取用户实际问题
   let userQuestion = content;
   const qm = /\[用户问题\]\n(.+)$/s.exec(content);

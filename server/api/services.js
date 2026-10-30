@@ -89,23 +89,13 @@ module.exports = async (ctx) => {
       if (fs.existsSync(dbFile)) database.sizeBytes = fs.statSync(dbFile).size;
     } catch (_) { database.ok = false; }
 
-    // WebSocket 网关状态
-    const ws = global.wsControl || null;
-    let wsInfo = { enabled: !!ws, ok: !!ws };
-    if (ws) {
-      try { wsInfo.sockets = ws.clients ? ws.clients.size : (ws.getClientCount ? ws.getClientCount() : 0); } catch (_) { wsInfo.sockets = 0; }
-    }
-
     // 平台各模块运行情况
     const services = [
       { id: 'svc-http', name: '平台 HTTP 服务', type: 'Node.js / Express', group: '平台核心', icon: 'ri-server-line', color: '#0067C0', check: () => ({ status: 'running', latency: 0, detail: `PID ${process.pid}` }) },
       { id: 'svc-auth', name: '认证与会话', type: 'OAuth2 / 会话', group: '平台核心', icon: 'ri-shield-keyhole-line', color: '#C2550B', check: () => probe(DB, 'SELECT COUNT(*) FROM users', [], (n) => `已注册 ${n} 个账户`) },
       { id: 'svc-db', name: '数据库引擎', type: 'SQLite / WAL', group: '平台核心', icon: 'ri-database-2-line', color: '#00897B', check: () => { const t = performance.now(); try { const ok = DB.scalar('SELECT 1') === 1; return { status: ok ? 'running' : 'error', latency: round(performance.now() - t), detail: ok ? `${database.tables} 张数据表` : '连接失败' }; } catch (e) { return { status: 'error', latency: round(performance.now() - t), detail: (e && e.message) || '异常' }; } } },
-      { id: 'svc-ws', name: 'WebSocket 网关', type: '实时控制通道', group: '平台核心', icon: 'ri-wireless-line', color: '#5E60CE', check: () => ({ status: wsInfo.enabled ? 'running' : 'error', latency: 0, detail: wsInfo.enabled ? `已挂载 · 活跃连接 ${wsInfo.sockets ?? 0}` : '未挂载' }) },
       { id: 'svc-instance', name: '实例服务', type: '实例编排', group: '业务服务', icon: 'ri-apps-line', color: '#2E7D32', check: () => probe(DB, 'SELECT COUNT(*) FROM instances', [], (n) => `运行中 ${n} 个实例`) },
       { id: 'svc-cloud-fs', name: '云文件系统', type: '云端存储', group: '业务服务', icon: 'ri-folder-cloud-line', color: '#1976D2', check: () => probe(DB, 'SELECT COUNT(*) FROM cloud_files', [], (n) => `共 ${n} 个文件`) },
-      { id: 'svc-ea2', name: 'EA2 考试配置', type: '考试编排', group: '业务服务', icon: 'ri-file-list-3-line', color: '#6A1B9A', check: () => probe(DB, "SELECT COUNT(*) FROM cloud_files WHERE file_type = 'ea2'", [], (n) => `${n} 个考试配置`) },
-      { id: 'svc-control', name: '设备控制 REST', type: '长轮询 / 双协议', group: '业务服务', icon: 'ri-cpu-line', color: '#0080FF', check: () => probe(DB, 'SELECT COUNT(*) FROM ea2_devices', [], (n) => `已注册 ${n} 台设备`) },
       { id: 'svc-notify', name: '通知服务', type: '站内信', group: '业务服务', icon: 'ri-notification-3-line', color: '#E65100', check: () => probe(DB, 'SELECT COUNT(*) FROM notifications', [], (n) => `共 ${n} 条通知`) },
       { id: 'svc-audit', name: '审计日志', type: '操作留痕', group: '业务服务', icon: 'ri-file-search-line', color: '#455A64', check: () => probe(DB, 'SELECT COUNT(*) FROM audit_logs', [], (n) => `共 ${n} 条记录`) },
       { id: 'svc-hosting', name: '网页托管', type: '站点服务', group: '业务服务', icon: 'ri-global-line', color: '#00836D', check: () => probe(DB, 'SELECT COUNT(*) FROM web_hosting_spaces', [], (n) => `${n} 个站点`) },
@@ -115,7 +105,7 @@ module.exports = async (ctx) => {
       { id: 'svc-dev', name: '开发者中心', type: '应用与插件', group: '集成服务', icon: 'ri-code-s-slash-line', color: '#283593', check: () => fileProbe(path.join('dev', 'apps.js')) },
     ].map((s) => Object.assign({}, s, (typeof s.check === 'function' ? s.check() : {}), { check: undefined }));
 
-    Response.success({ server, database, ws: wsInfo, services });
+    Response.success({ server, database, services });
   }
 
   if (method === 'GET' && action === 'list') {

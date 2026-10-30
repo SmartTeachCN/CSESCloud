@@ -23,12 +23,6 @@ const routes = [
     meta: { title: '登录', requiresAuth: false }
   },
   {
-    path: '/instance/:id/edit',
-    name: 'InstanceEditor',
-    component: () => import('../views/instances/InstanceEditor.vue'),
-    meta: { title: '实例编辑器', requiresAuth: true, standalone: true }
-  },
-  {
     path: '/console',
     component: () => import('../layouts/ConsoleLayout.vue'),
     meta: { requiresAuth: true },
@@ -38,58 +32,6 @@ const routes = [
         name: 'Home',
         component: () => import('../views/home/HomePage.vue'),
         meta: { title: '首页', icon: 'ri-home-5-line' }
-      },
-      {
-        path: 'campus',
-        name: 'CampusControl',
-        component: () => import('../views/campus/CampusOverview.vue'),
-        meta: { title: '校园集控', icon: 'ri-school-line' }
-      },
-      {
-        path: 'campus/manage',
-        name: 'CampusManage',
-        component: () => import('../views/campus/CampusManage.vue'),
-        meta: { title: '校园管理', icon: 'ri-settings-3-line' }
-      },
-      {
-        path: 'campus/classes',
-        name: 'ClassList',
-        component: () => import('../views/campus/ClassList.vue'),
-        meta: { title: '班级列表', icon: 'ri-group-line' }
-      },
-      {
-        path: 'campus/settings',
-        name: 'CampusSettings',
-        component: () => import('../views/campus/CampusSettings.vue'),
-        meta: { title: '校园设置', icon: 'ri-tools-line' }
-      },
-      {
-        path: 'campus/sub-users',
-        name: 'SubUserManage',
-        component: () => import('../views/campus/SubUserManage.vue'),
-        meta: { title: '子用户管理', icon: 'ri-team-line' }
-      },
-      {
-        path: 'instances',
-        redirect: '/console/instances/overview'
-      },
-      {
-        path: 'instances/overview',
-        name: 'InstanceOverview',
-        component: () => import('../views/instances/InstanceOverview.vue'),
-        meta: { title: '实例概览', icon: 'ri-dashboard-line' }
-      },
-      {
-        path: 'instances/list',
-        name: 'InstanceList',
-        component: () => import('../views/instances/InstanceList.vue'),
-        meta: { title: '实例列表', icon: 'ri-cloud-line' }
-      },
-      {
-        path: 'instances/:id',
-        name: 'InstanceDetail',
-        component: () => import('../views/instances/InstanceDetail.vue'),
-        meta: { title: '实例详情', icon: 'ri-database-2-line' }
       },
       {
         path: 'editor/light',
@@ -102,12 +44,6 @@ const routes = [
         name: 'StandardEditor',
         component: () => import('../views/editor/StandardEditor.vue'),
         meta: { title: '标准编辑器', icon: 'ri-code-s-slash-line' }
-      },
-      {
-        path: 'services',
-        name: 'ServiceList',
-        component: () => import('../views/services/ServiceList.vue'),
-        meta: { title: '服务管理', icon: 'ri-plug-line' }
       },
       {
         path: 'profile',
@@ -156,12 +92,6 @@ const routes = [
         name: 'DevAppEditor',
         component: () => import('../views/developer/DevAppEditor.vue'),
         meta: { title: '应用编辑器', icon: 'ri-edit-box-line' }
-      },
-      {
-        path: 'developer/packages',
-        name: 'DevPackages',
-        component: () => import('../views/developer/DeveloperCenter.vue'),
-        meta: { title: '集控侧套餐', icon: 'ri-box-3-line' }
       },
       {
         path: 'developer/market',
@@ -245,12 +175,12 @@ const router = createRouter({
 });
 
 router.beforeEach(async (to, _from, next) => {
-  // 已登录态由 cookie 维护；首次进入需要 /console 或 /instance/* 时拉一次 me.php
+  // 已登录态由 cookie 维护；首次进入 /console 时拉一次 me.php
   if (to.meta.requiresAuth === false) {
     next();
     return;
   }
-  if (to.path.startsWith('/console') || to.path.startsWith('/instance/')) {
+  if (to.path.startsWith('/console')) {
     if (!user.value) {
       const me = await fetchMe();
       if (!me) {

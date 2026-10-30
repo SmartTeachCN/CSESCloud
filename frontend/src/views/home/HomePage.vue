@@ -9,35 +9,35 @@
           </div>
           <h1 class="hero-title">欢迎回来</h1>
           <p class="hero-subtitle">
-            管理您的校园、实例和教学资源，一切尽在掌握之中
+            用轻编辑器管理云文件与配置实例，一键分发静态集控配置，教学资源尽在掌握
           </p>
           <div class="hero-actions">
-            <button class="btn btn-primary" @click="navigate('/console/campus')">
-              <Icon icon="ri-school-line" :size="18" />
-              <span>进入校园集控</span>
+            <button class="btn btn-primary" @click="navigate('/console/editor/light')">
+              <Icon icon="ri-edit-2-line" :size="18" />
+              <span>进入轻编辑器</span>
             </button>
-            <button class="btn btn-secondary" @click="navigate('/console/instances')">
-              <Icon icon="ri-database-2-line" :size="18" />
-              <span>进入实例云控</span>
+            <button class="btn btn-secondary" @click="navigate('/console/dataspace')">
+              <Icon icon="ri-folder-3-line" :size="18" />
+              <span>数据空间</span>
             </button>
           </div>
         </div>
         <div class="hero-stats">
           <div class="stat-card">
-            <div class="stat-value">{{ stats.classes }}</div>
-            <div class="stat-label">活跃班级</div>
+            <div class="stat-value">{{ stats.instances }}</div>
+            <div class="stat-label">配置实例</div>
           </div>
           <div class="stat-card">
-            <div class="stat-value">{{ stats.students }}</div>
-            <div class="stat-label">在校学生</div>
+            <div class="stat-value">{{ stats.web_spaces }}</div>
+            <div class="stat-label">网页空间</div>
           </div>
           <div class="stat-card">
-            <div class="stat-value">{{ stats.instances_running }}</div>
-            <div class="stat-label">运行实例</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value">{{ formatNumber(stats.today_operations) }}</div>
+            <div class="stat-value">{{ stats.today_operations }}</div>
             <div class="stat-label">今日操作</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{{ stats.services }}</div>
+            <div class="stat-label">云服务</div>
           </div>
         </div>
       </div>
@@ -204,17 +204,17 @@ const router = useRouter();
 
 // 默认导航项
 const defaultNavItems = [
-  { path: '/console/campus', icon: 'ri-school-line', title: '校园集控', desc: '连接与管理校园', bgColor: 'rgba(0, 103, 192, 0.1)', color: '#0067C0' },
-  { path: '/console/instances', icon: 'ri-cloud-line', title: '实例云控', desc: '在云端管理实例', bgColor: 'rgba(16, 124, 16, 0.1)', color: '#107C10' },
+  { path: '/console/editor/light', icon: 'ri-edit-2-line', title: '轻编辑器', desc: '文件与配置实例管理', bgColor: 'rgba(196, 43, 28, 0.1)', color: '#C42B1C' },
+  { path: '/console/editor/light', icon: 'ri-share-forward-line', title: '配置分发', desc: '右键云文件分发静态集控配置', bgColor: 'rgba(0, 103, 192, 0.1)', color: '#0067C0' },
   { path: '/console/dataspace', icon: 'ri-folder-3-line', title: '数据空间', desc: '云文件与网页空间管理', bgColor: 'rgba(202, 143, 4, 0.1)', color: '#CA8F04' },
-  { path: '/console/editor/light', icon: 'ri-edit-2-line', title: '轻编辑器', desc: '快速编辑配置文件', bgColor: 'rgba(196, 43, 28, 0.1)', color: '#C42B1C' },
-  { path: '/console/editor/standard', icon: 'ri-code-s-slash-line', title: '标准编辑器', desc: '完整实例开发环境', bgColor: 'rgba(0, 103, 192, 0.1)', color: '#0067C0' },
-  { path: '/console/developer', icon: 'ri-key-2-line', title: '开发者中心', desc: '平台接入与管理', bgColor: 'rgba(0, 103, 192, 0.1)', color: '#0067C0' }
+  { path: '/console/ai', icon: 'ri-brain-line', title: 'AI 助理', desc: '智能问答与写作辅助', bgColor: 'rgba(136, 23, 152, 0.1)', color: '#881798' },
+  { path: '/console/developer', icon: 'ri-key-2-line', title: '开发者中心', desc: '应用、插件与共享市场', bgColor: 'rgba(0, 103, 192, 0.1)', color: '#0067C0' },
+  { path: '/console/editor/standard', icon: 'ri-code-s-slash-line', title: '标准编辑器', desc: '完整代码编辑环境', bgColor: 'rgba(16, 124, 16, 0.1)', color: '#107C10' }
 ];
 
 // 默认工具项
 const defaultToolItems = [
-  { icon: 'ri-database-line', title: '服务管理', path: '/console/services' },
+  { icon: 'ri-brain-line', title: 'AI 助理', path: '/console/ai' },
   { icon: 'ri-user-line', title: '个人中心', path: '/console/profile' },
   { icon: 'ri-notification-3-line', title: '通知中心', path: '/console/notifications' },
   { icon: 'ri-file-list-3-line', title: '操作日志', path: '/console/audit-log' },
@@ -224,9 +224,9 @@ const defaultToolItems = [
 
 // 统计数据
 const stats = reactive({
-  classes: 0,
-  students: 0,
-  instances_running: 0,
+  instances: 0,
+  web_spaces: 0,
+  services: 0,
   today_operations: 0
 });
 
@@ -242,14 +242,6 @@ const editingNavItems = ref<any[]>([]);
 const tools = ref([...defaultToolItems]);
 const showToolsEditor = ref(false);
 const editingTools = ref<any[]>([]);
-
-// 格式化数字
-function formatNumber(n: number) {
-  if (n >= 1000) {
-    return (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'k';
-  }
-  return String(n);
-}
 
 // 计算相对时间
 function timeAgo(dateStr: string): string {
@@ -322,16 +314,26 @@ async function loadData() {
 async function loadUserSettings() {
   try {
     const navData = await api.get<any>('/user-settings?action=get&key=nav');
-    if (navData && navData.config) {
-      navItems.value = navData.config;
+    if (navData && Array.isArray(navData.config)) {
+      // V3 清理：过滤掉已移除的校园集控/实例云控/服务管理入口
+      navItems.value = navData.config.filter((item: any) => !isLegacyPath(item.path));
     }
   } catch (_) {}
   try {
     const toolsData = await api.get<any>('/user-settings?action=get&key=tools');
-    if (toolsData && toolsData.config) {
-      tools.value = toolsData.config;
+    if (toolsData && Array.isArray(toolsData.config)) {
+      tools.value = toolsData.config.filter((item: any) => !isLegacyPath(item.path));
     }
   } catch (_) {}
+}
+
+// 已移除的路由前缀（V3 不再提供校园集控/实例云控/服务管理界面）
+function isLegacyPath(path?: string): boolean {
+  if (!path) return false;
+  return path.startsWith('/console/campus') ||
+    path.startsWith('/console/instances') ||
+    path.startsWith('/console/services') ||
+    path.startsWith('/instance/');
 }
 
 // 导航编辑

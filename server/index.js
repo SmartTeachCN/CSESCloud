@@ -189,6 +189,20 @@ app.use('/api', apiRouter);
 // ── 导出文件静态目录（/exports） ──
 app.use('/exports', express.static(path.join(ROOT, 'exports'), { fallthrough: true }));
 
+// ── 静态集控公开接口（ClassIsland 2.0 集控协议，无需登录） ──
+// /classisland/manifest.php  → 集控清单
+// /classisland/file.php      → 六类数据源（ClassPlans / TimeLayouts / Subjects / Settings / Policy / Credentials）
+// /control/file.php          → 旧地址兼容（format=ci）
+try {
+  const staticControlPublic = require('./lib/static-control-public');
+  app.get(['/classisland/manifest.php', '/classisland/manifest'], staticControlPublic.manifestHandler);
+  app.get(['/classisland/file.php', '/classisland/file'], staticControlPublic.fileHandler);
+  app.get(['/control/file.php', '/control/file'], staticControlPublic.controlFileHandler);
+  console.log('[static-control] 静态集控接口已挂载 (/classisland/manifest.php, /classisland/file.php)');
+} catch (e) {
+  console.warn('[static-control] 静态集控接口挂载失败:', e.message);
+}
+
 // ── 网页托管路由（/site/{slug}）——1:1 复刻 server.php ──
 app.get(/^\/site\/([a-z0-9-]+)(\/.*)?$/i, (req, res) => {
   const slug = req.params[0];
@@ -359,14 +373,3 @@ app.use((req, res, next) => {
 const server = app.listen(PORT, HOST, () => {
   console.log(`CSES Cloud API Server (NodeJS) listening on http://${HOST}:${PORT}`);
 });
-
-// ── 通用 WebSocket 设备控制网关 ──
-try {
-  const { attach } = require('./lib/ws-control');
-  const wsControl = attach(server);
-  wsControl.setDB(DB); // 注入数据库
-  global.wsControl = wsControl; // 供 rest-control 等 API 层访问
-  console.log('[ws-control] 已注入 DB 并挂载 WS 网关');
-} catch (e) {
-  console.warn('[ws-control] WebSocket 网关启动失败:', e.message);
-}

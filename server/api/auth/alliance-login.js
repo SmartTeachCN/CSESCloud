@@ -22,8 +22,8 @@ module.exports = async (ctx) => {
   }
 
   if (Auth.loginAlliance(username)) {
-    // 联盟账户默认进入实例云控概览
-    Response.success({ redirect: '/console/instances' }, '智教联盟登录成功');
+    // V3：联盟账户登录成功默认进入轻编辑器
+    Response.success({ redirect: '/console/editor/light' }, '智教联盟登录成功');
   } else {
     Response.error('登录失败');
   }

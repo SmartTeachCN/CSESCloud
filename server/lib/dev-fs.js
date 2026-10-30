@@ -8,7 +8,7 @@
  *     apps/{app_key}/
  *       manifest.json             # 基础元数据 + app_info_manifest
  *       editor.html / editor.js
- *       storage.json / interface.json / control.json
+ *       storage.json / interface.json
  *     plugins/{plugin_key}/
  *       manifest.json             # 基础元数据 + extensions
  *       editor.html / editor.js / editor.css
@@ -141,7 +141,6 @@ const AppFS = {
       editor_js: readText(path.join(dir, 'editor.js')),
       storage_manifest: readJson(path.join(dir, 'storage.json')),
       interface_schema: readJson(path.join(dir, 'interface.json')),
-      control_manifest: readJson(path.join(dir, 'control.json')),
     };
     return result;
   },
@@ -215,10 +214,6 @@ const AppFS = {
       writeJson(path.join(dir, 'interface.json'),
         typeof data.interface_schema === 'string' ? JSON.parse(data.interface_schema) : data.interface_schema);
     }
-    if (data.control_manifest !== undefined) {
-      writeJson(path.join(dir, 'control.json'),
-        typeof data.control_manifest === 'string' ? JSON.parse(data.control_manifest) : data.control_manifest);
-    }
   },
 
   /** 写入用户应用 */
@@ -259,7 +254,6 @@ const AppFS = {
     writeText(path.join(dir, 'editor.js'), data.editor_js || '');
     writeJson(path.join(dir, 'storage.json'), data.storage_manifest || { collections: [] });
     writeJson(path.join(dir, 'interface.json'), data.interface_schema || { endpoints: [] });
-    writeJson(path.join(dir, 'control.json'), data.control_manifest || { enabled: false, protocolVersion: 1, supportedCommands: [], description: '' });
     return this._readFromDir(dir, appKey);
   },
 

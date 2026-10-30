@@ -30,7 +30,6 @@ function enrichWithApp(row) {
         row.editor_html = app.editor_html;
         row.editor_js = app.editor_js;
         row.interface_schema = app.interface_schema;
-        row.control_manifest = app.control_manifest;
       }
     }
   } catch (e) { /* ignore */ }
@@ -41,21 +40,12 @@ function enrichWithApp(row) {
  * 当前可见实例列表：
  *  - 联盟账户：自己创建的实例 + 已加入学校的实例
  *  - 学校子用户：本校实例（按 school_id 过滤）
- *  - 实例子用户：仅本实例
  */
 function listVisibleInstances(Auth, DB) {
   const user = Auth.user();
   const ownerKey = Auth.ownerKey();
   let rows = [];
-  if (Auth.isInstanceSub()) {
-    rows = DB.all(
-      `SELECT i.*, g.name AS group_name, g.sort_order AS group_order
-       FROM instances i
-       LEFT JOIN instance_groups g ON g.id = i.group_id
-       WHERE i.id = ?`,
-      [user.instance_id]
-    );
-  } else if (Auth.isAlliance()) {
+  if (Auth.isAlliance()) {
     rows = DB.all(
       `SELECT i.*, g.name AS group_name, g.sort_order AS group_order,
               'owned' AS relation
@@ -152,9 +142,6 @@ module.exports = async (ctx) => {
     }
     if (!Helpers.empty(ins.interface_schema) && typeof ins.interface_schema === 'string') {
       ins.interface_schema = JSON.parse(ins.interface_schema);
-    }
-    if (!Helpers.empty(ins.control_manifest) && typeof ins.control_manifest === 'string') {
-      ins.control_manifest = JSON.parse(ins.control_manifest);
     }
     if (!Helpers.empty(ins.config)) ins.config = JSON.parse(ins.config);
     ins.can_write = Auth.canWriteInstance(id);

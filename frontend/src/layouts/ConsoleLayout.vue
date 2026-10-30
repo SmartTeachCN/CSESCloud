@@ -109,12 +109,6 @@
         class="console-sidebar"
         :class="{ collapsed: !sidebarOpen }"
       >
-        <!-- 顶部：校园切换器（仅校园模式显示） -->
-        <SchoolSwitcher
-          v-if="sidebarMode === 'campus' && hasJoinedSchool"
-          :expanded="sidebarOpen"
-        />
-
         <div class="sidebar-section">
           <div class="sidebar-section-title">{{ currentModeLabel }}</div>
           <router-link
@@ -128,56 +122,21 @@
             <span v-if="sidebarOpen" class="sidebar-label">{{ item.title }}</span>
           </router-link>
         </div>
-
-        <!-- 底部：AI助理 + 校园切换 -->
-        <div v-if="sidebarOpen && showAiInSidebar" class="sidebar-section sidebar-section-bottom">
-          <button class="sidebar-item sidebar-action" @click="openAiDrawer">
-            <Icon icon="ri-brain-line" class="sidebar-icon" :size="18" />
-            <span class="sidebar-label">AI 助理</span>
-          </button>
-        </div>
       </aside>
 
       <AiAssistantDrawer
         :visible="aiDrawerVisible"
-        :scope="aiScope"
-        :scope-ref="aiScopeRef"
         @close="aiDrawerVisible = false"
       />
 
       <main class="console-main" :class="{ 'full-width': !hasSidebar }">
-        <!-- 校园模式但未加入学校时，覆盖整个内容区显示加入学校提示 -->
-        <template v-if="sidebarMode === 'campus' && !hasJoinedSchool">
-          <div class="no-school-state">
-            <div class="no-school-card">
-              <div class="no-school-icon">
-                <Icon icon="ri-school-line" :size="48" />
-              </div>
-              <h2 class="no-school-title">尚未加入任何学校</h2>
-              <p class="no-school-desc">
-                你还未加入任何学校，加入学校后即可使用校园集控功能。<br/>
-                加入学校需要学校管理员审批。
-              </p>
-              <button class="no-school-btn" @click="joinVisible = true">
-                <Icon icon="ri-add-line" :size="16" />
-                <span>加入学校</span>
-              </button>
-            </div>
-          </div>
-        </template>
-        <router-view v-else v-slot="{ Component }">
+        <router-view v-slot="{ Component }">
           <keep-alive :include="keepAliveComponents">
             <component :is="Component" />
           </keep-alive>
         </router-view>
       </main>
     </div>
-
-    <JoinSchool
-      :visible="joinVisible"
-      @close="joinVisible = false"
-      @joined="onJoinedSchool"
-    />
 
     <Teleport to="body">
       <div
@@ -222,10 +181,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import BrandLogo from '../components/BrandLogo.vue';
 import AiAssistantDrawer from '../components/AiAssistantDrawer.vue';
-import SchoolSwitcher from '../components/campus/SchoolSwitcher.vue';
-import JoinSchool from '../components/campus/JoinSchool.vue';
 import { useAuth } from '../composables/useAuth';
-import { useSchool } from '../composables/useSchool';
 import { notificationsApi } from '../api';
 
 const route = useRoute();
@@ -241,11 +197,7 @@ const unreadCount = ref(0);
 // AI 助理抽屉
 const aiDrawerVisible = ref(false);
 
-// 加入学校弹窗
-const joinVisible = ref(false);
-
 const { fetchMe } = useAuth();
-const { hasJoinedSchool, refreshJoinedSchools } = useSchool();
 
 // 当前用户认证信息（用于权限控制）
 const authUser = ref<any>(null);
@@ -256,11 +208,6 @@ const isAdmin = computed(() => isSuperAdmin.value || authUser.value?.role === 'a
 // KeepAlive 保留状态的组件（导航离开后不销毁）
 const keepAliveComponents = ['LightEditor', 'StandardEditor', 'DataSpace'];
 
-async function onJoinedSchool() {
-  joinVisible.value = false;
-  await refreshJoinedSchools();
-}
-
 const user = ref({
   name: '管理员',
   role: '管理员',
@@ -269,11 +216,9 @@ const user = ref({
 
 const navMenuItems = [
   { path: '/console', icon: 'ri-home-5-line', title: '首页', subtitle: '控制台首页' },
-  { path: '/console/campus', icon: 'ri-school-line', title: '校园集控', subtitle: '连接与管理校园' },
-  { path: '/console/instances', icon: 'ri-cloud-line', title: '实例云控', subtitle: '在云端管理单个实例' },
+  { path: '/console/editor/light', icon: 'ri-edit-2-line', title: '轻编辑器', subtitle: '文件与配置实例' },
   { path: '/console/dataspace', icon: 'ri-folder-3-line', title: '数据空间', subtitle: '云文件与网页空间管理' },
   { path: '/console/ai', icon: 'ri-brain-line', title: 'AI 助理', subtitle: '智能问答与辅助' },
-  { path: '/console/editor/light', icon: 'ri-edit-2-line', title: '轻编辑器', subtitle: '快速编辑配置文件' },
   { path: '/console/help', icon: 'ri-question-line', title: '文档 & 使用教程', subtitle: '查看帮助文档' },
   { path: 'https://example.com/teaching-tools', icon: 'ri-tools-line', title: '教学工具', subtitle: '工具助力教学', external: true },
   { path: '/console/developer', icon: 'ri-key-2-line', title: '开发者中心', subtitle: '接入平台' },
@@ -288,14 +233,11 @@ const filteredNavMenuItems = computed(() => {
   });
 });
 
-// 当前侧栏模式：campus / instance / developer / default
-// 仅 /console/instances 触发实例模式；/console/developer 触发开发者模式
-// /console/campus 触发校园模式；其余为默认模式（无侧栏）
-const sidebarMode = computed<'campus' | 'instance' | 'developer' | 'admin' | 'ai' | 'default'>(() => {
+// 当前侧栏模式：developer / admin / ai / default
+// /console/developer 触发开发者模式，/console/admin 触发管理模式，
+// /console/ai 触发 AI 模式；其余为默认模式（无侧栏）
+const sidebarMode = computed<'developer' | 'admin' | 'ai' | 'default'>(() => {
   const path = route.path;
-  if (path.startsWith('/console/instances')) {
-    return 'instance';
-  }
   if (path.startsWith('/console/developer')) {
     return 'developer';
   }
@@ -305,26 +247,16 @@ const sidebarMode = computed<'campus' | 'instance' | 'developer' | 'admin' | 'ai
   if (path.startsWith('/console/ai')) {
     return 'ai';
   }
-  if (path.startsWith('/console/campus')) {
-    return 'campus';
-  }
   return 'default';
 });
 
 const sidebarItems = computed(() => {
-  if (sidebarMode.value === 'instance') {
-    return [
-      { path: '/console/instances/overview', icon: 'ri-dashboard-line', title: '实例概览' },
-      { path: '/console/instances/list', icon: 'ri-cloud-line', title: '实例列表' }
-    ];
-  }
   if (sidebarMode.value === 'developer') {
     // 非联盟用户仅显示共享市场，联盟用户和管理员显示全部
     if (isAlliance.value || isSuperAdmin.value) {
       return [
         { path: '/console/developer', icon: 'ri-key-2-line', title: '开发者中心' },
         { path: '/console/developer/apps', icon: 'ri-apps-2-line', title: '实例侧应用' },
-        { path: '/console/developer/packages', icon: 'ri-box-3-line', title: '集控侧套餐' },
         { path: '/console/developer/plugins', icon: 'ri-plug-line', title: '编辑器插件' },
         { path: '/console/developer/market', icon: 'ri-store-2-line', title: '共享市场' }
       ];
@@ -344,48 +276,15 @@ const sidebarItems = computed(() => {
       { path: '/console/admin/help', icon: 'ri-book-open-line', title: '帮助中心' }
     ];
   }
-  return [
-    { path: '/console/campus', icon: 'ri-school-line', title: '校园概览' },
-    { path: '/console/campus/manage', icon: 'ri-settings-3-line', title: '校园管理' },
-    { path: '/console/campus/classes', icon: 'ri-group-line', title: '班级列表' },
-    { path: '/console/campus/sub-users', icon: 'ri-team-line', title: '子用户管理' },
-    { path: '/console/campus/settings', icon: 'ri-tools-line', title: '校园设置' }
-  ];
+  return [];
 });
 
-// AI 助理是否在侧栏显示（仅实例云控与校园集控模式）
-const showAiInSidebar = computed(() => {
-  return sidebarMode.value === 'instance' || sidebarMode.value === 'campus';
-});
-
-// AI 助理的 scope 与 scopeRef（依据当前所在页面动态切换）
-const aiScope = computed(() => {
-  if (sidebarMode.value === 'instance') return 'instance';
-  if (sidebarMode.value === 'campus') return 'campus';
-  return 'global';
-});
-
-const aiScopeRef = computed(() => {
-  if (sidebarMode.value === 'instance') {
-    // 从路径 /console/instances/:id/edit 提取 id
-    const m = route.path.match(/^\/console\/instances\/(\d+)/);
-    return m ? Number(m[1]) : undefined;
-  }
-  if (sidebarMode.value === 'campus') {
-    return undefined; // 校园级 AI 助理
-  }
-  return undefined;
-});
-
-function openAiDrawer() {
-  aiDrawerVisible.value = true;
-}
-
+// 侧栏标题：开发者中心 / 管理后台 / AI 助理 / 控制台
 const currentModeLabel = computed(() => {
-  if (sidebarMode.value === 'instance') return '实例云控';
   if (sidebarMode.value === 'developer') return '开发者中心';
   if (sidebarMode.value === 'admin') return '管理后台';
-  return '校园集控';
+  if (sidebarMode.value === 'ai') return 'AI 助理';
+  return '控制台';
 });
 
 const editorModeLabel = computed(() => {
@@ -418,8 +317,6 @@ const hasSidebar = computed(() => {
   // 默认模式（首页、帮助中心、个人中心等）不显示侧栏
   if (sidebarMode.value === 'default') return false;
   if (noSidebarPaths.some(p => path === p || path.startsWith(p + '/'))) return false;
-  // 校园模式且未加入学校：整个页面无侧栏
-  if (sidebarMode.value === 'campus' && !hasJoinedSchool.value) return false;
   return true;
 });
 
@@ -440,9 +337,10 @@ const filteredSearchResults = computed(() => {
 
 function getTagForPath(path: string): string {
   if (path.startsWith('/console/editor')) return '编辑器';
-  if (path.startsWith('/console/campus')) return '校园';
-  if (path.startsWith('/console/instances')) return '实例';
+  if (path.startsWith('/console/ai')) return 'AI';
+  if (path.startsWith('/console/dataspace')) return '数据';
   if (path.startsWith('/console/developer')) return '开发';
+  if (path.startsWith('/console/admin')) return '管理';
   if (path.startsWith('/console/help')) return '帮助';
   if (path.startsWith('/console/notifications')) return '通知';
   return '功能';
@@ -459,15 +357,6 @@ function isItemActive(itemPath: string) {
     return currentPath === '/console' || currentPath === '/console/';
   }
   // 精确匹配父级项目（仅当路径完全相同时激活）
-  if (itemPath === '/console/campus') {
-    return currentPath === '/console/campus';
-  }
-  if (itemPath === '/console/instances/overview') {
-    return currentPath === '/console/instances/overview' || currentPath === '/console/instances' || currentPath === '/console/instances/';
-  }
-  if (itemPath === '/console/instances/list') {
-    return currentPath === '/console/instances/list';
-  }
   if (itemPath === '/console/developer') {
     return currentPath === '/console/developer';
   }
@@ -884,76 +773,6 @@ function roleLabelFor(role: string, isAlliance: boolean): string {
 
 .editor-mode .console-main {
   overflow: hidden; /* 编辑器与AI模式需要精确控制溢出 */
-}
-
-/* 无学校状态：覆盖整个内容区 */
-.no-school-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100%;
-  padding: var(--spacer-8);
-  width: 100%;
-}
-
-.no-school-card {
-  text-align: center;
-  background: var(--card-bg);
-  border: 1px solid var(--card-stroke);
-  border-radius: var(--radius-xl);
-  padding: var(--spacer-8);
-  max-width: 480px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
-}
-
-.no-school-icon {
-  width: 96px;
-  height: 96px;
-  margin: 0 auto var(--spacer-5);
-  border-radius: var(--radius-full);
-  background: rgba(0, 103, 192, 0.08);
-  color: var(--accent-base);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.no-school-icon > svg {
-  width: 48px;
-  height: 48px;
-}
-
-.no-school-title {
-  font-size: var(--font-size-2xl);
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0 0 var(--spacer-3);
-}
-
-.no-school-desc {
-  font-size: var(--font-size-sm);
-  color: var(--text-tertiary);
-  line-height: 1.6;
-  margin: 0 0 var(--spacer-5);
-}
-
-.no-school-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  padding: var(--spacer-3) var(--spacer-5);
-  background: var(--accent-base);
-  color: var(--accent-text);
-  border: none;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--fast-duration);
-}
-
-.no-school-btn:hover {
-  background: var(--accent-hover);
 }
 
 .page-enter-active,

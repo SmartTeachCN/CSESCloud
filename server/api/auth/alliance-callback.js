@@ -31,7 +31,7 @@ module.exports = async (ctx) => {
     fail('state 校验失败，请重新发起登录');
     return;
   }
-  const redirect = (issued && issued.redirect) || '/console/instances';
+  const redirect = (issued && issued.redirect) || '/console/editor/light';
   const redirectUri = (issued && issued.redirect_uri) || allianceOauth.resolveRedirectUri(req);
   delete req.session.alliance_oauth;
 

@@ -14,7 +14,7 @@
             </button>
           </div>
           <div class="drawer-body">
-            <AiAssistantPanel :scope="scope" :scope-ref="scopeRef" />
+            <AiAssistantPanel scope="global" />
           </div>
         </div>
       </div>
@@ -23,28 +23,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
 import AiAssistantPanel from './editor/panels/AiAssistantPanel.vue';
 
-const props = defineProps<{
+defineProps<{
   visible: boolean;
-  scope?: string;
-  scopeRef?: number;
 }>();
 
 const emit = defineEmits<{ (e: 'close'): void }>();
 
-const scope = computed(() => props.scope || 'global');
-const scopeRef = computed(() => props.scopeRef);
-
-const scopeLabel = computed(() => {
-  switch (scope.value) {
-    case 'instance': return '实例';
-    case 'campus': return '校园';
-    case 'global': return '全局';
-    default: return scope.value;
-  }
-});
+const scopeLabel = '全局';
 
 function close() {
   emit('close');

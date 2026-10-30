@@ -12,7 +12,7 @@
         </button>
         <button v-if="currentView !== 'overview'" class="btn btn-primary" @click="currentView === 'plugins' ? (showCreatePluginDialog = true) : (showCreateDialog = true)">
           <Icon icon="ri-add-line" :size="14" />
-          {{ currentView === 'apps' ? '创建应用' : currentView === 'plugins' ? '创建插件' : '创建套餐' }}
+          {{ currentView === 'apps' ? '创建应用' : '创建插件' }}
         </button>
       </div>
     </div>
@@ -45,36 +45,6 @@
             <div class="card-stat">
               <span class="stat-label">插件总数</span>
               <span class="stat-value">{{ pluginsList.length }}</span>
-            </div>
-          </div>
-          <Icon icon="ri-arrow-right-s-line" class="card-arrow" :size="20" />
-        </div>
-
-        <div class="overview-card" @click="goTo('packages')">
-          <div class="card-icon packages">
-            <Icon icon="ri-box-3-line" :size="32" />
-          </div>
-          <div class="card-content">
-            <h3 class="card-title">集控侧套餐</h3>
-            <p class="card-desc">管理面向校园集控的套餐，配置调用实例、编辑器和变量</p>
-            <div class="card-stat">
-              <span class="stat-label">套餐总数</span>
-              <span class="stat-value">{{ packagesList.length }}</span>
-            </div>
-          </div>
-          <Icon icon="ri-arrow-right-s-line" class="card-arrow" :size="20" />
-        </div>
-
-        <div class="overview-card" @click="goToControlApi">
-          <div class="card-icon control">
-            <Icon icon="ri-remote-control-line" :size="32" />
-          </div>
-          <div class="card-content">
-            <h3 class="card-title">设备控制 API</h3>
-            <p class="card-desc">内置 REST 设备控制能力，支持客户端注册、命令下发、状态上报</p>
-            <div class="card-stat">
-              <span class="stat-label">协议</span>
-              <span class="stat-value">REST v1</span>
             </div>
           </div>
           <Icon icon="ri-arrow-right-s-line" class="card-arrow" :size="20" />
@@ -203,15 +173,6 @@
       </div>
     </div>
 
-    <!-- 套餐列表视图（简化） -->
-    <div v-else-if="currentView === 'packages'" class="list-view">
-      <div class="empty-state">
-        <div class="empty-icon"><Icon icon="ri-box-3-line" :size="48" /></div>
-        <div class="empty-text">集控侧套餐管理</div>
-        <p class="empty-hint">集控套餐相关功能将在后续阶段开放</p>
-      </div>
-    </div>
-
     <!-- 插件列表视图 -->
     <div v-else-if="currentView === 'plugins'" class="list-view">
       <div class="filter-bar">
@@ -296,80 +257,7 @@
       </div>
     </div>
 
-    <!-- 创建对话框 -->
-    <Teleport to="body">
-      <div v-if="showControlApiDialog" class="dialog-overlay" @click.self="showControlApiDialog = false">
-        <div class="dialog control-api-dialog">
-          <div class="dialog-header">
-            <h3>
-              <Icon icon="ri-remote-control-line" :size="18" />
-              设备控制 API
-              <span class="control-badge">v1</span>
-            </h3>
-            <button class="dialog-close" @click="showControlApiDialog = false">
-              <Icon icon="ri-close-line" :size="18" />
-            </button>
-          </div>
-          <div class="dialog-body">
-            <div class="api-intro">
-              <Icon icon="ri-information-line" :size="16" />
-              <span>CSES Cloud 平台内置 REST 设备控制能力，非 EA2 专属。任何实例侧应用均可通过以下 API 实现客户端远程控制（设备注册、命令下发、状态上报）。</span>
-            </div>
-
-            <div class="api-section">
-              <h4>API 端点</h4>
-              <code class="api-url">POST /api/control?instance_uid={uid}&action={action}</code>
-            </div>
-
-            <div class="api-section">
-              <h4>可用 Action</h4>
-              <div class="api-table">
-                <div class="api-tr api-th">
-                  <div class="api-td method">方法</div>
-                  <div class="api-td action">Action</div>
-                  <div class="api-td desc">说明</div>
-                  <div class="api-td auth">认证</div>
-                </div>
-                <div class="api-tr" v-for="ep in controlApiEndpoints" :key="ep.action">
-                  <div class="api-td method"><span class="method-badge" :class="ep.method">{{ ep.method }}</span></div>
-                  <div class="api-td action"><code>{{ ep.action }}</code></div>
-                  <div class="api-td desc">{{ ep.desc }}</div>
-                  <div class="api-td auth">{{ ep.auth }}</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="api-section">
-              <h4>认证方式</h4>
-              <ul class="auth-list">
-                <li><strong>设备注册</strong>：使用注册码（<code>EA2-xxx</code>）验证</li>
-                <li><strong>客户端操作</strong>：<code>x-device-id</code> + <code>x-device-credential</code> 请求头</li>
-                <li><strong>管理操作</strong>：需实例管理员权限</li>
-              </ul>
-            </div>
-
-            <div class="api-section">
-              <h4>如何使用</h4>
-              <ol class="howto-list">
-                <li>在<strong>实例侧应用</strong>编辑器中，进入「设备控制」Tab，启用设备控制并声明支持的指令类型</li>
-                <li>在<strong>实例详情 → 设备控制</strong>中生成注册码</li>
-                <li>客户端使用注册码调用 <code>device_register</code> 注册设备</li>
-                <li>客户端轮询 <code>command_poll</code> 获取待执行命令</li>
-                <li>通过 <code>command_report</code> 上报执行结果</li>
-              </ol>
-            </div>
-          </div>
-          <div class="dialog-footer">
-            <button class="btn btn-ghost" @click="showControlApiDialog = false">关闭</button>
-            <button class="btn btn-primary" @click="showControlApiDialog = false; router.push('/console/developer/apps')">
-              <Icon icon="ri-apps-2-line" :size="14" /> 管理实例侧应用
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
-
-    <!-- 创建对话框 -->
+    <!-- 创建应用对话框 -->
     <Teleport to="body">
       <div v-if="showCreateDialog" class="dialog-overlay" @click.self="showCreateDialog = false">
         <div class="dialog">
@@ -470,7 +358,6 @@ const { user } = useAuth();
 const loading = ref(false);
 const busy = ref(false);
 const showCreateDialog = ref(false);
-const showControlApiDialog = ref(false);
 const searchKeyword = ref('');
 const activeStatus = ref('all');
 
@@ -494,14 +381,12 @@ interface DevItem {
   forked_from: number | null;
   forked_by?: string;
   app_key?: string;
-  package_key?: string;
   category?: string;
   created_at: string;
   updated_at: string;
 }
 
 const appsList = ref<DevItem[]>([]);
-const packagesList = ref<DevItem[]>([]);
 
 // ===== 插件 =====
 const pluginsList = ref<any[]>([]);
@@ -619,9 +504,8 @@ async function deletePlugin(item: any) {
   }
 }
 
-const currentView = computed<'overview' | 'apps' | 'packages' | 'plugins'>(() => {
+const currentView = computed<'overview' | 'apps' | 'plugins'>(() => {
   if (route.path.endsWith('/apps')) return 'apps';
-  if (route.path.endsWith('/packages')) return 'packages';
   if (route.path.endsWith('/plugins')) return 'plugins';
   return 'overview';
 });
@@ -630,16 +514,14 @@ const isSuperAdmin = computed(() => user.value?.is_super_admin || user.value?.is
 
 const pageTitle = computed(() => {
   if (currentView.value === 'apps') return '实例侧应用';
-  if (currentView.value === 'packages') return '集控侧套餐';
   if (currentView.value === 'plugins') return '编辑器插件';
   return '开发者中心';
 });
 
 const pageDescription = computed(() => {
   if (currentView.value === 'apps') return '管理运行在单个实例上的应用';
-  if (currentView.value === 'packages') return '管理面向校园集控的套餐';
   if (currentView.value === 'plugins') return '注册文件后缀与自定义编辑器，在轻编辑器中自动调用';
-  return '接入平台，管理应用与套餐';
+  return '接入平台，管理应用与插件';
 });
 
 const statusFilters = [
@@ -649,23 +531,7 @@ const statusFilters = [
   { key: 'archived', label: '已归档' }
 ];
 
-const controlApiEndpoints = [
-  { method: 'POST', action: 'device_register', desc: '设备注册（注册码验证）', auth: '注册码' },
-  { method: 'POST', action: 'command_poll', desc: '设备轮询待执行命令', auth: '设备凭证' },
-  { method: 'POST', action: 'command_report', desc: '设备上报命令执行结果', auth: '设备凭证' },
-  { method: 'POST', action: 'device_update_state', desc: '更新设备状态（心跳）', auth: '设备凭证' },
-  { method: 'POST', action: 'device_errors', desc: '上报设备错误', auth: '设备凭证' },
-  { method: 'POST', action: 'command_create', desc: '创建命令（支持广播、呼叫监考、部署考试）', auth: '管理员' },
-  { method: 'POST', action: 'enrollment_create', desc: '创建注册码', auth: '管理员' },
-  { method: 'GET', action: 'enrollment_list', desc: '列出注册码', auth: '管理员' },
-  { method: 'POST', action: 'enrollment_revoke', desc: '吊销注册码', auth: '管理员' },
-  { method: 'GET', action: 'command_list', desc: '列出命令', auth: '管理员' },
-  { method: 'GET', action: 'device_list', desc: '列出所有设备', auth: '管理员' },
-  { method: 'POST', action: 'device_unregister', desc: '注销设备', auth: '管理员' },
-  { method: 'GET', action: 'events_stream', desc: 'SSE 事件流', auth: '管理员' },
-];
-
-const currentList = computed(() => currentView.value === 'apps' ? appsList.value : packagesList.value);
+const currentList = computed(() => appsList.value);
 
 function getCountByStatus(status: string): number {
   if (status === 'all') return currentList.value.length;
@@ -681,7 +547,7 @@ const filteredList = computed(() => {
     const q = searchKeyword.value.toLowerCase();
     list = list.filter(item =>
       item.name.toLowerCase().includes(q) ||
-      (item.app_key || item.package_key || '').toLowerCase().includes(q)
+      (item.app_key || '').toLowerCase().includes(q)
     );
   }
   return list;
@@ -692,16 +558,12 @@ function getStatusLabel(status: string): string {
   return labels[status] || status;
 }
 
-function goTo(view: 'apps' | 'packages' | 'plugins') {
+function goTo(view: 'apps' | 'plugins') {
   router.push(`/console/developer/${view}`);
 }
 
 function goMarket() {
   router.push('/console/developer/market');
-}
-
-function goToControlApi() {
-  showControlApiDialog.value = true;
 }
 
 function editApp(item: DevItem) {
@@ -827,9 +689,7 @@ onMounted(() => {
 }
 
 .card-icon.apps { background: rgba(0, 103, 192, 0.1); color: #0067C0; }
-.card-icon.packages { background: rgba(16, 124, 16, 0.1); color: #107C10; }
 .card-icon.plugins { background: rgba(120, 90, 240, 0.1); color: #785AF0; }
-.card-icon.control { background: rgba(0, 120, 212, 0.1); color: #0078D4; }
 .card-icon.market { background: rgba(202, 143, 4, 0.1); color: #CA8F04; }
 
 .card-content { flex: 1; min-width: 0; }
@@ -1271,145 +1131,6 @@ onMounted(() => {
   gap: var(--spacer-2);
   padding: var(--spacer-4) var(--spacer-5);
   border-top: 1px solid var(--divider-stroke);
-}
-
-/* 设备控制 API 对话框 */
-.control-api-dialog {
-  max-width: 680px;
-}
-
-.control-api-dialog .dialog-header h3 {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-2);
-}
-
-.control-badge {
-  display: inline-flex;
-  padding: 1px 8px;
-  background: var(--accent-bg);
-  color: var(--accent-base);
-  border-radius: var(--radius-full);
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.api-intro {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--spacer-2);
-  padding: var(--spacer-3);
-  background: var(--subtle-secondary);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-
-.api-intro > :first-child {
-  color: var(--accent-base);
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.api-section {
-  margin-top: var(--spacer-3);
-}
-
-.api-section h4 {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 var(--spacer-2);
-}
-
-.api-url {
-  display: block;
-  padding: var(--spacer-2) var(--spacer-3);
-  background: var(--subtle-secondary);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  font-family: var(--font-mono, monospace);
-  color: var(--text-secondary);
-  word-break: break-all;
-}
-
-.api-table {
-  border: 1px solid var(--divider-stroke);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.api-tr {
-  display: grid;
-  grid-template-columns: 70px 1.4fr 1.6fr 80px;
-  gap: var(--spacer-2);
-  padding: var(--spacer-1) var(--spacer-2);
-  align-items: center;
-  font-size: var(--font-size-xs);
-}
-
-.api-tr.api-th {
-  background: var(--subtle-secondary);
-  font-weight: 600;
-  color: var(--text-tertiary);
-}
-
-.api-tr:not(.api-th) {
-  border-top: 1px solid var(--divider-stroke);
-}
-
-.api-td code {
-  font-size: 10px;
-  font-family: var(--font-mono, monospace);
-  background: var(--subtle-secondary);
-  padding: 1px 4px;
-  border-radius: var(--radius-xs);
-  color: var(--text-secondary);
-}
-
-.method-badge {
-  display: inline-flex;
-  padding: 1px 6px;
-  border-radius: var(--radius-full);
-  font-size: 10px;
-  font-weight: 600;
-  font-family: var(--font-mono, monospace);
-}
-
-.method-badge.POST { background: rgba(0, 103, 192, 0.1); color: #0067C0; }
-.method-badge.GET { background: rgba(16, 124, 16, 0.1); color: #107C10; }
-
-.auth-list {
-  margin: 0;
-  padding: 0 0 0 var(--spacer-4);
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  line-height: 1.8;
-}
-
-.auth-list code {
-  font-size: 11px;
-  font-family: var(--font-mono, monospace);
-  background: var(--subtle-secondary);
-  padding: 1px 4px;
-  border-radius: var(--radius-xs);
-}
-
-.howto-list {
-  margin: 0;
-  padding: 0 0 0 var(--spacer-4);
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  line-height: 1.8;
-}
-
-.howto-list code {
-  font-size: 11px;
-  font-family: var(--font-mono, monospace);
-  background: var(--subtle-secondary);
-  padding: 1px 4px;
-  border-radius: var(--radius-xs);
 }
 
 @media (max-width: 768px) {

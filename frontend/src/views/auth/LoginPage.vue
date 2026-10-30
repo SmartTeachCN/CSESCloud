@@ -69,38 +69,17 @@
           </template>
         </form>
 
-        <!-- 子用户登录 -->
+        <!-- 子用户登录（学校 + 用户名 + 密码） -->
         <form v-else-if="activeTab === 'sub'" @submit.prevent="handleSubLogin" class="login-form">
           <div class="form-group">
-            <label for="school-select">登录身份</label>
+            <label for="school-select">学校</label>
             <div class="input-wrapper">
-              <Icon icon="ri-building-line" class="input-icon" />
+              <Icon icon="ri-school-line" class="input-icon" />
               <select id="school-select" v-model="selectedSchoolValue" @change="onSchoolChange">
-                <option value="__instance__">实例子用户</option>
+                <option value="" disabled>请选择学校</option>
                 <option v-for="s in schools" :key="s.id" :value="String(s.id)">{{ s.name }}</option>
               </select>
               <Icon icon="ri-arrow-down-s-line" class="select-caret" />
-            </div>
-          </div>
-
-          <div v-if="selectedSchoolValue === '__instance__'" class="form-group">
-            <label for="instance-uid">实例 ID</label>
-            <div class="input-wrapper">
-              <Icon icon="ri-hashtag" class="input-icon" />
-              <input
-                id="instance-uid"
-                v-model="instanceUid"
-                type="text"
-                placeholder="请输入实例唯一 ID"
-                autocomplete="off"
-              />
-            </div>
-          </div>
-          <div v-else class="form-group">
-            <label>学校</label>
-            <div class="school-badge">
-              <Icon icon="ri-school-line" :size="14" />
-              <span>{{ selectedSchoolName }}</span>
             </div>
           </div>
 
@@ -212,12 +191,11 @@
               @click="applySavedEntry(entry)"
               @keydown.enter.prevent="applySavedEntry(entry)"
             >
-              <Icon :icon="entry.entry_type === 'instance_sub' ? 'ri-cloud-line' : 'ri-school-line'" :size="16" />
+              <Icon icon="ri-school-line" :size="16" />
               <div class="saved-meta">
                 <div class="saved-label">{{ entry.display_label }}</div>
                 <div class="saved-sub">
-                  <span v-if="entry.entry_type === 'instance_sub'">实例子用户</span>
-                  <span v-else>学校子用户</span>
+                  <span>学校子用户</span>
                 </div>
               </div>
               <button
@@ -249,7 +227,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import BrandLogo from '../../components/BrandLogo.vue';
 import { authApi } from '../../api';
@@ -268,10 +246,9 @@ const allianceMode = ref<'oauth' | 'local'>('local');
 const authorizeUrl = ref('');
 const allianceUsername = ref('');
 
-// 子用户登录
+// 子用户登录（学校 + 用户名 + 密码）
 const schools = ref<any[]>([]);
-const selectedSchoolValue = ref<string>('__instance__'); // __instance__ | schoolId
-const instanceUid = ref('');
+const selectedSchoolValue = ref<string>('');
 const subUsername = ref('');
 const subPassword = ref('');
 const rememberInList = ref(false);
@@ -285,11 +262,6 @@ const tempAdminUsername = ref('');
 const tempAdminPassword = ref('');
 const showTempPassword = ref(false);
 
-const selectedSchoolName = computed(() => {
-  const id = Number(selectedSchoolValue.value);
-  return schools.value.find(s => s.id === id)?.name || '';
-});
-
 function switchTab(tab: 'alliance' | 'sub' | 'temp_admin') {
   activeTab.value = tab;
   errorMessage.value = '';
@@ -299,6 +271,11 @@ function onSchoolChange() {
   errorMessage.value = '';
 }
 
+/** V3 不再支持实例子用户登录，过滤历史遗留的实例子用户记录 */
+function filterSavedLogins(list: any[]): any[] {
+  return (list || []).filter((entry: any) => entry.entry_type !== 'instance_sub');
+}
+
 async function loadInitData() {
   try {
     const [schoolList, me] = await Promise.all([
@@ -306,8 +283,8 @@ async function loadInitData() {
       authApi.me().catch(() => null)
     ]);
     schools.value = schoolList || [];
-    if (me?.saved_logins) {
-      savedLogins.value = me.saved_logins;
+    if (Array.isArray(me?.saved_logins)) {
+      savedLogins.value = filterSavedLogins(me.saved_logins);
     }
   } catch {
     // 未登录时也允许拉取学校列表
@@ -366,7 +343,7 @@ async function handleAllianceLogin() {
   try {
     const data: any = await authApi.loginAlliance(allianceUsername.value.trim());
     await fetchMe();
-    const redirect = (route.query.redirect as string) || data?.redirect || '/console/instances';
+    const redirect = (route.query.redirect as string) || data?.redirect || '/console/editor/light';
     router.push(redirect);
   } catch (e: any) {
     errorMessage.value = e?.message || '登录失败';
@@ -400,32 +377,6 @@ async function handleSubLogin() {
     errorMessage.value = '请填写用户名与密码';
     return;
   }
-  if (selectedSchoolValue.value === '__instance__') {
-    if (!instanceUid.value.trim()) {
-      errorMessage.value = '请输入实例 ID';
-      return;
-    }
-    loading.value = true;
-    try {
-      const data: any = await authApi.loginInstanceSub(
-        instanceUid.value.trim(),
-        subUsername.value,
-        subPassword.value,
-        rememberInList.value
-      );
-      await fetchMe();
-      if (rememberInList.value && data?.entry) {
-        savedLogins.value = await authApi.savedLogins().catch(() => savedLogins.value);
-      }
-      const redirect = (route.query.redirect as string) || data?.redirect || '/console/instances';
-      router.push(redirect);
-    } catch (e: any) {
-      errorMessage.value = e?.message || '登录失败';
-    } finally {
-      loading.value = false;
-    }
-    return;
-  }
   const schoolId = Number(selectedSchoolValue.value);
   if (!schoolId) {
     errorMessage.value = '请选择学校';
@@ -441,9 +392,10 @@ async function handleSubLogin() {
     );
     await fetchMe();
     if (rememberInList.value && data?.entry) {
-      savedLogins.value = await authApi.savedLogins().catch(() => savedLogins.value);
+      const list = await authApi.savedLogins().catch(() => savedLogins.value);
+      savedLogins.value = filterSavedLogins(list);
     }
-    const redirect = (route.query.redirect as string) || data?.redirect || '/console/campus';
+    const redirect = (route.query.redirect as string) || data?.redirect || '/console/editor/light';
     router.push(redirect);
   } catch (e: any) {
     errorMessage.value = e?.message || '登录失败';
@@ -453,12 +405,7 @@ async function handleSubLogin() {
 }
 
 function applySavedEntry(entry: any) {
-  if (entry.entry_type === 'instance_sub') {
-    selectedSchoolValue.value = '__instance__';
-    instanceUid.value = entry.instance_uid || '';
-  } else {
-    selectedSchoolValue.value = String(entry.school_id);
-  }
+  selectedSchoolValue.value = String(entry.school_id);
   subUsername.value = entry.sub_username || '';
   subPassword.value = '';
   rememberInList.value = true;
@@ -585,24 +532,6 @@ async function removeSavedEntry(entry: any) {
   flex-direction: column;
   gap: var(--spacer-4);
 }
-
-
-
-.school-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacer-1);
-  padding: var(--spacer-1) var(--spacer-3);
-  background: rgba(0, 103, 192, 0.08);
-  border: 1px solid rgba(0, 103, 192, 0.2);
-  color: var(--accent-base);
-  border-radius: var(--radius-full);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  align-self: flex-start;
-}
-
-
 
 .alliance-tip {
   display: flex;
@@ -823,12 +752,6 @@ async function removeSavedEntry(entry: any) {
 
   .saved-sub {
     color: rgba(255, 255, 255, 0.45);
-  }
-
-  .school-badge {
-    background: rgba(0, 103, 192, 0.2);
-    border-color: rgba(0, 103, 192, 0.4);
-    color: rgba(120, 190, 255, 1);
   }
 
   .temp-admin-btn {

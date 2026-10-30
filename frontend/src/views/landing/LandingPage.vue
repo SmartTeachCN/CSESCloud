@@ -26,12 +26,12 @@
           <span>全新一代智慧教育云平台</span>
         </div>
         <h1 class="hero-title">
-          连接校园与云端<br />
-          让教学管理更智能
+          云端编辑配置<br />
+          一键分发到教室
         </h1>
         <p class="hero-desc">
-          CSES Cloud 智教云控制台，提供校园集控、实例云控、在线编辑等一体化解决方案，
-          助力教育机构实现数字化转型。
+          CSES Cloud 智教云控制台，提供轻编辑器、配置分发（静态集控）、数据空间与 AI 助理，
+          助力教育机构实现配置统一管理与分发。
         </p>
         <div class="hero-actions">
           <button class="btn-primary-lg" @click="goConsole">
@@ -141,34 +141,40 @@ const router = useRouter();
 
 const features = [
   {
-    icon: 'ri-school-line',
-    title: '校园集控',
-    desc: '统一管理校园内的所有教学资源和班级',
-    items: ['班级管理与监控', '校园配置管理', '学生状态追踪', '通知与公告']
+    icon: 'ri-edit-2-line',
+    title: '轻编辑器',
+    desc: '在线编辑 CSES 配置文件，同时管理云文件与配置实例',
+    items: ['云文件管理', '配置实例管理', '实时保存', '版本历史']
   },
   {
-    icon: 'ri-cloud-line',
-    title: '实例云控',
-    desc: '在云端管理单个教学实例的完整生命周期',
-    items: ['实例创建与部署', '服务管理', '资源监控', '日志审计']
+    icon: 'ri-share-forward-line',
+    title: '配置分发（静态集控）',
+    desc: '把 CSES 配置一键分发为 ClassIsland 2.0 静态集控清单',
+    items: ['右键分发配置', 'ClassIsland 清单', '六类数据源', '源文件实时同步']
   },
   {
-    icon: 'ri-code-s-slash-line',
-    title: '在线编辑器',
-    desc: '标准编辑器与轻编辑器满足不同开发需求',
-    items: ['多标签页编辑', '实时预览', '文件管理', '自动保存']
+    icon: 'ri-folder-3-line',
+    title: '数据空间',
+    desc: '统一管理云文件与网页空间，随时访问教学资源',
+    items: ['云文件存储', '网页空间', '目录管理', '容量统计']
   },
   {
     icon: 'ri-key-2-line',
     title: '开发者中心',
-    desc: '为开发者提供完整的应用开发与发布平台',
-    items: ['实例侧应用管理', '集控侧套餐管理', '可视化编辑器', 'API 接入']
+    desc: '为开发者提供应用、插件与共享市场',
+    items: ['实例侧应用管理', '编辑器插件', '共享市场', 'API 接入']
+  },
+  {
+    icon: 'ri-brain-line',
+    title: 'AI 助理',
+    desc: '智能问答与编辑辅助，提升配置编写效率',
+    items: ['智能问答', '文件上下文', '多模型选择', '流式输出']
   }
 ];
 
 const solutions = [
   { icon: 'ri-folder-3-line', title: '数据空间', desc: '统一管理云文件与网页空间' },
-  { icon: 'ri-tools-line', title: '教学工具', desc: '丰富的工具集助力教学活动' },
+  { icon: 'ri-share-circle-line', title: '静态集控接入', desc: 'ClassIsland 通过清单地址自动获取配置' },
   { icon: 'ri-shield-check-line', title: '安全审计', desc: '完整的操作日志与数据导出' },
   { icon: 'ri-notification-3-line', title: '通知中心', desc: '实时推送系统通知与告警' }
 ];

@@ -1,0 +1,16 @@
+{
+  "app_key": "cses_static_control",
+  "name": "CSES 静态集控",
+  "version": "1.0.0",
+  "description": "把轻编辑器中的 CSES 配置文件分发为 ClassIsland 2.0 静态集控数据源：每个配置实例对应一个 ClassIsland 实例标识，实时提供集控清单与六类数据源（ClassPlans / TimeLayouts / Subjects / Settings / Policy / Credentials）。",
+  "category": "静态集控",
+  "icon": "",
+  "status": "published",
+  "developer_username": "system",
+  "is_shared": true,
+  "is_official": true,
+  "forked_from": null,
+  "forked_by": null,
+  "created_at": "2026-10-24 23:20:00",
+  "updated_at": "2026-10-24 23:20:00"
+}

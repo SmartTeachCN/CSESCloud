@@ -110,12 +110,10 @@ const accepting = ref(false);
 const token = computed(() => (route.query.token as string) || '');
 
 const resourceIcon = computed(() => {
-  if (shareData.value?.resource_type === 'instance') return 'ri-cloud-line';
   return 'ri-file-line';
 });
 
 const resourceTypeLabel = computed(() => {
-  if (shareData.value?.resource_type === 'instance') return '实例';
   return '文件';
 });
 
@@ -190,11 +188,8 @@ function goHome() {
 function goToResource() {
   const data = shareData.value;
   if (!data) return;
-  if (data.resource_type === 'instance') {
-    router.push(`/instance/${data.resource_id}/edit`);
-  } else {
-    router.push('/console/editor/light');
-  }
+  // V3 仅保留 cloud_file 分享，统一打开轻编辑器查看云文件
+  router.push('/console/editor/light');
 }
 
 onMounted(async () => {

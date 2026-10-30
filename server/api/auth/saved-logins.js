@@ -20,15 +20,14 @@ module.exports = async (ctx) => {
     const displayLabel = String(b.display_label ?? '').trim();
     const subUsername = String(b.sub_username ?? '').trim();
     const schoolId = b.school_id ?? null;
-    const instanceUid = String(b.instance_uid ?? '').trim();
-    if (!['school_sub', 'instance_sub'].includes(entryType) || !subUsername) {
+    if (entryType !== 'school_sub' || !subUsername) {
       Response.error('参数错误');
     }
     const id = Auth.saveLogin({
       'entry_type': entryType,
-      'display_label': Helpers.filled(displayLabel) ? displayLabel : (subUsername + '@' + (Helpers.filled(instanceUid) ? instanceUid : ('SID:' + schoolId))),
+      'display_label': Helpers.filled(displayLabel) ? displayLabel : (subUsername + '@SID:' + schoolId),
       'school_id': schoolId ? parseInt(schoolId, 10) : null,
-      'instance_uid': Helpers.filled(instanceUid) ? instanceUid : null,
+      'instance_uid': null,
       'sub_username': subUsername,
     });
     Response.success({ id }, '已保留到登录列表');

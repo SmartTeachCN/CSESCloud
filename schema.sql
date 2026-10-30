@@ -71,11 +71,12 @@ CREATE TABLE IF NOT EXISTS services (
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
 );
 
--- 实例（云控实例）
+-- 实例（配置实例 / 实例云应用）
+-- V3：实例用于承载“配置文件分发”等云应用，不再提供动态设备云控
 CREATE TABLE IF NOT EXISTS instances (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     school_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
+    name TEXT NOT NULL,                         -- 实例标识（对外可见，静态集控的实例 ID）
     service_type TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'stopped',
     cpu TEXT,
@@ -84,13 +85,16 @@ CREATE TABLE IF NOT EXISTS instances (
     uptime TEXT,
     ip TEXT,
     app_id INTEGER,                             -- 关联的应用（实例侧应用模板）
+    app_key TEXT,                               -- 应用唯一标识（如 cses_static_control）
     owner_user_id INTEGER,                      -- 实例所有者用户 ID
     owner_type TEXT NOT NULL DEFAULT 'sub',      -- 所有者类型：sub / alliance
     owner_key TEXT NOT NULL DEFAULT '',          -- 所有者键（用于隔离数据）
     instance_uid TEXT,                          -- 实例唯一 ID（外部可见）
     group_id INTEGER,                           -- 所属实例分组
+    source_file_id INTEGER,                     -- 轻编辑器源文件（web_hosting_files.id）
     config TEXT,                                -- 实例配置（JSON）
     created_at TEXT NOT NULL,
+    updated_at TEXT,
     FOREIGN KEY (school_id) REFERENCES schools(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_instances_owner ON instances(owner_key);
@@ -170,26 +174,6 @@ CREATE TABLE IF NOT EXISTS apps (
     editor_js TEXT,                             -- 编辑器 JS（与客户端/存储通信）
     storage_manifest TEXT,                      -- JSON：实例存储清单（数据存储格式）
     interface_schema TEXT,                      -- JSON：数据接口JSON格式
-    control_manifest TEXT,                     -- JSON：设备控制清单（协议版本、支持的指令类型等）
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
--- ===== 开发者中心：集控侧套餐 =====
--- 集控侧开发者创建的套餐，引用多个实例
-CREATE TABLE IF NOT EXISTS cc_packages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    developer_username TEXT NOT NULL,
-    package_key TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    version TEXT NOT NULL DEFAULT '1.0.0',
-    description TEXT,
-    status TEXT NOT NULL DEFAULT 'draft',
-    package_manifest TEXT,                      -- JSON：集控套餐清单
-    calling_instances_manifest TEXT,            -- JSON：调用实例清单
-    editor_html TEXT,
-    editor_js TEXT,
-    variable_manifest TEXT,                     -- JSON：集控变量存储清单
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -207,7 +191,7 @@ CREATE TABLE IF NOT EXISTS cloud_files (
     name TEXT NOT NULL,
     content TEXT,
     file_size INTEGER NOT NULL DEFAULT 0,       -- 内容大小（字节），便于统计
-    file_type TEXT NOT NULL DEFAULT 'html',     -- html/js/css/json/md/ea2/php
+    file_type TEXT NOT NULL DEFAULT 'html',     -- html/js/css/json/md/yml 等文本类型
     file_category TEXT NOT NULL DEFAULT 'editor', -- editor / instance_config / instance_php / instance_asset
     status TEXT NOT NULL DEFAULT 'synced',      -- synced/syncing/error
     created_at TEXT NOT NULL,
@@ -215,21 +199,6 @@ CREATE TABLE IF NOT EXISTS cloud_files (
     FOREIGN KEY (instance_id) REFERENCES instances(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_cloud_files_instance ON cloud_files(instance_id);
-
--- ===== 校园集控单元 - 集控ID与实例ID分离，便于备份 =====
-CREATE TABLE IF NOT EXISTS campus_control_units (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    school_id INTEGER NOT NULL,
-    instance_id INTEGER NOT NULL,
-    cc_package_id INTEGER,
-    name TEXT NOT NULL,
-    config TEXT,                                -- JSON：集控配置
-    variables TEXT,                             -- JSON：集控变量值
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (instance_id) REFERENCES instances(id) ON DELETE CASCADE,
-    FOREIGN KEY (cc_package_id) REFERENCES cc_packages(id) ON DELETE SET NULL
-);
 
 -- ===== 实例存储数据（按存储清单格式存储的实例数据） =====
 CREATE TABLE IF NOT EXISTS instance_storage_data (
@@ -253,21 +222,20 @@ CREATE INDEX IF NOT EXISTS idx_services_school ON services(school_id);
 CREATE INDEX IF NOT EXISTS idx_audit_school ON audit_logs(school_id);
 CREATE INDEX IF NOT EXISTS idx_notif_school ON notifications(school_id);
 CREATE INDEX IF NOT EXISTS idx_apps_developer ON apps(developer_username);
-CREATE INDEX IF NOT EXISTS idx_cc_packages_developer ON cc_packages(developer_username);
 CREATE INDEX IF NOT EXISTS idx_cloud_files_instance ON cloud_files(instance_id);
-CREATE INDEX IF NOT EXISTS idx_campus_control_instance ON campus_control_units(instance_id);
-CREATE INDEX IF NOT EXISTS idx_campus_control_school ON campus_control_units(school_id);
 CREATE INDEX IF NOT EXISTS idx_instance_storage_instance ON instance_storage_data(instance_id);
 
--- ===== 实例组（按所有者维度分类） =====
+-- ===== 实例组（按所有者维度分类；V3 起用于“配置实例组”） =====
 CREATE TABLE IF NOT EXISTS instance_groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_user_id INTEGER NOT NULL,
     owner_type TEXT NOT NULL DEFAULT 'sub',
     owner_key TEXT NOT NULL,
     name TEXT NOT NULL,
+    dir_id TEXT,                                -- 对外公开的实例组标识（静态集控 URL 使用）
     sort_order INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_instance_groups_owner ON instance_groups(owner_key);
 
@@ -528,80 +496,6 @@ CREATE TABLE IF NOT EXISTS workspace_configs (
   UNIQUE (username, workspace_key)
 );
 CREATE INDEX IF NOT EXISTS idx_workspace_configs_user ON workspace_configs(username);
-
--- ===== EA2 设备控制 =====
--- 注册的设备
-CREATE TABLE IF NOT EXISTS ea2_devices (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    instance_id INTEGER NOT NULL,
-    device_id TEXT NOT NULL UNIQUE,              -- UUID 格式的设备 ID
-    display_name TEXT NOT NULL,                  -- 设备显示名称
-    platform TEXT,                               -- win32 / darwin / linux
-    architecture TEXT,                           -- x64 / arm64
-    app_version TEXT,                            -- 客户端版本
-    protocol_version INTEGER NOT NULL DEFAULT 1, -- 协议版本
-    lifecycle_status TEXT NOT NULL DEFAULT 'active', -- active / revoked
-    labels TEXT DEFAULT '[]',                    -- JSON 标签数组
-    notes TEXT DEFAULT '',                         -- 设备备注
-    last_seen_at TEXT,                           -- 最后在线时间
-    last_reported_state TEXT,                    -- JSON：最后上报状态
-    enrolled_at TEXT NOT NULL,                   -- 注册时间
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    FOREIGN KEY (instance_id) REFERENCES instances(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_ea2_devices_instance ON ea2_devices(instance_id);
-CREATE INDEX IF NOT EXISTS idx_ea2_devices_device_id ON ea2_devices(device_id);
-
--- 设备凭证
-CREATE TABLE IF NOT EXISTS ea2_device_credentials (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id TEXT NOT NULL,                     -- 关联 ea2_devices.device_id
-    credential_hash TEXT NOT NULL,               -- 凭证哈希
-    version INTEGER NOT NULL DEFAULT 1,
-    issued_at TEXT NOT NULL,
-    last_used_at TEXT,
-    revoked_at TEXT,
-    FOREIGN KEY (device_id) REFERENCES ea2_devices(device_id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_ea2_creds_device ON ea2_device_credentials(device_id);
-
--- 设备注册码
-CREATE TABLE IF NOT EXISTS ea2_enrollment_codes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    instance_id INTEGER NOT NULL,
-    code_hash TEXT NOT NULL UNIQUE,              -- 注册码哈希
-    display_name TEXT,
-    max_uses INTEGER NOT NULL DEFAULT 1,
-    used_count INTEGER NOT NULL DEFAULT 0,
-    expires_at TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    revoked_at TEXT,
-    FOREIGN KEY (instance_id) REFERENCES instances(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_ea2_enroll_instance ON ea2_enrollment_codes(instance_id);
-
--- 命令队列
-CREATE TABLE IF NOT EXISTS ea2_commands (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    command_id TEXT NOT NULL UNIQUE,             -- UUID 命令 ID
-    instance_id INTEGER NOT NULL,
-    device_id TEXT,                              -- NULL = 广播到所有设备
-    command_type TEXT NOT NULL,                  -- exam-config.prepare / playback.activate / etc.
-    payload TEXT NOT NULL,                       -- JSON 命令负载
-    status TEXT NOT NULL DEFAULT 'pending',      -- pending / sent / acknowledged / succeeded / failed / expired
-    issued_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    result_status TEXT,                          -- acknowledged / succeeded / failed
-    result_error TEXT,                           -- JSON 错误信息
-    result_occurred_at TEXT,                     -- 结果发生时间
-    result_state TEXT,                           -- JSON 设备状态快照
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (instance_id) REFERENCES instances(id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_ea2_commands_instance ON ea2_commands(instance_id);
-CREATE INDEX IF NOT EXISTS idx_ea2_commands_device ON ea2_commands(device_id);
-CREATE INDEX IF NOT EXISTS idx_ea2_commands_status ON ea2_commands(status);
 
 -- ===== 帮助中心文档 =====
 -- parent_id = 0 表示一级目录（分类），否则为所属一级目录 ID（二级文章）
