@@ -111,43 +111,92 @@
                 />
                 <span class="cloud-file-size draft-hint">{{ draft.kind === 'dir' ? '文件夹' : '文件' }}</span>
               </div>
-              <div
-                v-for="item in visibleCloudFiles"
-                :key="item.id"
-                class="cloud-file-item"
-                :class="{ active: currentFile?.id === item.id, directory: item.is_directory, 'shared-from-other': item.source === 'shared', renaming: renamingId === item.id }"
-                @click="onCloudItemClick(item)"
-                @contextmenu.prevent.stop="onCloudItemCtxMenu(item, $event)"
-              >
-                <span class="cloud-file-icon"><Icon :icon="item.icon" :size="16" /></span>
-                <input
-                  v-if="renamingId === item.id"
-                  v-model="renameValue"
-                  class="cloud-inline-input"
-                  @keyup.enter="commitInlineRename(item)"
-                  @keyup.esc="cancelInlineRename"
-                  @blur="onRenameBlur(item)"
-                  @click.stop
-                />
-                <span v-else class="cloud-file-name" :title="item.name">{{ item.name }}</span>
-                <template v-if="!item.is_directory">
-                  <span
-                    v-if="distributedCount(item) > 0"
-                    class="cloud-file-dist-badge"
-                    :title="'已分发 ' + distributedCount(item) + ' 个配置实例'"
-                  >
-                    <Icon icon="ri-git-branch-line" :size="9" /> 已分发
-                  </span>
-                  <span v-if="item.is_shared && item.source !== 'shared'" class="cloud-file-shared-badge" title="已分享">
-                    <Icon icon="ri-share-line" :size="10" />
-                  </span>
-                  <span v-if="item.source === 'shared'" class="cloud-file-shared-from-badge" :title="'来自 ' + item.shared_from + ' 的分享'">
-                    <Icon icon="ri-share-forward-line" :size="10" /> 来自分享
-                  </span>
-                  <span class="cloud-file-size">{{ item.size }}</span>
-                </template>
-                <span v-else class="cloud-file-size">{{ dirChildCount(item) }} 项</span>
-              </div>
+              <template v-for="item in visibleCloudFiles" :key="item.id">
+                <!-- 行内删除确认 -->
+                <div v-if="deleteConfirmId === item.id" class="cloud-file-item delete-confirm" @click.stop>
+                  <span class="cloud-file-icon"><Icon :icon="item.is_directory ? 'ri-folder-3-line' : 'ri-file-2-line'" :size="16" /></span>
+                  <div class="cloud-delete-body">
+                    <div class="cloud-delete-line">
+                      <Icon icon="ri-error-warning-line" :size="12" />
+                      <span class="cloud-delete-title">{{ deleteConfirmTitle(item) }}</span>
+                    </div>
+                    <div v-if="item.is_directory" class="cloud-delete-hint">
+                      目录内全部文件{{ deleteInstanceCount(item) > 0 ? '及关联配置实例' : '' }}将一并删除
+                    </div>
+                    <label v-if="deleteInstanceCount(item) > 0" class="cloud-delete-instances" @click.stop>
+                      <input type="checkbox" v-model="deleteConfirmDeleteInstances" :disabled="deletingId === item.id" />
+                      <span>同时删除关联配置实例（{{ deleteInstanceCount(item) }}）</span>
+                    </label>
+                    <div v-if="deleteConfirmError" class="cloud-delete-error">{{ deleteConfirmError }}</div>
+                    <div class="cloud-delete-actions">
+                      <button
+                        type="button"
+                        class="cloud-delete-btn danger"
+                        :disabled="deletingId === item.id"
+                        @click.stop="confirmDeleteItem(item)"
+                      >
+                        <Icon v-if="deletingId === item.id" icon="ri-loader-4-line" :size="11" class="spin" />
+                        <span>{{ deletingId === item.id ? '删除中...' : '删除' }}</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="cloud-delete-btn"
+                        :disabled="deletingId === item.id"
+                        @click.stop="cancelDeleteConfirm"
+                      >取消</button>
+                    </div>
+                  </div>
+                </div>
+                <!-- 普通文件/目录行 -->
+                <div
+                  v-else
+                  class="cloud-file-item"
+                  :class="{ active: currentFile?.id === item.id, directory: item.is_directory, 'shared-from-other': item.source === 'shared', 'share-placeholder': item.is_share_placeholder === 1, renaming: renamingId === item.id }"
+                  @click="onCloudItemClick(item)"
+                  @contextmenu.prevent.stop="onCloudItemCtxMenu(item, $event)"
+                >
+                  <span class="cloud-file-icon"><Icon :icon="item.icon" :size="16" /></span>
+                  <input
+                    v-if="renamingId === item.id"
+                    v-model="renameValue"
+                    class="cloud-inline-input"
+                    @keyup.enter="commitInlineRename(item)"
+                    @keyup.esc="cancelInlineRename"
+                    @blur="onRenameBlur(item)"
+                    @click.stop
+                  />
+                  <span v-else class="cloud-file-name" :title="item.name">{{ item.name }}</span>
+                  <template v-if="!item.is_directory">
+                    <span
+                      v-if="distributedCount(item) > 0"
+                      class="cloud-file-dist-badge"
+                      :title="'已分发 ' + distributedCount(item) + ' 个配置实例'"
+                    >
+                      <Icon icon="ri-git-branch-line" :size="9" /> 已分发
+                    </span>
+                    <span v-if="item.is_shared && item.source !== 'shared'" class="cloud-file-shared-badge" title="已分享">
+                      <Icon icon="ri-share-line" :size="10" />
+                    </span>
+                    <span
+                      v-if="item.source === 'shared'"
+                      class="cloud-file-shared-from-badge"
+                      :title="shareTooltip(item)"
+                    >
+                      <Icon icon="ri-share-forward-line" :size="9" />
+                      <span class="share-owner">{{ item.shared_from ? '来自 ' + item.shared_from : '来自分享' }}</span>
+                    </span>
+                    <span
+                      v-if="item.source === 'shared' && item.shared_permission === 'view'"
+                      class="cloud-file-lock-badge"
+                      title="只读分享"
+                    >
+                      <Icon icon="ri-lock-line" :size="9" />
+                    </span>
+                    <span class="cloud-file-size">{{ item.size }}</span>
+                  </template>
+                  <span v-else class="cloud-file-size">{{ dirChildCount(item) }} 项</span>
+                </div>
+              </template>
               <div v-if="!cloudLoading && visibleCloudFiles.length === 0 && !draft" class="cloud-empty">
                 <div class="cloud-empty-title">{{ currentDir ? '此文件夹为空' : '暂无云文件' }}</div>
                 <div class="cloud-empty-hint">右键或点「+」新建文件 / 文件夹</div>
@@ -263,6 +312,14 @@
             {{ activePlugin.name }}
           </span>
           <span class="file-type-badge" v-if="currentFile">{{ currentFileType }}</span>
+          <span
+            v-if="currentFile?.source === 'shared'"
+            class="file-share-badge"
+            :title="currentFile.readOnly ? '来自分享（只读，无法保存）' : '来自分享（可编辑，保存会写回分享者文件）'"
+          >
+            <Icon :icon="currentFile.readOnly ? 'ri-lock-line' : 'ri-share-forward-line'" :size="11" />
+            <span>分享{{ currentFile.readOnly ? ' · 只读' : '' }}</span>
+          </span>
         </div>
       </header>
 
@@ -441,7 +498,7 @@
                   <button class="ctx-item" @click="startInlineRename(cloudCtxMenu.file!); closeCloudCtxMenu()">
                     <Icon icon="ri-edit-line" :size="14" /> 重命名
                   </button>
-                  <button class="ctx-item danger" @click="deleteCloudItem(cloudCtxMenu.file!); closeCloudCtxMenu()">
+                  <button class="ctx-item danger" @click="requestDeleteItem(cloudCtxMenu.file!); closeCloudCtxMenu()">
                     <Icon icon="ri-delete-bin-line" :size="14" /> 删除
                   </button>
                 </template>
@@ -480,7 +537,7 @@
                   <button
                     class="ctx-item danger"
                     v-if="cloudCtxMenu.file.source !== 'shared'"
-                    @click="deleteCloudItem(cloudCtxMenu.file!); closeCloudCtxMenu()"
+                    @click="requestDeleteItem(cloudCtxMenu.file!); closeCloudCtxMenu()"
                   >
                     <Icon icon="ri-delete-bin-line" :size="14" /> 删除
                   </button>
@@ -781,6 +838,11 @@ interface CloudFile {
   owner_username: string;
   created_at?: string;
   updated_at?: string;
+  /** 分享占位文件标记（source='shared' 时为 1） */
+  is_share_placeholder?: number;
+  /** 分享记录 ID / 分享者源文件 ID（占位文件） */
+  share_id?: number;
+  owner_file_id?: number;
 }
 
 /** 文件属性对话框数据（属性页） */
@@ -1074,10 +1136,18 @@ function dirChildCount(dir: CloudFile): number {
   return cloudFiles.value.filter((f) => (f.parent_dir || '') === rel).length;
 }
 
+/** 分享占位文件的悬停提示（来自谁 / 只读或可编辑） */
+function shareTooltip(item: CloudFile): string {
+  const from = item.shared_from || '他人';
+  const permission = item.shared_permission === 'edit' ? '可编辑' : '只读';
+  return `来自 ${from} 的分享（${permission}）`;
+}
+
 function navigateDir(dir: string) {
   if (!isLoggedIn.value) return;
   cancelDraft();
   cancelInlineRename();
+  cancelDeleteConfirm();
   currentDir.value = dir;
 }
 
@@ -1099,6 +1169,7 @@ const visibleCloudFiles = computed<CloudFile[]>(() => {
 });
 
 function onCloudItemClick(item: CloudFile) {
+  if (deleteConfirmId.value && deleteConfirmId.value !== item.id) cancelDeleteConfirm();
   if (item.is_directory) enterDirectory(item);
   else openCloudFile(item);
 }
@@ -1131,6 +1202,7 @@ function startDraft(kind: 'file' | 'dir') {
   showCloudPlusMenu.value = false;
   closeCloudCtxMenu();
   cancelInlineRename();
+  cancelDeleteConfirm();
   draft.value = { kind, name: kind === 'dir' ? '新建文件夹' : '新建文件.txt' };
   focusDraftInput();
 }
@@ -1189,20 +1261,33 @@ const renamingId = ref<string | null>(null);
 const renameValue = ref('');
 let renameBusy = false;
 
+/** 选中主文件名（不含扩展名）：以最后一个点为界；无扩展名/目录则全选 */
+function selectBaseName(input: HTMLInputElement | null, name: string, isDirectory = false) {
+  if (!input) return;
+  const dot = isDirectory ? -1 : (name || '').lastIndexOf('.');
+  if (dot > 0) {
+    input.setSelectionRange(0, dot);
+  } else {
+    input.select();
+  }
+}
+
 /** v-for 内不能使用普通 ref，聚焦通过 class 查询当前行内输入框 */
-function focusRenameInput() {
+function focusRenameInput(item: CloudFile) {
   requestAnimationFrame(() => {
     const input = document.querySelector<HTMLInputElement>('.cloud-file-item.renaming .cloud-inline-input');
-    input?.focus();
-    input?.select();
+    if (!input) return;
+    input.focus();
+    selectBaseName(input, renameValue.value || item.name, item.is_directory);
   });
 }
 
 function startInlineRename(item: CloudFile) {
-  if (item.source === 'shared' || draft.value) return;
+  if (item.source === 'shared' || item.is_share_placeholder === 1 || draft.value) return;
+  cancelDeleteConfirm();
   renamingId.value = item.id;
   renameValue.value = item.name;
-  focusRenameInput();
+  focusRenameInput(item);
 }
 
 function cancelInlineRename() {
@@ -1226,7 +1311,7 @@ async function commitInlineRename(item: CloudFile) {
   }
   if (!isValidCloudName(newName)) {
     alert('名称不能包含 / \\ : * ? " < > | 等字符，且不能为空，请修改后重试');
-    focusRenameInput();
+    focusRenameInput(item);
     return;
   }
   if (newName === item.name) {
@@ -1235,7 +1320,7 @@ async function commitInlineRename(item: CloudFile) {
   }
   if (isNameConflict(item, newName)) {
     alert('当前目录已存在同名' + (item.is_directory ? '文件夹' : '文件'));
-    focusRenameInput();
+    focusRenameInput(item);
     return;
   }
   renameBusy = true;
@@ -1268,6 +1353,87 @@ async function commitInlineRename(item: CloudFile) {
 
 function onRenameBlur(item: CloudFile) {
   if (renamingId.value === item.id) void commitInlineRename(item);
+}
+
+// ===== 行内删除确认 =====
+const deleteConfirmId = ref<string | null>(null);
+const deleteConfirmDeleteInstances = ref(true);
+const deleteConfirmError = ref('');
+const deletingId = ref<string | null>(null);
+
+/** 目录内所有文件的已分发实例数（含子目录） */
+function dirInstanceCount(dir: CloudFile): number {
+  const rel = dirRelativePath(dir);
+  let total = 0;
+  for (const file of cloudFiles.value) {
+    if (file.is_directory || file.source === 'shared') continue;
+    const parent = file.parent_dir || '';
+    if (parent === rel || parent.startsWith(rel + '/')) total += distributedCount(file);
+  }
+  return total;
+}
+
+/** 当前待删除项（文件/目录）关联的配置实例数 */
+function deleteInstanceCount(item: CloudFile): number {
+  return item.is_directory ? dirInstanceCount(item) : distributedCount(item);
+}
+
+function deleteConfirmTitle(item: CloudFile): string {
+  if (item.is_directory) return `删除文件夹「${item.name}」及全部内容？`;
+  return `确认删除「${item.name}」？`;
+}
+
+function cancelDeleteConfirm() {
+  if (deletingId.value) return;
+  deleteConfirmId.value = null;
+  deleteConfirmError.value = '';
+}
+
+/** 右键删除：进入行内确认（不再使用 window.confirm） */
+function requestDeleteItem(item: CloudFile) {
+  if (item.source === 'shared' || item.is_share_placeholder === 1 || deletingId.value) return;
+  cancelDraft();
+  cancelInlineRename();
+  closeCloudCtxMenu();
+  deleteConfirmId.value = item.id;
+  deleteConfirmDeleteInstances.value = true;
+  deleteConfirmError.value = '';
+}
+
+/** 行内确认后执行删除；可选同时删除关联配置实例 */
+async function confirmDeleteItem(item: CloudFile) {
+  if (deletingId.value || deleteConfirmId.value !== item.id) return;
+  const isDir = item.is_directory;
+  const instanceCount = deleteInstanceCount(item);
+  const deleteInstances = instanceCount > 0 && deleteConfirmDeleteInstances.value;
+  deletingId.value = item.id;
+  deleteConfirmError.value = '';
+  try {
+    await cloudApi.delete(
+      Number(item.id),
+      deleteInstances ? { delete_instances: true } : undefined
+    );
+    if (isDir) {
+      // 关闭被删除目录下的已打开标签
+      const dirPrefix = (item.file_path || '').replace(/\/+$/, '') + '/';
+      if (dirPrefix !== '/') {
+        const toClose = openTabs.value.filter((t) => t.path && t.path.startsWith(dirPrefix));
+        toClose.forEach((t) => closeTab(t));
+      }
+    } else if (currentFile.value?.id === item.id) {
+      closeTab(currentFile.value);
+    }
+    deleteConfirmId.value = null;
+    deleteConfirmError.value = '';
+    // 刷新列表（含用量）与实例总览
+    await loadCloudFiles();
+    loadOverview(true);
+  } catch (e: any) {
+    // 失败保留确认条并显示错误，方便重试
+    deleteConfirmError.value = e?.message || '删除失败，请稍后重试';
+  } finally {
+    deletingId.value = null;
+  }
 }
 
 // ===== 云文件区域右键菜单（空白 / 文件 / 目录） =====
@@ -1308,7 +1474,8 @@ const cloudApi = {
   create: (body: any) => api.post('/cloud-files?action=create', body),
   update: (body: any) => api.post('/cloud-files?action=update', body),
   rename: (body: { id: number; name: string }) => api.post('/cloud-files?action=rename', body),
-  delete: (id: number) => api.post('/cloud-files?action=delete', { id }),
+  delete: (id: number, options?: { delete_instances?: boolean }) =>
+    api.post('/cloud-files?action=delete', options?.delete_instances ? { id, delete_instances: true } : { id }),
   usage: () => api.get<any>('/cloud-files?action=usage'),
 };
 
@@ -1340,11 +1507,19 @@ async function loadCloudFiles() {
         source: f.source || 'owned',
         shared_from: f.shared_from || '',
         shared_permission: f.shared_permission || '',
+        is_share_placeholder: Number(f.is_share_placeholder) === 1 ? 1 : 0,
+        share_id: Number(f.share_id) || undefined,
+        owner_file_id: Number(f.owner_file_id) || undefined,
       } as CloudFile;
     });
     // 当前目录若已不存在（被删除/改名），回到根目录
     if (currentDir.value && !cloudFiles.value.some((f) => f.is_directory && dirRelativePath(f) === currentDir.value)) {
       currentDir.value = '';
+    }
+    // 待删除项已不在列表（被删除/改名）时清除行内确认条
+    if (deleteConfirmId.value && !cloudFiles.value.some((f) => f.id === deleteConfirmId.value)) {
+      deleteConfirmId.value = null;
+      deleteConfirmError.value = '';
     }
     void loadUsage();
   } catch {
@@ -1411,6 +1586,7 @@ async function openTplDialog() {
     alert('请先登录后再使用「从模板新建」');
     return;
   }
+  cancelDeleteConfirm();
   showTplDialog.value = true;
   tplLoading.value = true;
   try {
@@ -1481,6 +1657,7 @@ async function releasePluginSamples(plugin: any) {
 }
 
 function triggerCloudUpload() {
+  cancelDeleteConfirm();
   cloudUploadInput.value?.click();
 }
 
@@ -1503,33 +1680,6 @@ function handleCloudUpload(event: Event) {
   };
   reader.readAsText(file);
   target.value = '';
-}
-
-/** 删除云文件 / 目录（目录递归删除） */
-async function deleteCloudItem(item: CloudFile) {
-  const isDir = item.is_directory;
-  const message = isDir
-    ? `确定删除文件夹「${item.name}」及其全部内容吗？此操作不可恢复。`
-    : `确定删除云文件「${item.name}」吗？`;
-  if (!confirm(message)) return;
-  try {
-    await cloudApi.delete(Number(item.id));
-    if (isDir) {
-      // 关闭被删除目录下的已打开标签
-      const dirPrefix = (item.file_path || '').replace(/\/+$/, '') + '/';
-      if (dirPrefix !== '/') {
-        const toClose = openTabs.value.filter((t) => t.path && t.path.startsWith(dirPrefix));
-        toClose.forEach((t) => closeTab(t));
-      }
-    } else if (currentFile.value?.id === item.id) {
-      closeTab(currentFile.value);
-    }
-    await loadCloudFiles();
-    // 源文件删除后实例可能变为警告状态，静默刷新实例列表
-    loadOverview(true);
-  } catch (e: any) {
-    alert('删除失败：' + (e?.message || '未知错误'));
-  }
 }
 
 function downloadCloudFile(file: CloudFile) {
@@ -1689,6 +1839,7 @@ function switchSidebarView(view: 'files' | 'instances') {
   if (view !== 'files') {
     cancelDraft();
     cancelInlineRename();
+    cancelDeleteConfirm();
     showCloudPlusMenu.value = false;
   }
   if (view === 'instances' && (!distributionOverviewLoaded.value || overviewError.value)) {
@@ -2885,6 +3036,63 @@ onMounted(() => {
   border-radius: var(--radius-xs);
 }
 .cloud-file-shared-from-badge { display: inline-flex; align-items: center; gap: 2px; font-size: 9px; color: var(--accent-base); background: var(--accent-bg); padding: 0 4px; border-radius: var(--radius-xs); flex-shrink: 0; }
+.cloud-file-shared-from-badge .share-owner { max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cloud-file-lock-badge { display: inline-flex; align-items: center; color: var(--text-tertiary); flex-shrink: 0; }
+
+/* 分享占位文件（来自分享）视觉区分 */
+.cloud-file-item.share-placeholder {
+  background: rgba(0, 103, 192, 0.05);
+  box-shadow: inset 2px 0 0 var(--accent-base);
+}
+.cloud-file-item.share-placeholder:hover { background: var(--accent-bg); }
+.cloud-file-item.share-placeholder .cloud-file-icon { color: var(--accent-base); }
+
+/* 行内删除确认 */
+.cloud-file-item.delete-confirm {
+  align-items: flex-start;
+  gap: var(--spacer-2);
+  padding: var(--spacer-2);
+  background: rgba(220, 38, 38, 0.06);
+  border: 1px solid rgba(220, 38, 38, 0.22);
+  cursor: default;
+}
+.cloud-file-item.delete-confirm .cloud-file-icon { margin-top: 1px; color: var(--status-error); }
+.cloud-delete-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cloud-delete-line { display: flex; align-items: center; gap: 4px; color: var(--status-error); font-size: var(--font-size-xs); font-weight: 500; }
+.cloud-delete-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cloud-delete-hint { font-size: 10px; color: var(--text-tertiary); line-height: 1.4; }
+.cloud-delete-instances { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-secondary); cursor: pointer; }
+.cloud-delete-instances input { margin: 0; accent-color: var(--status-error); }
+.cloud-delete-error { font-size: 10px; color: var(--status-error); line-height: 1.4; word-break: break-all; }
+.cloud-delete-actions { display: flex; align-items: center; gap: 6px; }
+.cloud-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 8px;
+  border: 1px solid var(--ctrl-border-rest);
+  border-radius: var(--radius-xs);
+  background: var(--ctrl-fill-default);
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+}
+.cloud-delete-btn:hover:not(:disabled) { background: var(--subtle-secondary); color: var(--text-primary); }
+.cloud-delete-btn.danger { background: var(--status-error); border-color: transparent; color: white; }
+.cloud-delete-btn.danger:hover:not(:disabled) { filter: brightness(1.06); }
+.cloud-delete-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* 顶栏分享标签 */
+.file-share-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px var(--spacer-2);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  color: var(--accent-base);
+  background: var(--accent-bg);
+}
 .cloud-empty {
   display: flex;
   flex-direction: column;

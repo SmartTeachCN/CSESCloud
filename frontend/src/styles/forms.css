@@ -20,8 +20,10 @@
   align-items: center;
 }
 
-/* 表单输入框 - 默认无图标 */
-.form-group input,
+/* 表单输入框 - 默认无图标
+   仅文本类 input（排除 radio/checkbox/color/range/file/submit/button 等）与 select，
+   避免把 radio/checkbox 强制渲染成 40px 通栏输入框样式 */
+.form-group input:not([type="radio"]):not([type="checkbox"]):not([type="color"]):not([type="range"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="reset"]),
 .form-group select {
   width: 100%;
   height: 40px;
@@ -36,17 +38,17 @@
   appearance: none;
 }
 
-/* 放在 .input-wrapper 内的 input 才有图标预留空间 */
-.input-wrapper .form-group input,
-.input-wrapper input {
+/* 放在 .input-wrapper 内的输入才有图标预留空间（radio/checkbox 等不参与） */
+.input-wrapper .form-group input:not([type="radio"]):not([type="checkbox"]):not([type="color"]):not([type="range"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="reset"]),
+.input-wrapper input:not([type="radio"]):not([type="checkbox"]):not([type="color"]):not([type="range"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="reset"]) {
   padding: 0 var(--spacer-3) 0 calc(var(--spacer-3) + 24px);
 }
 
-.form-group input::placeholder {
+.form-group input:not([type="radio"]):not([type="checkbox"]):not([type="color"]):not([type="range"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="reset"])::placeholder {
   color: var(--text-tertiary);
 }
 
-.form-group input:focus,
+.form-group input:not([type="radio"]):not([type="checkbox"]):not([type="color"]):not([type="range"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="reset"]):focus,
 .form-group select:focus {
   border-color: var(--accent-base);
   background: var(--ctrl-fill-input-active);

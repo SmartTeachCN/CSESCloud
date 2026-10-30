@@ -41,13 +41,14 @@
 html, body { margin: 0; padding: 0; height: 100%; }
 body { overflow: hidden; font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif; font-size: 13px; }
 
-.cs-app { display: flex; flex-direction: column; height: 100%; background: var(--cs-bg); color: var(--cs-text); }
+.cs-app { display: flex; flex-direction: column; height: 100%; min-width: 0; min-height: 0; background: var(--cs-bg); color: var(--cs-text); }
 
 /* ---- 顶栏 ---- */
 .cs-topbar {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 14px; background: var(--cs-card);
   border-bottom: 1px solid var(--cs-card-stroke); flex-shrink: 0;
+  min-width: 0;
 }
 .cs-badge {
   display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
@@ -58,12 +59,13 @@ body { overflow: hidden; font-family: 'Segoe UI Variable', 'Segoe UI', system-ui
 .cs-badge.cs-not-cses { background: rgba(202, 143, 4, 0.10); color: var(--cs-warn); border-color: rgba(202, 143, 4, 0.2); }
 .cs-badge-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .cs-name-input {
-  width: 220px; height: 30px; padding: 0 10px; font-size: 13px; font-family: inherit;
+  flex: 0 1 220px; width: 220px; min-width: 90px;
+  height: 30px; padding: 0 10px; font-size: 13px; font-family: inherit;
   background: var(--cs-card); color: var(--cs-text);
   border: 1px solid var(--cs-border); border-radius: 6px; outline: none;
 }
 .cs-name-input:focus { border-color: var(--cs-accent); }
-.cs-stats { flex: 1; font-size: 11px; color: var(--cs-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cs-stats { flex: 1; min-width: 0; font-size: 11px; color: var(--cs-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cs-topbar-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 /* ---- 按钮 ---- */
@@ -97,8 +99,8 @@ body { overflow: hidden; font-family: 'Segoe UI Variable', 'Segoe UI', system-ui
 .cs-view-tab svg { width: 14px; height: 14px; flex-shrink: 0; }
 
 /* ---- 主体 ---- */
-.cs-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-.cs-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; padding: 10px 14px 0; }
+.cs-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.cs-view { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 10px 14px 0; }
 
 .cs-panel-bar { display: flex; align-items: center; justify-content: space-between; padding: 0 0 8px; flex-shrink: 0; }
 .cs-panel-title { font-size: 11px; font-weight: 600; color: var(--cs-text-3); letter-spacing: 0.02em; }
@@ -119,7 +121,7 @@ body { overflow: hidden; font-family: 'Segoe UI Variable', 'Segoe UI', system-ui
 /* ---- 列表 + 详情 双栏 ---- */
 .cs-split { flex: 1; display: flex; gap: 10px; overflow: hidden; margin-bottom: 10px; min-height: 0; }
 .cs-list-pane {
-  width: 240px; flex-shrink: 0; display: flex; flex-direction: column;
+  width: 240px; min-width: 0; flex-shrink: 0; display: flex; flex-direction: column;
   background: var(--cs-card); border: 1px solid var(--cs-card-stroke); border-radius: var(--cs-radius); overflow: hidden;
 }
 .cs-list-pane .cs-panel-bar { padding: 8px 10px; margin: 0; background: var(--cs-subtle-2); border-bottom: 1px solid var(--cs-border); }
@@ -196,7 +198,7 @@ body { overflow: hidden; font-family: 'Segoe UI Variable', 'Segoe UI', system-ui
 /* ---- 科目：左表格右详情 ---- */
 .cs-subjects-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 .cs-subjects-pane .cs-table-wrap { flex: 1; margin-bottom: 0; }
-.cs-subject-detail { max-width: 440px; flex: 0 0 380px; }
+.cs-subject-detail { max-width: 440px; flex: 0 0 380px; min-width: 0; }
 .cs-subject-row { cursor: pointer; }
 .cs-subject-row.selected td { background: var(--cs-accent-bg) !important; }
 .cs-subject-row.selected td:first-child { font-weight: 600; color: var(--cs-accent); }
@@ -328,12 +330,20 @@ body { overflow: hidden; font-family: 'Segoe UI Variable', 'Segoe UI', system-ui
 .cs-dock-item:hover { background: var(--cs-subtle); }
 .cs-dock-item.current { background: var(--cs-accent-bg); border-color: var(--cs-accent); color: var(--cs-accent); font-weight: 600; }
 
-/* ---- 课程快速选择面板 ---- */
-.cs-quick-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center; z-index: 2000; }
+/* ---- 课程快速选择面板（模态框） ---- */
+.cs-quick-overlay {
+  position: fixed; inset: 0; z-index: 2000;
+  padding: 20px; box-sizing: border-box;
+  background: rgba(0,0,0,0.35);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  display: flex; align-items: center; justify-content: center;
+}
 .cs-quick-panel {
-  width: 420px; max-height: 70vh; display: flex; flex-direction: column;
+  width: 420px; max-width: min(92vw, 420px); max-height: calc(100vh - 40px);
+  display: flex; flex-direction: column;
   background: var(--cs-bg); border: 1px solid var(--cs-border); border-radius: var(--radius-lg, 12px);
-  box-shadow: 0 12px 40px rgba(0,0,0,0.2); overflow: hidden;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.25); overflow: hidden;
 }
 .cs-quick-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; font-size: 13px; font-weight: 600; color: var(--cs-text); border-bottom: 1px solid var(--cs-border); }
 .cs-quick-search { margin: 10px 14px 0; height: 30px; padding: 0 10px; font-size: 12px; font-family: inherit; background: var(--cs-card); color: var(--cs-text); border: 1px solid var(--cs-border); border-radius: 6px; outline: none; }
@@ -354,3 +364,29 @@ body { overflow: hidden; font-family: 'Segoe UI Variable', 'Segoe UI', system-ui
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--cs-subtle); border-radius: 999px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--cs-border); }
+
+/* ---- 小窗口适配：避免固定侧栏挤压主区 / 横向溢出 / 下方面板截断 ---- */
+@media (max-width: 760px) {
+  .cs-topbar { padding: 6px 10px; gap: 6px; }
+  .cs-name-input { flex-basis: 140px; width: 140px; }
+  .cs-view-tabs { padding: 0 10px; }
+  .cs-view-tab { padding: 8px 10px; }
+  .cs-view { padding: 8px 10px 0; }
+  .cs-list-pane { width: 200px; }
+  .cs-subject-detail { flex: 0 0 300px; max-width: 320px; }
+  .cs-issues-body { max-height: 110px; }
+}
+
+@media (max-width: 560px) {
+  .cs-topbar { flex-wrap: wrap; row-gap: 6px; }
+  .cs-stats { flex-basis: 100%; }
+  .cs-list-pane { width: 164px; }
+  .cs-subject-detail { flex: 0 0 240px; max-width: 240px; }
+  .cs-quick-panel { width: 92vw; }
+  .cs-quick-grid { grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); }
+}
+
+@media (max-height: 560px) {
+  .cs-issues-body { max-height: 84px; }
+  .cs-view { padding-top: 6px; }
+}

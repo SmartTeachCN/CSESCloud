@@ -246,7 +246,8 @@ function onPluginSave(content: string) {
 }
 
 function onPluginNotify(msg: string) {
-  console.log('[EditorPane] plugin notify:', msg);
+  // window.alert 已被全局替换为应用内自定义提示框
+  if (msg) window.alert(msg);
 }
 
 function onPluginSetRibbon(groups: any[]) {

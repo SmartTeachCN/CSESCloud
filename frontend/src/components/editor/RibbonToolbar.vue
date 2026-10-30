@@ -289,11 +289,20 @@ const titleInputRef = ref<HTMLInputElement | null>(null);
 
 function onTitleClick() {
   if (!props.editableTitle || !props.editorInfo) return;
-  titleDraft.value = props.editorInfo.title;
+  const name = props.editorInfo.title;
+  titleDraft.value = name;
   titleEditing.value = true;
   requestAnimationFrame(() => {
-    titleInputRef.value?.focus();
-    titleInputRef.value?.select();
+    const input = titleInputRef.value;
+    if (!input) return;
+    input.focus();
+    // 只选中主文件名，不选中扩展名（无扩展名则全选）
+    const dot = name.lastIndexOf('.');
+    if (dot > 0) {
+      input.setSelectionRange(0, dot);
+    } else {
+      input.select();
+    }
   });
 }
 

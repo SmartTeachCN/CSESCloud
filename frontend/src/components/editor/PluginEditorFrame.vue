@@ -98,6 +98,12 @@ ${html}
       if (typeof saveConfig === 'function') saveConfig();
     }
   });
+  // 插件内部 alert 统一转发到平台的自定义提示框
+  window.alert = function(message) {
+    try {
+      window.parent.postMessage({ __csesPluginAlert: true, message: String(message === undefined || message === null ? '' : message) }, '*');
+    } catch (_) {}
+  };
 ${js}
 <\/script>
 </body>
@@ -139,6 +145,11 @@ function onPluginMessage(e: MessageEvent) {
     emit('save', e.data.content || '');
   }
 
+  // 插件内部 alert → 平台自定义提示框
+  if (e.data.__csesPluginAlert) {
+    emit('notify', String(e.data.message || ''));
+  }
+
   // 插件请求回退到默认编辑器
   if (e.data.__csesPluginFallback) {
     emit('fallback', String(e.data.reason || ''));
@@ -162,10 +173,15 @@ defineExpose({ iframeReady, pluginFrame });
 </script>
 
 <style scoped>
+/* 容器级兜底：撑满父容器、避免 inline 基线间隙与白底闪烁（不改插件内部样式） */
 .plugin-iframe {
+  display: block;
   width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
   border: none;
-  background: white;
+  background: transparent;
+  color-scheme: light dark;
 }
 </style>

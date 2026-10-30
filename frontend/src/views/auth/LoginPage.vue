@@ -267,6 +267,22 @@ function switchTab(tab: 'alliance' | 'sub' | 'temp_admin') {
   errorMessage.value = '';
 }
 
+/**
+ * 登录后跳转地址统一安全校验：
+ * 只允许站内以单个 / 开头的路径（排除 //、/\ 协议相对跳转），
+ * 且不能是登录页本身，其余一律回退到 fallback。
+ */
+function safeRedirect(raw: unknown, fallback = '/console'): string {
+  const first = Array.isArray(raw) ? raw[0] : raw;
+  const path = typeof first === 'string' ? first.trim() : '';
+  if (!path) return fallback;
+  if (!path.startsWith('/')) return fallback;
+  if (path.startsWith('//') || path.startsWith('/\\')) return fallback;
+  if (path === '/login' || path.startsWith('/login?') || path.startsWith('/login#')) return fallback;
+  if (/[\r\n]/.test(path)) return fallback;
+  return path;
+}
+
 function onSchoolChange() {
   errorMessage.value = '';
 }
@@ -276,7 +292,7 @@ function filterSavedLogins(list: any[]): any[] {
   return (list || []).filter((entry: any) => entry.entry_type !== 'instance_sub');
 }
 
-async function loadInitData() {
+async function loadInitData(): Promise<any | null> {
   try {
     const [schoolList, me] = await Promise.all([
       authApi.schools().catch(() => []),
@@ -286,8 +302,10 @@ async function loadInitData() {
     if (Array.isArray(me?.saved_logins)) {
       savedLogins.value = filterSavedLogins(me.saved_logins);
     }
+    return me ?? null;
   } catch {
     // 未登录时也允许拉取学校列表
+    return null;
   }
 }
 
@@ -306,9 +324,15 @@ async function loadAllianceMode() {
   }
 }
 
-onMounted(() => {
-  loadInitData();
+onMounted(async () => {
+  const mePromise = loadInitData();
   loadAllianceMode();
+  const me = await mePromise;
+  // 已登录：不停留在登录页，按安全校验后的 redirect 直接进入控制台
+  if (me && (me.user_id || me.username || me.type)) {
+    router.replace(safeRedirect(route.query.redirect, '/console'));
+    return;
+  }
   // SSO 回调失败时带回的错误提示
   const oauthError = route.query.alliance_error as string;
   if (oauthError) {
@@ -343,8 +367,7 @@ async function handleAllianceLogin() {
   try {
     const data: any = await authApi.loginAlliance(allianceUsername.value.trim());
     await fetchMe();
-    const redirect = (route.query.redirect as string) || data?.redirect || '/console/editor/light';
-    router.push(redirect);
+    router.replace(safeRedirect(route.query.redirect ?? data?.redirect, '/console'));
   } catch (e: any) {
     errorMessage.value = e?.message || '登录失败';
   } finally {
@@ -362,8 +385,7 @@ async function handleTempAdminLogin() {
   try {
     const data: any = await authApi.loginTempAdmin(tempAdminUsername.value, tempAdminPassword.value);
     await fetchMe();
-    const redirect = (route.query.redirect as string) || data?.redirect || '/console/admin';
-    router.push(redirect);
+    router.replace(safeRedirect(route.query.redirect ?? data?.redirect, '/console'));
   } catch (e: any) {
     errorMessage.value = e?.message || '登录失败';
   } finally {
@@ -395,8 +417,7 @@ async function handleSubLogin() {
       const list = await authApi.savedLogins().catch(() => savedLogins.value);
       savedLogins.value = filterSavedLogins(list);
     }
-    const redirect = (route.query.redirect as string) || data?.redirect || '/console/editor/light';
-    router.push(redirect);
+    router.replace(safeRedirect(route.query.redirect ?? data?.redirect, '/console'));
   } catch (e: any) {
     errorMessage.value = e?.message || '登录失败';
   } finally {

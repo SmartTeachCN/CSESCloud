@@ -18,6 +18,53 @@
 const crypto = require('crypto');
 const { nowStr, dateStr } = require('../lib/response');
 const DB = require('../lib/db');
+const cloudShare = require('../lib/cloud-share');
+
+/** 当前用户的分享目标上下文：自身 user_id + 联盟账户绑定的子用户 ID + 联盟用户名。 */
+function shareTargetContext(DB, Auth) {
+  const user = Auth.user() || {};
+  const username = user.username || '';
+  const ids = new Set();
+  const userId = parseInt(user.user_id || 0, 10) || 0;
+  if (userId > 0) ids.add(userId);
+  if (Auth.isAlliance() && username) {
+    const bindings = DB.all('SELECT sub_user_id FROM alliance_account_bindings WHERE alliance_username = ?', [username]);
+    for (const b of bindings) {
+      const id = parseInt(b.sub_user_id, 10) || 0;
+      if (id > 0) ids.add(id);
+    }
+  }
+  return { username: username, ids: Array.from(ids) };
+}
+
+/** 构造 target_user_id / target_username 匹配条件与参数。 */
+function shareTargetClause(alias, ctx) {
+  const clauses = [];
+  const params = [];
+  if (ctx.ids.length) {
+    clauses.push(alias + '.target_user_id IN (' + ctx.ids.map(() => '?').join(',') + ')');
+    params.push(...ctx.ids);
+  }
+  if (ctx.username) {
+    clauses.push(alias + '.target_username = ?');
+    params.push(ctx.username);
+  }
+  return { sql: clauses.length ? '(' + clauses.join(' OR ') + ')' : '0', params: params };
+}
+
+/** 接收者对应的云空间用户名：联盟账户自身，或子用户绑定的联盟账户。 */
+function recipientCloudUsername(DB, Auth, perm) {
+  if (Auth.isAlliance()) return Auth.allianceUsername();
+  const subUserId = parseInt(perm && perm.target_user_id, 10) || 0;
+  if (subUserId > 0) {
+    const binding = DB.one(
+      'SELECT alliance_username FROM alliance_account_bindings WHERE sub_user_id = ? ORDER BY id ASC LIMIT 1',
+      [subUserId]
+    );
+    if (binding && binding.alliance_username) return String(binding.alliance_username);
+  }
+  return '';
+}
 
 module.exports = async (ctx) => {
   const { req, res, DB, Auth, Response, Helpers, query, body, files } = ctx;
@@ -77,12 +124,15 @@ module.exports = async (ctx) => {
     // 不能接受自己的分享
     if (link.owner_key === ownerKey) Response.error('不能接受自己的分享');
 
-    // 检查是否已经接受过
+    // 检查是否已经接受过（联盟账户也可能通过子用户绑定收到分享）
     const existing = DB.one(
-      `SELECT * FROM share_user_permissions WHERE share_id = ? AND target_user_id = ?`,
-      [link.share_id, user.user_id ?? 0]
+      `SELECT * FROM share_user_permissions sup WHERE sup.share_id = ?
+       AND (sup.target_user_id = ? OR sup.target_username = ?) ORDER BY sup.id DESC LIMIT 1`,
+      [link.share_id, user.user_id ?? 0, user.username ?? '']
     );
     if (existing && existing.status === 'accepted') {
+      const cloudUsername = recipientCloudUsername(DB, Auth, existing);
+      if (cloudUsername) cloudShare.ensurePlaceholderForShare(DB, link, cloudUsername);
       Response.success({ already_accepted: true }, '已接受过此分享');
     }
 
@@ -91,6 +141,8 @@ module.exports = async (ctx) => {
       DB.update('share_user_permissions', {
         status: 'accepted',
         accepted_at: now,
+        target_user_id: user.user_id ?? 0,
+        target_username: user.username ?? '',
       }, 'id = ?', [existing.id]);
     } else {
       DB.insert('share_user_permissions', {
@@ -103,6 +155,15 @@ module.exports = async (ctx) => {
         created_at: now,
       });
     }
+
+    // 在接收者云空间创建同名分享占位文件
+    const acceptedPerm = DB.one(
+      `SELECT * FROM share_user_permissions WHERE share_id = ?
+       AND (target_user_id = ? OR target_username = ?) ORDER BY id DESC LIMIT 1`,
+      [link.share_id, user.user_id ?? 0, user.username ?? '']
+    );
+    const cloudUsername = recipientCloudUsername(DB, Auth, acceptedPerm);
+    if (cloudUsername) cloudShare.ensurePlaceholderForShare(DB, link, cloudUsername);
 
     Response.success(null, '已接受分享');
   }
@@ -136,12 +197,19 @@ module.exports = async (ctx) => {
 
     // 检查是否是资源所有者
     if (resourceType === 'cloud_file') {
-      let ownerCheck = DB.one(`SELECT id FROM cloud_files WHERE id = ? AND school_id = ?`, [resourceId, Auth.schoolId()]);
+      const ownedFile = DB.one(
+        `SELECT f.id, f.content FROM web_hosting_files f
+         JOIN web_hosting_spaces s ON s.id = f.space_id
+         WHERE f.id = ? AND s.alliance_username = ?`,
+        [resourceId, username]
+      );
+      let ownerCheck = !!ownedFile;
       if (!ownerCheck) {
-        // 也检查 web_hosting_files 表
-        ownerCheck = DB.one(`SELECT id FROM web_hosting_files WHERE id = ?`, [resourceId]);
+        // 兼容旧版 cloud_files 表（学校空间）
+        ownerCheck = !!DB.one(`SELECT id FROM cloud_files WHERE id = ? AND school_id = ?`, [resourceId, Auth.schoolId()]);
       }
       if (!ownerCheck) Response.error('无权分享此文件');
+      if (ownedFile && cloudShare.isPlaceholder(ownedFile)) Response.error('分享占位文件不能再次分享');
     }
 
     const now = nowStr();
@@ -323,6 +391,17 @@ module.exports = async (ctx) => {
     if (perm.owner_key !== ownerKey) Response.error('无权移除此用户', 403);
 
     DB.delete('share_user_permissions', 'id = ?', [permId]);
+    // 清理该接收者（可能是绑定子用户的联盟账户）云空间中的占位文件
+    let cloudUsername = perm.target_username || '';
+    const subUserId = parseInt(perm.target_user_id, 10) || 0;
+    if (subUserId > 0) {
+      const binding = DB.one(
+        'SELECT alliance_username FROM alliance_account_bindings WHERE sub_user_id = ? ORDER BY id ASC LIMIT 1',
+        [subUserId]
+      );
+      if (binding && binding.alliance_username) cloudUsername = binding.alliance_username;
+    }
+    if (cloudUsername) cloudShare.removePlaceholdersForShare(DB, perm.share_id, cloudUsername);
     Response.success(null, '用户已移除');
   }
 
@@ -331,9 +410,12 @@ module.exports = async (ctx) => {
     const shareId = parseInt(body.share_id ?? 0, 10) || 0;
     if (shareId <= 0) Response.error('缺少分享 ID');
 
+    const target = shareTargetContext(DB, Auth);
+    const targetWhere = shareTargetClause('sup', target);
     const perm = DB.one(
-      `SELECT * FROM share_user_permissions WHERE share_id = ? AND target_user_id = ? AND status = 'pending'`,
-      [shareId, userId]
+      `SELECT sup.* FROM share_user_permissions sup
+       WHERE sup.share_id = ? AND sup.status = 'pending' AND ${targetWhere.sql}`,
+      [shareId, ...targetWhere.params]
     );
     if (!perm) Response.error('没有待处理的分享邀请');
 
@@ -341,11 +423,16 @@ module.exports = async (ctx) => {
     DB.update('share_user_permissions', {
       status: 'accepted',
       accepted_at: now,
+      target_user_id: userId,
+      target_username: username,
     }, 'id = ?', [perm.id]);
 
     // 通知分享者
     const share = DB.one(`SELECT * FROM share_items WHERE id = ?`, [shareId]);
     if (share) {
+    // 在接收者云空间创建同名分享占位文件
+    const cloudUsername = recipientCloudUsername(DB, Auth, perm);
+    if (cloudUsername) cloudShare.ensurePlaceholderForShare(DB, share, cloudUsername);
       const sharerUser = DB.one(`SELECT id, username FROM users WHERE username = ?`, [share.owner_username]);
       if (sharerUser) {
         sendShareNotification(
@@ -368,9 +455,12 @@ module.exports = async (ctx) => {
     const shareId = parseInt(body.share_id ?? 0, 10) || 0;
     if (shareId <= 0) Response.error('缺少分享 ID');
 
+    const target = shareTargetContext(DB, Auth);
+    const targetWhere = shareTargetClause('sup', target);
     const perm = DB.one(
-      `SELECT * FROM share_user_permissions WHERE share_id = ? AND target_user_id = ? AND status = 'pending'`,
-      [shareId, userId]
+      `SELECT sup.* FROM share_user_permissions sup
+       WHERE sup.share_id = ? AND sup.status = 'pending' AND ${targetWhere.sql}`,
+      [shareId, ...targetWhere.params]
     );
     if (!perm) Response.error('没有待处理的分享邀请');
 
@@ -487,9 +577,11 @@ module.exports = async (ctx) => {
   // ===== 列出分享给我的 =====
   if (method === 'GET' && action === 'list-shared-to-me') {
     const type = query.type ?? 'all'; // 'all' / 'cloud_file'
+    const target = shareTargetContext(DB, Auth);
+    const targetWhere = shareTargetClause('sup', target);
 
     let typeFilter = '';
-    const params = [userId];
+    const params = [...targetWhere.params];
     if (type !== 'all') {
       typeFilter = 'AND si.resource_type = ?';
       params.push(type);
@@ -499,7 +591,8 @@ module.exports = async (ctx) => {
       `SELECT sup.*, si.resource_type, si.resource_id, si.resource_name, si.owner_username, si.expires_at, si.permission AS share_permission
        FROM share_user_permissions sup
        JOIN share_items si ON si.id = sup.share_id
-       WHERE sup.target_user_id = ? AND sup.status = 'accepted' AND si.is_deleted = 0 ${typeFilter}
+       WHERE sup.status = 'accepted' AND si.is_deleted = 0
+         AND ${targetWhere.sql} ${typeFilter}
        ORDER BY sup.accepted_at DESC`,
       params
     );
@@ -578,6 +671,8 @@ module.exports = async (ctx) => {
 
     // 软删除
     DB.update('share_items', { is_deleted: 1, updated_at: nowStr() }, 'id = ?', [shareId]);
+    // 删除接收者云空间中的分享占位文件
+    cloudShare.removePlaceholdersForShareAnywhere(DB, shareId);
 
     // 更新资源状态
     if (share.resource_type === 'cloud_file') {
@@ -608,27 +703,45 @@ module.exports = async (ctx) => {
       [`%${keyword}%`, `%${keyword}%`, username]
     );
 
-    const result = users.map((u) => {
-      return {
-        id: u.id,
-        username: u.username,
-        display_name: u.display_name,
-        role: u.role,
-      };
-    });
+    // 联盟账户也可作为分享接收者（其与子用户的绑定关系保存在 alliance_account_bindings）
+    const allianceUsers = DB.all(
+      `SELECT DISTINCT alliance_username AS username FROM alliance_account_bindings
+       WHERE alliance_username LIKE ? AND alliance_username != ? LIMIT 20`,
+      [`%${keyword}%`, username]
+    );
+
+    const result = users.map((u) => ({
+      id: u.id,
+      username: u.username,
+      display_name: u.display_name,
+      role: u.role,
+    }));
+    for (const a of allianceUsers) {
+      if (!result.some((r) => r.username === a.username)) {
+        result.push({
+          id: 0,
+          username: a.username,
+          display_name: a.username,
+          role: 'alliance',
+        });
+      }
+    }
 
     Response.success(result);
   }
 
   // ===== 获取分享给我的待处理列表（用于通知） =====
   if (method === 'GET' && action === 'pending-shares') {
+    const target = shareTargetContext(DB, Auth);
+    const targetWhere = shareTargetClause('sup', target);
     const perms = DB.all(
       `SELECT sup.*, si.resource_type, si.resource_id, si.resource_name, si.owner_username, si.expires_at
        FROM share_user_permissions sup
        JOIN share_items si ON si.id = sup.share_id
-       WHERE sup.target_user_id = ? AND sup.status = 'pending' AND si.is_deleted = 0 AND si.expires_at > datetime('now','localtime')
+       WHERE sup.status = 'pending' AND si.is_deleted = 0 AND si.expires_at > datetime('now','localtime')
+         AND ${targetWhere.sql}
        ORDER BY sup.created_at DESC`,
-      [userId]
+      targetWhere.params
     );
 
     const result = perms.map((p) => {

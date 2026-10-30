@@ -12,6 +12,8 @@
  */
 const { nowStr } = require('../lib/response');
 const DB = require('../lib/db');
+const cloudShare = require('../lib/cloud-share');
+const formats = require('../lib/distribution-formats');
 
 // 隐藏目录前缀
 const CLOUD_PREFIX = '/.cloud/';
@@ -31,25 +33,51 @@ module.exports = async (ctx) => {
   const spaceId = space.id;
 
   if (method === 'GET' && action === 'list') {
+    // 先为已接受的分享补齐接收者空间里的占位文件
+    try { cloudShare.ensurePlaceholdersForUser(DB, Auth); } catch (e) { console.warn('[cloud-files] 分享占位符生成失败:', e.message); }
+
     const rows = DB.all(
-      `SELECT id, file_path, file_size, content_type, created_at, updated_at, is_directory
+      `SELECT id, file_path, file_size, content_type, created_at, updated_at, is_directory, content
        FROM web_hosting_files
        WHERE space_id = ? AND file_path LIKE ? AND file_path != ?
        ORDER BY is_directory DESC, file_path ASC`,
       [spaceId, CLOUD_PREFIX + '%', '/.cloud']
     );
-    const ownerDisplay = username;
-    // 转换为轻编辑器期望的格式
-    const result = rows.map((row) => {
+    const ownerDisplay = (Auth.user()?.display_name) || username;
+    // 转换为轻编辑器期望的格式（占位符 → 分享文件）
+    const result = [];
+    for (const row of rows) {
       const name = basename(row.file_path);
       const isDirectory = parseInt(row.is_directory, 10) === 1;
-      // 检查是否已分享
-      const shared = isDirectory ? 0 : DB.scalar(
-        `SELECT COUNT(*) FROM share_items
-         WHERE resource_type = 'cloud_file' AND resource_id = ? AND is_deleted = 0`,
-        [row.id]
-      ) > 0;
-      return {
+      const marker = isDirectory ? null : cloudShare.parseMarker(row.content);
+      if (marker) {
+        const resolved = cloudShare.resolvePlaceholder(DB, row, Auth);
+        if (!resolved) continue; // 分享已过期/被删除/无权
+        const ownerFile = resolved.ownerFile;
+        result.push({
+          id: row.id,
+          name: name,
+          file_path: row.file_path,
+          parent_dir: '',
+          is_directory: 0,
+          file_type: fileExt(ownerFile.file_path),
+          file_size: ownerFile.file_size,
+          content_type: ownerFile.content_type,
+          created_at: row.created_at,
+          updated_at: ownerFile.updated_at || row.updated_at,
+          is_shared: 0,
+          source: 'shared',
+          shared_from: resolved.shared_from,
+          shared_permission: resolved.permission,
+          share_id: marker.share_id,
+          owner_file_id: marker.owner_file_id,
+          is_share_placeholder: 1,
+          owner: resolved.shared_from,
+          owner_username: resolved.shared_from,
+        });
+        continue;
+      }
+      result.push({
         id: row.id,
         name: name,
         file_path: row.file_path,
@@ -60,48 +88,15 @@ module.exports = async (ctx) => {
         content_type: row.content_type,
         created_at: row.created_at,
         updated_at: row.updated_at,
-        is_shared: shared ? 1 : 0,
+        is_shared: isDirectory ? 0 : (DB.scalar(
+          `SELECT COUNT(*) FROM share_items
+           WHERE resource_type = 'cloud_file' AND resource_id = ? AND is_deleted = 0`,
+          [row.id]
+        ) > 0 ? 1 : 0),
         source: 'owned',
         owner: ownerDisplay,
         owner_username: username,
-      };
-    });
-
-    // 获取分享给我的文件（统一展示在根目录）
-    let userId = 0;
-    const user = Auth.user();
-    if (user) userId = parseInt(user.user_id ?? 0, 10) || 0;
-    if (userId > 0) {
-      const sharedRows = DB.all(
-        `SELECT DISTINCT whf.*, sup.permission AS shared_permission, si.owner_username AS shared_from
-         FROM share_items si
-         JOIN share_user_permissions sup ON sup.share_id = si.id AND sup.target_user_id = ? AND sup.status = 'accepted'
-         JOIN web_hosting_files whf ON whf.id = si.resource_id
-         WHERE si.resource_type = 'cloud_file' AND si.is_deleted = 0 AND si.expires_at > datetime('now','localtime')
-         ORDER BY whf.file_path ASC`,
-        [userId]
-      );
-      for (const row of sharedRows) {
-        const name = basename(row.file_path);
-        result.push({
-          id: row.id,
-          name: name,
-          file_path: row.file_path,
-          parent_dir: '',
-          is_directory: 0,
-          file_type: fileExt(name),
-          file_size: row.file_size,
-          content_type: row.content_type,
-          created_at: row.created_at,
-          updated_at: row.updated_at,
-          is_shared: 0,
-          source: 'shared',
-          shared_from: row.shared_from,
-          shared_permission: row.shared_permission,
-          owner: row.shared_from,
-          owner_username: row.shared_from,
-        });
-      }
+      });
     }
 
     Response.success(result);
@@ -129,40 +124,34 @@ module.exports = async (ctx) => {
       [id, spaceId, CLOUD_PREFIX + '%']
     );
     if (!row) {
-      // 检查是否是分享给我的文件
-      const userId = parseInt(Auth.user()?.user_id ?? 0, 10) || 0;
-      if (userId > 0) {
-        const sharedRow = DB.one(
-          `SELECT whf.*, sup.permission AS shared_permission
-           FROM web_hosting_files whf
-           JOIN share_items si ON si.resource_id = whf.id AND si.resource_type = 'cloud_file' AND si.is_deleted = 0
-           JOIN share_user_permissions sup ON sup.share_id = si.id AND sup.target_user_id = ? AND sup.status = 'accepted'
-           WHERE whf.id = ? AND si.expires_at > datetime('now','localtime')`,
-          [userId, id]
-        );
-        if (sharedRow) {
-          // 只读权限时提示
-          const isReadOnly = (sharedRow.shared_permission ?? 'view') === 'view';
-          Response.success({
-            id: sharedRow.id,
-            name: basename(sharedRow.file_path),
-            file_path: sharedRow.file_path,
-            parent_dir: '',
-            is_directory: 0,
-            file_type: fileExt(sharedRow.file_path),
-            file_size: sharedRow.file_size,
-            content: sharedRow.content ?? '',
-            content_type: sharedRow.content_type,
-            created_at: sharedRow.created_at,
-            updated_at: sharedRow.updated_at,
-            source: 'shared',
-            permission: sharedRow.shared_permission,
-            owner: sharedRow.shared_from || '',
-            owner_username: sharedRow.shared_from || '',
-          });
-        }
-      }
       Response.error('云文件不存在');
+    }
+    // 分享占位文件：内容读取重定向到分享者源文件
+    const marker = parseInt(row.is_directory, 10) === 1 ? null : cloudShare.parseMarker(row.content);
+    if (marker) {
+      const resolved = cloudShare.resolvePlaceholder(DB, row, Auth);
+      if (!resolved) Response.error('分享已过期、被取消或无权访问', 403, 403);
+      const ownerFile = resolved.ownerFile;
+      Response.success({
+        id: row.id,
+        name: basename(row.file_path),
+        file_path: row.file_path,
+        parent_dir: '',
+        is_directory: 0,
+        file_type: fileExt(ownerFile.file_path),
+        file_size: ownerFile.file_size,
+        content: ownerFile.content ?? '',
+        content_type: ownerFile.content_type,
+        created_at: row.created_at,
+        updated_at: ownerFile.updated_at || row.updated_at,
+        source: 'shared',
+        permission: resolved.permission,
+        share_id: marker.share_id,
+        owner_file_id: marker.owner_file_id,
+        is_share_placeholder: 1,
+        owner: resolved.shared_from,
+        owner_username: resolved.shared_from,
+      });
     }
     Response.success({
       id: row.id,
@@ -238,25 +227,25 @@ module.exports = async (ctx) => {
       [id, spaceId, CLOUD_PREFIX + '%']
     );
     if (!row) {
-      // 检查是否是分享给我的文件（需有编辑权限）
-      const userId = parseInt(Auth.user()?.user_id ?? 0, 10) || 0;
-      if (userId > 0) {
-        const sharedRow = DB.one(
-          `SELECT whf.*, sup.permission AS shared_permission
-           FROM web_hosting_files whf
-           JOIN share_items si ON si.resource_id = whf.id AND si.resource_type = 'cloud_file' AND si.is_deleted = 0
-           JOIN share_user_permissions sup ON sup.share_id = si.id AND sup.target_user_id = ? AND sup.status = 'accepted'
-           WHERE whf.id = ? AND si.expires_at > datetime('now','localtime')`,
-          [userId, id]
-        );
-        if (sharedRow && (sharedRow.shared_permission ?? 'view') === 'edit') {
-          row = sharedRow;
-        } else {
-          Response.error('云文件不存在或无权编辑');
-        }
-      } else {
-        Response.error('云文件不存在');
+      Response.error('云文件不存在');
+    }
+
+    // 分享占位文件：写操作重定向到分享者源文件，绝不覆盖占位符内容
+    const marker = parseInt(row.is_directory, 10) === 1 ? null : cloudShare.parseMarker(row.content);
+    if (marker) {
+      const resolved = cloudShare.resolvePlaceholder(DB, row, Auth);
+      if (!resolved) Response.error('分享已过期、被取消或无权访问', 403, 403);
+      if (resolved.permission !== 'edit') Response.error('没有编辑该分享文件的权限', 403, 403);
+      if (body.content === undefined && body.content === null) {
+        Response.error('分享占位文件没有可保存的内容');
       }
+      const ownerFile = resolved.ownerFile;
+      DB.update('web_hosting_files', {
+        content: body.content,
+        file_size: Buffer.byteLength(String(body.content)),
+        updated_at: nowStr(),
+      }, 'id = ?', [ownerFile.id]);
+      Response.success(null, '已保存到分享者文件');
     }
 
     const updates = { updated_at: nowStr() };
@@ -302,6 +291,7 @@ module.exports = async (ctx) => {
       [id, spaceId, CLOUD_PREFIX + '%']
     );
     if (!row) Response.error('云文件不存在');
+    if (cloudShare.isPlaceholder(row)) Response.error('分享文件不支持重命名');
 
     const isDirectory = parseInt(row.is_directory, 10) === 1;
     const oldPath = row.file_path;
@@ -393,8 +383,38 @@ module.exports = async (ctx) => {
       [id, spaceId, CLOUD_PREFIX + '%']
     );
     if (!row) Response.error('云文件不存在');
+    if (cloudShare.isPlaceholder(row)) Response.error('分享文件不支持删除');
 
-    if (parseInt(row.is_directory, 10) === 1) {
+    const isDirectory = parseInt(row.is_directory, 10) === 1;
+    // 收集将被删除的文件 ID（目录包含全部子孙文件）
+    const fileRows = isDirectory
+      ? DB.all(
+        `SELECT id FROM web_hosting_files WHERE space_id = ? AND is_directory = 0
+         AND (file_path = ? OR file_path LIKE ?)`,
+        [spaceId, row.file_path, row.file_path + '/%']
+      )
+      : [{ id: row.id }];
+    const fileIds = fileRows.map((r) => parseInt(r.id, 10) || 0).filter(Boolean);
+
+    let deletedInstances = 0;
+    if (body.delete_instances && fileIds.length) {
+      const placeholders = fileIds.map(() => '?').join(',');
+      const appKeys = formats.ALL_APP_KEYS;
+      const appPlaceholders = appKeys.map(() => '?').join(',');
+      const insList = DB.all(
+        `SELECT id FROM instances WHERE owner_key = ? AND source_file_id IN (${placeholders}) AND app_key IN (${appPlaceholders})`,
+        [Auth.ownerKey(), ...fileIds, ...appKeys]
+      );
+      for (const ins of insList) {
+        DB.delete('instances', 'id = ?', [ins.id]);
+        deletedInstances++;
+      }
+      if (deletedInstances > 0) {
+        Auth.logAudit(schoolId, 0, 'distribution_delete', `删除文件时同时删除 ${deletedInstances} 个配置实例: ${row.file_path}`);
+      }
+    }
+
+    if (isDirectory) {
       // 目录：递归删除所有子孙条目
       DB.delete(
         'web_hosting_files',
@@ -402,12 +422,12 @@ module.exports = async (ctx) => {
         [spaceId, row.file_path, row.file_path + '/%']
       );
       Auth.logAudit(schoolId, 0, 'cloud_file_delete', `删除云目录: ${username} -> ${row.file_path}`);
-      Response.success(null, '目录已删除');
+      Response.success({ deleted_instances: deletedInstances }, '目录已删除');
     }
 
     DB.delete('web_hosting_files', 'id = ?', [id]);
     Auth.logAudit(schoolId, 0, 'cloud_file_delete', `删除云文件: ${username} -> ${row.file_path}`);
-    Response.success(null, '已删除');
+    Response.success({ deleted_instances: deletedInstances }, '已删除');
   }
 
   // === 操作记录（history） ===
