@@ -131,11 +131,32 @@ server/api/distributions.js            # 分发管理 API
 - 实例视图与编辑对话框按 `urls.kind` 展示/复制/打开对应地址，显示格式徽标。
 - 所有模态框使用毛玻璃背景（overlay 模糊 + flyout 背景），不允许透明。
 
+### 6.1 轻编辑器文件列表 / 文件卡片
+
+- 云文件 API 的 `list` 返回目录与文件（字段含 `is_directory`、`parent_dir`、`owner`），
+  轻编辑器按 `currentDir` 过滤并显示面包屑；目录优先排序，共享文件只在根目录展示。
+- 新建文件/文件夹使用预置名称的 draft 行；重命名（列表与 Ribbon 文件卡片）使用行内输入；
+  提交走 `cloud-files?action=create` / `create-dir` / `rename`（目录改名同步子孙路径，删除目录递归）。
+- 左下角存储用量读取 `cloud-files?action=usage`（`used` / `quota` / `percent`）。
+- 文件卡片：显示真实编辑者（`owner`），标题可点击改名，「属性」按钮打开属性窗口，
+  文件类型旁显示「已分发」。
+- 属性窗口含「属性 / 分发配置」两个 Tab；分发配置内嵌分发对话框，右键「分发配置」直达该 Tab。
+
+### 6.2 编辑器插件
+
+- 插件通过 `window.CSEditor.fallback(reason)` 告知平台无法识别当前文件；
+  平台收到 `__csesPluginFallback` 后对当前标签禁用插件并回退到默认 Monaco 编辑器。
+- 插件内部不提供源码查看器；源码查看由平台默认编辑器承担。
+
+### 6.3 数据空间
+
+- V3 起数据空间不再提供「实例文件」目录（实例文件模块仅作为实例云应用内部能力保留）。
+
 ## 7. 验收
 
 1. `pnpm --dir frontend build` 通过；
 2. `node server/index.js` 启动，日志出现 `[public-config]`，无 PHP 后缀路由；
-3. `_smoke_static_control.js` 覆盖三种格式分发、源文件更新、改名、云文件重命名与清理，全部通过；
+3. `_smoke_static_control.js` 覆盖三种格式分发、源文件更新、改名、云文件目录/重命名/用量与清理，全部通过；
 4. 旧动态端点（`/api/campus-control`、`/api/rest-control`、`/api/control`、
    `/api/instance-php`、`/api/ws-control`）返回 404；
 5. 全仓库检索不再存在 PHP 后缀链接（历史快照分支除外）。

@@ -1,242 +1,244 @@
 <template>
-  <div v-if="visible" class="share-overlay" @click.self="$emit('close')">
-    <div class="share-dialog" :class="{ 'share-detail': mode === 'detail' }">
-      <!-- 顶部标题栏 -->
-      <div class="share-header">
-        <div class="share-title">
-          <Icon icon="ri-share-forward-line" :size="16" />
-          <span>{{ mode === 'detail' ? '管理分享' : '分享' + (resourceLabel || '') }}</span>
-        </div>
-        <button class="close-btn" @click="$emit('close')">
-          <Icon icon="ri-close-line" :size="16" />
-        </button>
-      </div>
-
-      <div class="share-body">
-        <!-- 已分享文件标记 -->
-        <div v-if="shareDetail || mode === 'detail'" class="share-status-bar">
-          <Icon icon="ri-share-line" :size="14" />
-          <span>已分享</span>
-          <span class="share-status-expiry">有效期至 {{ formatDate(shareDetail?.expires_at || '') }}</span>
-          <button class="share-status-action" @click="mode = 'create'">修改分享</button>
+  <Teleport to="body">
+    <div v-if="visible" class="share-overlay" @click.self="$emit('close')">
+      <div class="share-dialog" :class="{ 'share-detail': mode === 'detail' }">
+        <!-- 顶部标题栏 -->
+        <div class="share-header">
+          <div class="share-title">
+            <Icon icon="ri-share-forward-line" :size="16" />
+            <span>{{ mode === 'detail' ? '管理分享' : '分享' + (resourceLabel || '') }}</span>
+          </div>
+          <button class="close-btn" @click="$emit('close')">
+            <Icon icon="ri-close-line" :size="16" />
+          </button>
         </div>
 
-        <!-- 创建/编辑分享 -->
-        <template v-if="mode === 'create'">
-          <div class="share-filename">
-            <Icon :icon="resourceIcon || 'ri-file-line'" :size="14" />
-            <span>{{ resourceName }}</span>
+        <div class="share-body">
+          <!-- 已分享文件标记 -->
+          <div v-if="shareDetail || mode === 'detail'" class="share-status-bar">
+            <Icon icon="ri-share-line" :size="14" />
+            <span>已分享</span>
+            <span class="share-status-expiry">有效期至 {{ formatDate(shareDetail?.expires_at || '') }}</span>
+            <button class="share-status-action" @click="mode = 'create'">修改分享</button>
           </div>
 
-          <!-- 有效期 -->
-          <div class="form-group">
-            <label class="form-label">有效期</label>
-            <select v-model="expiryDays" class="form-select">
-              <option :value="1">1 天</option>
-              <option :value="3">3 天</option>
-              <option :value="7">7 天</option>
-              <option :value="14">14 天</option>
-              <option :value="30">1 个月</option>
-              <option :value="60">2 个月</option>
-              <option :value="90">3 个月</option>
-            </select>
-          </div>
-
-          <!-- 默认权限 -->
-          <div class="form-group">
-            <label class="form-label">默认权限</label>
-            <div class="radio-group">
-              <label class="radio-item">
-                <input type="radio" v-model="defaultPermission" value="view" />
-                <span class="radio-label">查看</span>
-              </label>
-              <label class="radio-item">
-                <input type="radio" v-model="defaultPermission" value="edit" />
-                <span class="radio-label">查看和编辑</span>
-              </label>
+          <!-- 创建/编辑分享 -->
+          <template v-if="mode === 'create'">
+            <div class="share-filename">
+              <Icon :icon="resourceIcon || 'ri-file-line'" :size="14" />
+              <span>{{ resourceName }}</span>
             </div>
-          </div>
 
-          <!-- 按用户名分享 -->
-          <div class="form-group">
-            <label class="form-label">分享给用户</label>
-            <div class="user-search-row">
-              <div class="user-search-input-wrap">
-                <Icon icon="ri-search-line" :size="12" class="search-icon" />
-                <input
-                  v-model="userSearchKeyword"
-                  type="text"
-                  class="user-search-input"
-                  placeholder="输入用户名或显示名称搜索..."
-                  @input="onUserSearch"
-                  @focus="onUserSearch"
-                />
+            <!-- 有效期 -->
+            <div class="form-group">
+              <label class="form-label">有效期</label>
+              <select v-model="expiryDays" class="form-select">
+                <option :value="1">1 天</option>
+                <option :value="3">3 天</option>
+                <option :value="7">7 天</option>
+                <option :value="14">14 天</option>
+                <option :value="30">1 个月</option>
+                <option :value="60">2 个月</option>
+                <option :value="90">3 个月</option>
+              </select>
+            </div>
+
+            <!-- 默认权限 -->
+            <div class="form-group">
+              <label class="form-label">默认权限</label>
+              <div class="radio-group">
+                <label class="radio-item">
+                  <input type="radio" v-model="defaultPermission" value="view" />
+                  <span class="radio-label">查看</span>
+                </label>
+                <label class="radio-item">
+                  <input type="radio" v-model="defaultPermission" value="edit" />
+                  <span class="radio-label">查看和编辑</span>
+                </label>
               </div>
             </div>
-            <!-- 搜索结果 -->
-            <div v-if="userSearchResults.length > 0" class="user-search-results">
-              <div
-                v-for="u in userSearchResults"
-                :key="u.username"
-                class="user-result-item"
-                :class="{ selected: selectedUsers.some(su => su.username === u.username) }"
-                @click="toggleUser(u)"
-              >
-                <div class="user-result-info">
-                  <span class="user-result-name">{{ u.display_name || u.username }}</span>
-                  <span class="user-result-username">@{{ u.username }}</span>
+
+            <!-- 按用户名分享 -->
+            <div class="form-group">
+              <label class="form-label">分享给用户</label>
+              <div class="user-search-row">
+                <div class="user-search-input-wrap">
+                  <Icon icon="ri-search-line" :size="12" class="search-icon" />
+                  <input
+                    v-model="userSearchKeyword"
+                    type="text"
+                    class="user-search-input"
+                    placeholder="输入用户名或显示名称搜索..."
+                    @input="onUserSearch"
+                    @focus="onUserSearch"
+                  />
                 </div>
-                <Icon v-if="selectedUsers.some(su => su.username === u.username)" icon="ri-check-line" :size="16" class="check-icon" />
               </div>
-            </div>
-            <div v-if="userSearchKeyword && userSearchResults.length === 0 && !userSearching" class="user-search-empty">
-              未找到匹配的用户
-            </div>
-          </div>
-
-          <!-- 已选用户列表 -->
-          <div v-if="selectedUsers.length > 0" class="selected-users">
-            <div v-for="(su, idx) in selectedUsers" :key="su.username" class="selected-user-item">
-              <div class="selected-user-info">
-                <Icon icon="ri-user-line" :size="12" />
-                <span class="selected-user-name">{{ su.display_name || su.username }}</span>
-                <span class="selected-user-username">@{{ su.username }}</span>
-              </div>
-              <div class="selected-user-actions">
-                <select v-model="su.permission" class="perm-select">
-                  <option value="view">查看</option>
-                  <option value="edit">编辑</option>
-                </select>
-                <button class="remove-user-btn" @click="removeUser(idx)" title="移除">
-                  <Icon icon="ri-close-line" :size="12" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- 预览链接 -->
-          <div class="form-group">
-            <label class="checkbox-item">
-              <input type="checkbox" v-model="enablePreviewLink" />
-              <span class="checkbox-label">创建预览链接（持有链接的人均可查看）</span>
-            </label>
-          </div>
-
-          <div v-if="error" class="share-error">
-            <Icon icon="ri-error-warning-line" :size="14" />
-            <span>{{ error }}</span>
-          </div>
-
-          <div v-if="shareResult" class="share-result">
-            <div class="result-label">
-              <Icon icon="ri-check-line" :size="14" />
-              <span>{{ shareResultMessage }}</span>
-            </div>
-            <div v-if="shareResult.preview_link" class="result-link-row">
-              <input :value="shareResult.preview_link" readonly class="result-link" ref="linkInput" />
-              <button class="copy-btn" @click="copyLink">
-                <Icon :icon="copied ? 'ri-check-line' : 'ri-file-copy-line'" :size="14" />
-                <span>{{ copied ? '已复制' : '复制' }}</span>
-              </button>
-            </div>
-          </div>
-        </template>
-
-        <!-- 详情模式 -->
-        <template v-if="mode === 'detail' && shareDetail">
-          <!-- 预览链接状态 -->
-          <div class="detail-section">
-            <div class="detail-section-header">
-              <Icon icon="ri-link" :size="14" />
-              <span>预览链接</span>
-            </div>
-            <div class="preview-link-row">
-              <div class="preview-link-status">
-                <span class="toggle-label">{{ shareDetail.preview_enabled ? '已开启' : '已关闭' }}</span>
-                <button class="toggle-btn" :class="{ on: shareDetail.preview_enabled }" @click="togglePreviewLink">
-                  <span class="toggle-knob"></span>
-                </button>
-              </div>
-              <template v-if="shareDetail.preview_enabled && shareDetail.preview_link">
-                <div class="preview-link-copy">
-                  <input :value="shareDetail.preview_link" readonly class="preview-link-input" />
-                  <button class="link-copy-btn" @click="copyPreviewLink">
-                    <Icon :icon="previewCopied ? 'ri-check-line' : 'ri-file-copy-line'" :size="12" />
-                  </button>
+              <!-- 搜索结果 -->
+              <div v-if="userSearchResults.length > 0" class="user-search-results">
+                <div
+                  v-for="u in userSearchResults"
+                  :key="u.username"
+                  class="user-result-item"
+                  :class="{ selected: selectedUsers.some(su => su.username === u.username) }"
+                  @click="toggleUser(u)"
+                >
+                  <div class="user-result-info">
+                    <span class="user-result-name">{{ u.display_name || u.username }}</span>
+                    <span class="user-result-username">@{{ u.username }}</span>
+                  </div>
+                  <Icon v-if="selectedUsers.some(su => su.username === u.username)" icon="ri-check-line" :size="16" class="check-icon" />
                 </div>
-              </template>
+              </div>
+              <div v-if="userSearchKeyword && userSearchResults.length === 0 && !userSearching" class="user-search-empty">
+                未找到匹配的用户
+              </div>
             </div>
-          </div>
 
-          <!-- 已授权用户 -->
-          <div class="detail-section">
-            <div class="detail-section-header">
-              <Icon icon="ri-group-line" :size="14" />
-              <span>已授权用户 ({{ shareDetail.users?.length || 0 }})</span>
-            </div>
-            <div v-if="shareDetail.users?.length > 0" class="auth-users-list">
-              <div v-for="perm in shareDetail.users" :key="perm.id" class="auth-user-item">
-                <div class="auth-user-info">
+            <!-- 已选用户列表 -->
+            <div v-if="selectedUsers.length > 0" class="selected-users">
+              <div v-for="(su, idx) in selectedUsers" :key="su.username" class="selected-user-item">
+                <div class="selected-user-info">
                   <Icon icon="ri-user-line" :size="12" />
-                  <span class="auth-user-name">@{{ perm.target_username }}</span>
-                  <span class="auth-user-status" :class="perm.status">
-                    {{ perm.status === 'accepted' ? '已接受' : perm.status === 'pending' ? '等待中' : '已拒绝' }}
-                  </span>
+                  <span class="selected-user-name">{{ su.display_name || su.username }}</span>
+                  <span class="selected-user-username">@{{ su.username }}</span>
                 </div>
-                <div class="auth-user-actions" v-if="perm.status !== 'rejected'">
-                  <select
-                    :value="perm.permission"
-                    @change="updateUserPermission(perm.id, ($event.target as HTMLSelectElement).value)"
-                    class="perm-select"
-                  >
+                <div class="selected-user-actions">
+                  <select v-model="su.permission" class="perm-select">
                     <option value="view">查看</option>
                     <option value="edit">编辑</option>
                   </select>
-                  <button class="remove-user-btn" @click="removeSharedUser(perm.id)" title="移除">
+                  <button class="remove-user-btn" @click="removeUser(idx)" title="移除">
                     <Icon icon="ri-close-line" :size="12" />
-                  </button>
-                </div>
-                <div class="auth-user-actions" v-else>
-                  <button class="resend-btn" @click="resendInvite(perm)" title="重新邀请">
-                    <Icon icon="ri-refresh-line" :size="12" />
                   </button>
                 </div>
               </div>
             </div>
-            <div v-else class="auth-users-empty">
-              暂无授权用户
-            </div>
-          </div>
 
-          <!-- 有效期限 -->
-          <div class="detail-section">
-            <div class="detail-section-header">
-              <Icon icon="ri-time-line" :size="14" />
-              <span>有效期至 {{ formatDate(shareDetail.expires_at) }}</span>
+            <!-- 预览链接 -->
+            <div class="form-group">
+              <label class="checkbox-item">
+                <input type="checkbox" v-model="enablePreviewLink" />
+                <span class="checkbox-label">创建预览链接（持有链接的人均可查看）</span>
+              </label>
             </div>
-          </div>
-        </template>
-      </div>
 
-      <!-- 底部按钮 -->
-      <div class="share-footer">
-        <template v-if="mode === 'create'">
-          <button class="btn-cancel" @click="onCancel">取消</button>
-          <button class="btn-create" :disabled="creating" @click="createShare">
-            <Icon v-if="creating" icon="ri-loader-4-line" :size="14" class="spin" />
-            <span>{{ creating ? '创建中...' : (shareDetail ? '更新分享' : '创建分享') }}</span>
-          </button>
-        </template>
-        <template v-else>
-          <button class="btn-cancel" @click="mode = 'create'">修改分享</button>
-          <button class="btn-create" @click="deleteShare" :disabled="deleting" style="background: var(--status-error);">
-            <Icon v-if="deleting" icon="ri-loader-4-line" :size="14" class="spin" />
-            <span>{{ deleting ? '删除中...' : '删除分享' }}</span>
-          </button>
-        </template>
+            <div v-if="error" class="share-error">
+              <Icon icon="ri-error-warning-line" :size="14" />
+              <span>{{ error }}</span>
+            </div>
+
+            <div v-if="shareResult" class="share-result">
+              <div class="result-label">
+                <Icon icon="ri-check-line" :size="14" />
+                <span>{{ shareResultMessage }}</span>
+              </div>
+              <div v-if="shareResult.preview_link" class="result-link-row">
+                <input :value="shareResult.preview_link" readonly class="result-link" ref="linkInput" />
+                <button class="copy-btn" @click="copyLink">
+                  <Icon :icon="copied ? 'ri-check-line' : 'ri-file-copy-line'" :size="14" />
+                  <span>{{ copied ? '已复制' : '复制' }}</span>
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <!-- 详情模式 -->
+          <template v-if="mode === 'detail' && shareDetail">
+            <!-- 预览链接状态 -->
+            <div class="detail-section">
+              <div class="detail-section-header">
+                <Icon icon="ri-link" :size="14" />
+                <span>预览链接</span>
+              </div>
+              <div class="preview-link-row">
+                <div class="preview-link-status">
+                  <span class="toggle-label">{{ shareDetail.preview_enabled ? '已开启' : '已关闭' }}</span>
+                  <button class="toggle-btn" :class="{ on: shareDetail.preview_enabled }" @click="togglePreviewLink">
+                    <span class="toggle-knob"></span>
+                  </button>
+                </div>
+                <template v-if="shareDetail.preview_enabled && shareDetail.preview_link">
+                  <div class="preview-link-copy">
+                    <input :value="shareDetail.preview_link" readonly class="preview-link-input" />
+                    <button class="link-copy-btn" @click="copyPreviewLink">
+                      <Icon :icon="previewCopied ? 'ri-check-line' : 'ri-file-copy-line'" :size="12" />
+                    </button>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- 已授权用户 -->
+            <div class="detail-section">
+              <div class="detail-section-header">
+                <Icon icon="ri-group-line" :size="14" />
+                <span>已授权用户 ({{ shareDetail.users?.length || 0 }})</span>
+              </div>
+              <div v-if="shareDetail.users?.length > 0" class="auth-users-list">
+                <div v-for="perm in shareDetail.users" :key="perm.id" class="auth-user-item">
+                  <div class="auth-user-info">
+                    <Icon icon="ri-user-line" :size="12" />
+                    <span class="auth-user-name">@{{ perm.target_username }}</span>
+                    <span class="auth-user-status" :class="perm.status">
+                      {{ perm.status === 'accepted' ? '已接受' : perm.status === 'pending' ? '等待中' : '已拒绝' }}
+                    </span>
+                  </div>
+                  <div class="auth-user-actions" v-if="perm.status !== 'rejected'">
+                    <select
+                      :value="perm.permission"
+                      @change="updateUserPermission(perm.id, ($event.target as HTMLSelectElement).value)"
+                      class="perm-select"
+                    >
+                      <option value="view">查看</option>
+                      <option value="edit">编辑</option>
+                    </select>
+                    <button class="remove-user-btn" @click="removeSharedUser(perm.id)" title="移除">
+                      <Icon icon="ri-close-line" :size="12" />
+                    </button>
+                  </div>
+                  <div class="auth-user-actions" v-else>
+                    <button class="resend-btn" @click="resendInvite(perm)" title="重新邀请">
+                      <Icon icon="ri-refresh-line" :size="12" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="auth-users-empty">
+                暂无授权用户
+              </div>
+            </div>
+
+            <!-- 有效期限 -->
+            <div class="detail-section">
+              <div class="detail-section-header">
+                <Icon icon="ri-time-line" :size="14" />
+                <span>有效期至 {{ formatDate(shareDetail.expires_at) }}</span>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- 底部按钮 -->
+        <div class="share-footer">
+          <template v-if="mode === 'create'">
+            <button class="btn-cancel" @click="onCancel">取消</button>
+            <button class="btn-create" :disabled="creating" @click="createShare">
+              <Icon v-if="creating" icon="ri-loader-4-line" :size="14" class="spin" />
+              <span>{{ creating ? '创建中...' : (shareDetail ? '更新分享' : '创建分享') }}</span>
+            </button>
+          </template>
+          <template v-else>
+            <button class="btn-cancel" @click="mode = 'create'">修改分享</button>
+            <button class="btn-create" @click="deleteShare" :disabled="deleting" style="background: var(--status-error);">
+              <Icon v-if="deleting" icon="ri-loader-4-line" :size="14" class="spin" />
+              <span>{{ deleting ? '删除中...' : '删除分享' }}</span>
+            </button>
+          </template>
+        </div>
       </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -520,39 +522,38 @@ function formatDate(dateStr: string): string {
 .share-overlay {
   position: fixed;
   inset: 0;
+  padding: var(--spacer-4);
+  box-sizing: border-box;
   background: rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(20px) saturate(150%);
   -webkit-backdrop-filter: blur(20px) saturate(150%);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 3000;
 }
 
 .share-dialog {
-  width: 480px;
-  max-width: 90vw;
+  position: relative;
+  width: 520px;
+  max-width: min(92vw, 520px);
   max-height: 85vh;
   background: var(--flyout-bg);
   backdrop-filter: var(--flyout-backdrop);
   -webkit-backdrop-filter: var(--flyout-backdrop);
   border: 1px solid var(--flyout-border);
   border-radius: var(--radius-lg);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
   overflow: hidden;
   display: flex;
   flex-direction: column;
-}
-
-.share-dialog.share-detail {
-  width: 520px;
 }
 
 .share-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacer-2) var(--spacer-3);
+  padding: var(--spacer-3) var(--spacer-4);
   border-bottom: 1px solid var(--divider-stroke);
   flex-shrink: 0;
 }
@@ -585,9 +586,11 @@ function formatDate(dateStr: string): string {
 }
 
 .share-body {
-  padding: var(--spacer-3);
+  padding: var(--spacer-3) var(--spacer-4);
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* 已分享状态栏 */
@@ -606,6 +609,10 @@ function formatDate(dateStr: string): string {
 
 .share-status-expiry {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-tertiary);
 }
 
@@ -940,6 +947,7 @@ function formatDate(dateStr: string): string {
 
 .preview-link-input {
   flex: 1;
+  min-width: 0;
   height: 28px;
   padding: 0 8px;
   background: var(--ctrl-fill-default);
@@ -949,6 +957,7 @@ function formatDate(dateStr: string): string {
   color: var(--text-primary);
   outline: none;
   box-sizing: border-box;
+  text-overflow: ellipsis;
 }
 
 .link-copy-btn {
@@ -1084,6 +1093,7 @@ function formatDate(dateStr: string): string {
 
 .result-link {
   flex: 1;
+  min-width: 0;
   height: 30px;
   padding: 0 8px;
   background: var(--ctrl-fill-default);
@@ -1093,6 +1103,7 @@ function formatDate(dateStr: string): string {
   color: var(--text-primary);
   outline: none;
   box-sizing: border-box;
+  text-overflow: ellipsis;
 }
 
 .copy-btn {
@@ -1120,8 +1131,8 @@ function formatDate(dateStr: string): string {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--spacer-1);
-  padding: var(--spacer-2) var(--spacer-3);
+  gap: var(--spacer-2);
+  padding: var(--spacer-3) var(--spacer-4);
   border-top: 1px solid var(--divider-stroke);
   flex-shrink: 0;
 }

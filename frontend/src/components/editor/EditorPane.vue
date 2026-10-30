@@ -32,7 +32,7 @@
 
       <!-- 插件编辑器 -->
       <PluginEditorFrame
-        v-else-if="activePlugin && !showSource"
+        v-else-if="activePlugin && !showSource && !isPluginFallback"
         :key="pluginReloadKey"
         ref="pluginEditorRef"
         :plugin="activePlugin"
@@ -40,6 +40,7 @@
         @ready="onPluginReady"
         @save="onPluginSave"
         @notify="onPluginNotify"
+        @fallback="onPluginFallback"
         @set-ribbon="onPluginSetRibbon"
       />
 
@@ -140,6 +141,8 @@ const activePlugin = ref<any>(null);
 const pluginEditorRef = ref<InstanceType<typeof PluginEditorFrame> | null>(null);
 const monacoEditorRef = ref<InstanceType<typeof MonacoEditor> | null>(null);
 const pluginReloadKey = ref(0);
+/** 已请求回退到默认编辑器的标签（不再应用编辑器插件） */
+const fallbackTabIds = ref<Set<string>>(new Set());
 
 // 暴露方法给父组件
 defineExpose({
@@ -173,6 +176,11 @@ defineExpose({
   },
   /** 重载当前插件编辑器（强制重新挂载 iframe） */
   reloadPlugin: () => {
+    if (activeTab.value) {
+      const next = new Set(fallbackTabIds.value);
+      next.delete(activeTab.value.id);
+      fallbackTabIds.value = next;
+    }
     pluginReloadKey.value++;
   },
   /** 打开 Monaco 原生“转到行” */
@@ -182,6 +190,12 @@ defineExpose({
 });
 
 const activeTab = computed(() => props.tabs.find(t => t.id === props.activeTabId) || null);
+
+/** 当前标签是否已由插件请求回退到默认编辑器 */
+const isPluginFallback = computed(() => {
+  const tab = activeTab.value;
+  return !!tab && fallbackTabIds.value.has(tab.id);
+});
 
 const diffAddCount = computed(() => {
   if (!activeTab.value?.isDiff || !activeTab.value.diffLines) return 0;
@@ -237,6 +251,19 @@ function onPluginNotify(msg: string) {
 
 function onPluginSetRibbon(groups: any[]) {
   emit('plugin-ribbon', groups);
+}
+
+/** 插件无法识别当前文件：禁用插件、改用默认 Monaco 编辑器 */
+function onPluginFallback(reason: string) {
+  const tab = activeTab.value;
+  if (!tab) return;
+  const next = new Set(fallbackTabIds.value);
+  next.add(tab.id);
+  fallbackTabIds.value = next;
+  activePlugin.value = null;
+  emit('plugin-change', null);
+  emit('plugin-ribbon', []);
+  if (reason) console.info('[EditorPane] 插件回退默认编辑器：' + reason);
 }
 </script>
 

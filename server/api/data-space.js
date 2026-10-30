@@ -5,7 +5,7 @@
 const { nowStr } = require('../lib/response');
 
 // ===== 系统目录定义 =====
-const DS_INSTANCES = '/实例文件';
+// V3：实例文件目录已移除（实例文件不再出现在数据空间）
 const DS_CLOUD = '/云文件';
 const DS_WEBSPACES = '/网页空间';
 const DS_VERSIONS = '/版本历史';
@@ -92,12 +92,6 @@ function checkQuota(ctx, username, schoolId) {
     "SELECT COALESCE(SUM(file_size), 0) FROM web_hosting_files WHERE space_id = ?",
     [spaceId]
   ) ?? 0, 10) || 0;
-  const instanceFilesUsed = parseInt(DB.scalar(
-    "SELECT COALESCE(SUM(cf.file_size), 0) FROM cloud_files cf \
-     JOIN instances i ON i.id = cf.instance_id \
-     WHERE i.school_id = ?",
-    [schoolId]
-  ) ?? 0, 10) || 0;
   const instanceStorageUsed = parseInt(DB.scalar(
     "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM instance_storage_data isd \
      JOIN instances i ON i.id = isd.instance_id \
@@ -113,7 +107,7 @@ function checkQuota(ctx, username, schoolId) {
     [username]
   ) ?? 0, 10) || 0;
 
-  const totalUsed = webHostingUsed + instanceFilesUsed + instanceStorageUsed + versionUsed + historyUsed;
+  const totalUsed = webHostingUsed + instanceStorageUsed + versionUsed + historyUsed;
   if (totalUsed >= quota) {
     const usedDisplay = formatBytes(totalUsed);
     const quotaDisplay = formatBytes(quota);
@@ -210,130 +204,14 @@ module.exports = async (ctx) => {
   const action = query.action ?? '';
   // $body = Helpers::jsonBody() → ctx.body（框架已解析）
 
-  const systemDirs = [DS_INSTANCES, DS_CLOUD, DS_WEBSPACES, DS_VERSIONS, DS_HISTORY];
+  const systemDirs = [DS_CLOUD, DS_WEBSPACES, DS_VERSIONS, DS_HISTORY];
   void systemDirs;
 
   // ===== 列出文件树 =====
   if (method === 'GET' && action === 'tree') {
     const nodes = [];
 
-    // 1. 实例文件目录
-    const instances = DB.all(
-      "SELECT i.id, i.name, i.instance_uid, i.config, i.status, i.created_at \
-       FROM instances i \
-       WHERE i.school_id = ? \
-       ORDER BY i.name ASC",
-      [schoolId]
-    );
-    const instanceChildren = [];
-    for (const inst of instances) {
-      const instanceUid = inst.instance_uid;
-      const baseDir = '/instances/' + instanceUid + '/';
-      // 查询实例目录及其子目录下的所有文件
-      const instFiles = DB.all(
-        "SELECT id, directory, name, file_type, file_size, file_category, created_at, updated_at \
-         FROM cloud_files \
-         WHERE directory LIKE ? AND school_id = ? \
-         ORDER BY directory ASC, name ASC",
-        [baseDir + '%', schoolId]
-      );
-
-      const fileChildren = [];
-      // 实例配置虚拟文件
-      fileChildren.push({
-        name: '实例配置.json',
-        path: DS_INSTANCES + '/' + inst.name + '/实例配置.json',
-        is_directory: false,
-        size: phpStrlen(inst.config ?? '{}'),
-        file_type: 'json',
-        updated_at: inst.created_at,
-        source: 'instance_config',
-        instance_id: inst.id,
-        instance_uid: instanceUid,
-        config: blobText(inst.config),
-      });
-
-      // 收集子目录
-      const subDirs = new Set();
-      const rootFiles = [];
-
-      for (const f of instFiles) {
-        let relDir = String(f.directory).slice(baseDir.length).replace(/\/+$/, '');
-        if (relDir === '') {
-          // 根目录文件
-          rootFiles.push(f);
-        } else {
-          // 子目录中的文件
-          const topDir = relDir.split('/')[0];
-          subDirs.add(topDir);
-        }
-      }
-
-      // 添加子目录节点
-      for (const dirName of subDirs) {
-        const subDirFull = baseDir + dirName + '/';
-        const subDirFiles = instFiles.filter(f => String(f.directory).startsWith(subDirFull));
-        const subChildren = subDirFiles.map(f => ({
-          name: f.name,
-          path: DS_INSTANCES + '/' + inst.name + '/' + dirName + '/' + f.name,
-          is_directory: false,
-          size: f.file_size,
-          file_type: f.file_type,
-          updated_at: f.updated_at,
-          source: 'instance_file',
-          file_id: f.id,
-          instance_id: inst.id,
-          instance_uid: instanceUid,
-        }));
-
-        fileChildren.push({
-          name: dirName,
-          path: DS_INSTANCES + '/' + inst.name + '/' + dirName,
-          is_directory: true,
-          source: 'instance_subdir',
-          instance_id: inst.id,
-          instance_uid: instanceUid,
-          children: subChildren,
-        });
-      }
-
-      // 添加根目录下的文件
-      for (const f of rootFiles) {
-        fileChildren.push({
-          name: f.name,
-          path: DS_INSTANCES + '/' + inst.name + '/' + f.name,
-          is_directory: false,
-          size: f.file_size,
-          file_type: f.file_type,
-          updated_at: f.updated_at,
-          source: 'instance_file',
-          file_id: f.id,
-          instance_id: inst.id,
-          instance_uid: instanceUid,
-        });
-      }
-
-      instanceChildren.push({
-        name: inst.name,
-        path: DS_INSTANCES + '/' + inst.name,
-        is_directory: true,
-        source: 'instance',
-        instance_id: inst.id,
-        instance_uid: instanceUid,
-        children: fileChildren,
-      });
-    }
-    nodes.push({
-      name: '实例文件',
-      path: DS_INSTANCES,
-      is_directory: true,
-      source: 'system',
-      badge: '实例管理',
-      protected: true,
-      children: instanceChildren,
-    });
-
-    // 2. 云文件目录（轻编辑器）
+    // 1. 云文件目录（轻编辑器）
     const space = ensureDataSpace(DB, username);
     const spaceId = space.id;
     const cloudFiles = DB.all(
@@ -368,7 +246,7 @@ module.exports = async (ctx) => {
       children: cloudChildren,
     });
 
-    // 3. 网页空间目录
+    // 2. 网页空间目录
     const webSpaces = DB.all(
       "SELECT * FROM web_hosting_spaces WHERE alliance_username = ? AND is_web_space = 1 \
        ORDER BY created_at DESC",
@@ -436,7 +314,7 @@ module.exports = async (ctx) => {
       children: webSpaceChildren,
     });
 
-    // 4. 版本历史目录
+    // 3. 版本历史目录
     const versions = DB.all(
       "SELECT cv.id, cv.file_id, cv.file_name, cv.version_label, cv.created_at \
        FROM cloud_file_versions cv \
@@ -468,10 +346,10 @@ module.exports = async (ctx) => {
       children: versionChildren,
     });
 
-    // 5. 操作记录目录
+    // 4. 操作记录目录
     const historyChildren = [];
 
-    // 5a. Global 全局操作日志（所有平台操作，来自 audit_logs）
+    // 4a. Global 全局操作日志（所有平台操作，来自 audit_logs）
     const globalLogs = DB.all(
       "SELECT id, username, action, target, status, created_at \
        FROM audit_logs \
@@ -504,7 +382,7 @@ module.exports = async (ctx) => {
       children: globalChildren,
     });
 
-    // 5b. 文件操作记录（来自 cloud_operation_logs）
+    // 4b. 文件操作记录（来自 cloud_operation_logs）
     const fileHistories = DB.all(
       "SELECT id, file_id, file_name, action_type, action_label, created_at \
        FROM cloud_operation_logs \
@@ -557,38 +435,7 @@ module.exports = async (ctx) => {
     const source = String(query.source ?? '').trim();
     if (Helpers.empty(path)) Response.error('缺少文件路径');
 
-    // 实例配置
-    if (source === 'instance_config') {
-      const instanceId = parseInt(query.instance_id ?? 0, 10) || 0;
-      const inst = DB.one(
-        "SELECT config FROM instances WHERE id = ? AND school_id = ?",
-        [instanceId, schoolId]
-      );
-      if (!inst) Response.error('实例不存在');
-      Response.success({
-        content: blobText(inst.config) ?? '{}',
-        file_type: 'json',
-        source: 'instance_config',
-      });
-    }
-
-    // 实例文件
-    if (source === 'instance_file') {
-      const fileId = parseInt(query.file_id ?? 0, 10) || 0;
-      const file = DB.one(
-        "SELECT cf.* FROM cloud_files cf \
-         JOIN instances i ON i.id = cf.instance_id \
-         WHERE cf.id = ? AND i.school_id = ?",
-        [fileId, schoolId]
-      );
-      if (!file) Response.error('文件不存在');
-      Response.success({
-        content: blobText(file.content) ?? '',
-        file_type: file.file_type,
-        source: 'instance_file',
-        file_id: file.id,
-      });
-    }
+    // V3：实例配置/实例文件来源已移除
 
     // 云文件
     if (source === 'cloud_file') {
@@ -756,24 +603,7 @@ module.exports = async (ctx) => {
       Response.success({ ok: true, size: phpStrlen(content) }, '已保存');
     }
 
-    // 实例文件保存
-    if (source === 'instance_file') {
-      const fileId = parseInt(body.file_id ?? 0, 10) || 0;
-      const file = DB.one(
-        "SELECT cf.* FROM cloud_files cf \
-         JOIN instances i ON i.id = cf.instance_id \
-         WHERE cf.id = ? AND i.school_id = ?",
-        [fileId, schoolId]
-      );
-      if (!file) Response.error('文件不存在');
-      const now = nowStr();
-      DB.update('cloud_files', {
-        content: content,
-        file_size: phpStrlen(content),
-        updated_at: now,
-      }, 'id = ?', [fileId]);
-      Response.success({ ok: true, size: phpStrlen(content) }, '已保存');
-    }
+    // V3：实例文件保存已移除
 
     Response.error('不支持保存此类型文件');
   }
@@ -788,20 +618,7 @@ module.exports = async (ctx) => {
       Response.error('系统目录不可删除');
     }
 
-    // 实例目录
-    if (source === 'instance') {
-      const instanceId = parseInt(body.instance_id ?? 0, 10) || 0;
-      const inst = DB.one(
-        "SELECT * FROM instances WHERE id = ? AND school_id = ?",
-        [instanceId, schoolId]
-      );
-      if (!inst) Response.error('实例不存在');
-      // 删除实例及关联文件
-      DB.delete('cloud_files', 'instance_id = ?', [instanceId]);
-      DB.delete('instance_storage_data', 'instance_id = ?', [instanceId]);
-      DB.delete('instances', 'id = ?', [instanceId]);
-      Response.success(null, '实例已删除');
-    }
+    // V3：实例目录删除已移除（实例管理不在数据空间）
 
     // 网页空间
     if (source === 'webspace') {
@@ -1074,14 +891,6 @@ module.exports = async (ctx) => {
       [spaceId]
     ) ?? 0, 10) || 0;
 
-    // 实例文件总大小
-    const instanceFilesUsed = parseInt(DB.scalar(
-      "SELECT COALESCE(SUM(cf.file_size), 0) FROM cloud_files cf \
-       JOIN instances i ON i.id = cf.instance_id \
-       WHERE i.school_id = ?",
-      [schoolId]
-    ) ?? 0, 10) || 0;
-
     // 实例存储数据总大小
     const instanceStorageUsed = parseInt(DB.scalar(
       "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM instance_storage_data isd \
@@ -1102,7 +911,7 @@ module.exports = async (ctx) => {
       [username]
     ) ?? 0, 10) || 0;
 
-    const totalUsed = webHostingUsed + instanceFilesUsed + instanceStorageUsed + versionUsed + historyUsed;
+    const totalUsed = webHostingUsed + instanceStorageUsed + versionUsed + historyUsed;
     const totalQuota = space.storage_quota || (10 * 1024 * 1024); // 使用空间实际配额，默认10MB
 
     // 文件数量统计
@@ -1128,7 +937,6 @@ module.exports = async (ctx) => {
       isFull: totalUsed >= totalQuota,
       breakdown: {
         web_hosting: { used: webHostingUsed, display: formatBytes(webHostingUsed) },
-        instance_files: { used: instanceFilesUsed, display: formatBytes(instanceFilesUsed) },
         instance_storage: { used: instanceStorageUsed, display: formatBytes(instanceStorageUsed) },
         versions: { used: versionUsed, display: formatBytes(versionUsed) },
         history: { used: historyUsed, display: formatBytes(historyUsed) },

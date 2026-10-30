@@ -32,17 +32,19 @@ module.exports = async (ctx) => {
 
   if (method === 'GET' && action === 'list') {
     const rows = DB.all(
-      `SELECT id, file_path, file_size, content_type, created_at, updated_at
+      `SELECT id, file_path, file_size, content_type, created_at, updated_at, is_directory
        FROM web_hosting_files
-       WHERE space_id = ? AND file_path LIKE ? AND is_directory = 0
-       ORDER BY file_path ASC`,
-      [spaceId, CLOUD_PREFIX + '%']
+       WHERE space_id = ? AND file_path LIKE ? AND file_path != ?
+       ORDER BY is_directory DESC, file_path ASC`,
+      [spaceId, CLOUD_PREFIX + '%', '/.cloud']
     );
+    const ownerDisplay = username;
     // 转换为轻编辑器期望的格式
     const result = rows.map((row) => {
       const name = basename(row.file_path);
+      const isDirectory = parseInt(row.is_directory, 10) === 1;
       // 检查是否已分享
-      const shared = DB.scalar(
+      const shared = isDirectory ? 0 : DB.scalar(
         `SELECT COUNT(*) FROM share_items
          WHERE resource_type = 'cloud_file' AND resource_id = ? AND is_deleted = 0`,
         [row.id]
@@ -51,17 +53,21 @@ module.exports = async (ctx) => {
         id: row.id,
         name: name,
         file_path: row.file_path,
-        file_type: fileExt(name),
+        parent_dir: parentDirOf(row.file_path),
+        is_directory: isDirectory ? 1 : 0,
+        file_type: isDirectory ? 'dir' : fileExt(name),
         file_size: row.file_size,
         content_type: row.content_type,
         created_at: row.created_at,
         updated_at: row.updated_at,
         is_shared: shared ? 1 : 0,
         source: 'owned',
+        owner: ownerDisplay,
+        owner_username: username,
       };
     });
 
-    // 获取分享给我的文件
+    // 获取分享给我的文件（统一展示在根目录）
     let userId = 0;
     const user = Auth.user();
     if (user) userId = parseInt(user.user_id ?? 0, 10) || 0;
@@ -81,6 +87,8 @@ module.exports = async (ctx) => {
           id: row.id,
           name: name,
           file_path: row.file_path,
+          parent_dir: '',
+          is_directory: 0,
           file_type: fileExt(name),
           file_size: row.file_size,
           content_type: row.content_type,
@@ -90,11 +98,28 @@ module.exports = async (ctx) => {
           source: 'shared',
           shared_from: row.shared_from,
           shared_permission: row.shared_permission,
+          owner: row.shared_from,
+          owner_username: row.shared_from,
         });
       }
     }
 
     Response.success(result);
+  }
+
+  // 云存储用量（轻编辑器左下角）
+  if (method === 'GET' && action === 'usage') {
+    const used = parseInt(DB.scalar(
+      `SELECT COALESCE(SUM(file_size), 0) FROM web_hosting_files
+       WHERE space_id = ? AND file_path LIKE ? AND is_directory = 0`,
+      [spaceId, CLOUD_PREFIX + '%']
+    ) ?? 0, 10) || 0;
+    const quota = parseInt(space.storage_quota ?? 0, 10) || (100 * 1024 * 1024);
+    Response.success({
+      used: used,
+      quota: quota,
+      percent: quota > 0 ? Math.min(100, Math.round((used / quota) * 1000) / 10) : 0,
+    });
   }
 
   if (method === 'GET' && action === 'get') {
@@ -122,6 +147,8 @@ module.exports = async (ctx) => {
             id: sharedRow.id,
             name: basename(sharedRow.file_path),
             file_path: sharedRow.file_path,
+            parent_dir: '',
+            is_directory: 0,
             file_type: fileExt(sharedRow.file_path),
             file_size: sharedRow.file_size,
             content: sharedRow.content ?? '',
@@ -130,6 +157,8 @@ module.exports = async (ctx) => {
             updated_at: sharedRow.updated_at,
             source: 'shared',
             permission: sharedRow.shared_permission,
+            owner: sharedRow.shared_from || '',
+            owner_username: sharedRow.shared_from || '',
           });
         }
       }
@@ -139,13 +168,17 @@ module.exports = async (ctx) => {
       id: row.id,
       name: basename(row.file_path),
       file_path: row.file_path,
-      file_type: fileExt(row.file_path),
+      parent_dir: parentDirOf(row.file_path),
+      is_directory: parseInt(row.is_directory, 10) === 1 ? 1 : 0,
+      file_type: parseInt(row.is_directory, 10) === 1 ? 'dir' : fileExt(row.file_path),
       file_size: row.file_size,
       content: row.content ?? '',
       content_type: row.content_type,
       created_at: row.created_at,
       updated_at: row.updated_at,
       source: 'owned',
+      owner: Auth.user()?.display_name || Auth.allianceUsername(),
+      owner_username: Auth.allianceUsername(),
     });
   }
 
@@ -153,16 +186,19 @@ module.exports = async (ctx) => {
     let name = String(body.name ?? '').trim();
     const fileType = body.file_type ?? 'json';
     const content = body.content ?? '';
+    const dir = normalizeCloudDir(body.dir);
+    if (dir === null) Response.error('目录路径不合法');
 
     if (name === '') Response.error('文件名不能为空');
-    if (!/^[a-zA-Z0-9_\-\.]+$/.test(name)) Response.error('文件名只能包含字母、数字、下划线、连字符和点');
+    if (!validCloudName(name)) Response.error('文件名不能包含 / \\ : * ? " < > | 等字符');
+    if (dir !== '' && !cloudDirExists(spaceId, dir)) Response.error('目标目录不存在');
 
     // 自动添加扩展名
     if (!name.includes('.')) {
       name += '.' + fileType;
     }
 
-    const filePath = CLOUD_PREFIX + name;
+    const filePath = cloudPathFor(name, dir);
     const now = nowStr();
 
     // 确保 /.cloud/ 目录存在
@@ -190,7 +226,9 @@ module.exports = async (ctx) => {
     });
 
     Auth.logAudit(schoolId, 0, 'cloud_file_create', `创建云文件: ${username} -> ${filePath}`);
-    Response.success({ id: id, name: name, file_path: filePath }, '云文件已创建');
+    Response.success({
+      id: id, name: name, file_path: filePath, parent_dir: dir, is_directory: 0,
+    }, '云文件已创建');
   }
 
   if (method === 'POST' && action === 'update') {
@@ -222,11 +260,14 @@ module.exports = async (ctx) => {
     }
 
     const updates = { updated_at: nowStr() };
+    if (parseInt(row.is_directory, 10) === 1) {
+      Response.error('目录请使用重命名操作（action=rename）');
+    }
     if (body.name !== undefined && body.name !== null) {
       const newName = String(body.name).trim();
       if (newName === '') Response.error('文件名不能为空');
-      if (!/^[a-zA-Z0-9_\-\.]+$/.test(newName)) Response.error('文件名只能包含字母、数字、下划线、连字符和点');
-      const newPath = CLOUD_PREFIX + newName;
+      if (!validCloudName(newName)) Response.error('文件名不能包含 / \\ : * ? " < > | 等字符');
+      const newPath = cloudPathFor(newName, parentDirOf(row.file_path));
       // 检查新路径是否冲突
       if (newPath !== row.file_path) {
         const conflict = DB.one(
@@ -253,42 +294,76 @@ module.exports = async (ctx) => {
     const id = parseInt(body.id ?? 0, 10) || 0;
     const newName = String(body.name ?? '').trim();
     if (id <= 0) Response.error('缺少文件 ID');
-    if (newName === '') Response.error('文件名不能为空');
-    if (!/^[a-zA-Z0-9_\-\.]+$/.test(newName)) Response.error('文件名只能包含字母、数字、下划线、连字符和点');
+    if (newName === '') Response.error('名称不能为空');
+    if (!validCloudName(newName)) Response.error('名称不能包含 / \\ : * ? " < > | 等字符');
 
     const row = DB.one(
       `SELECT * FROM web_hosting_files WHERE id = ? AND space_id = ? AND file_path LIKE ?`,
       [id, spaceId, CLOUD_PREFIX + '%']
     );
     if (!row) Response.error('云文件不存在');
-    if (parseInt(row.is_directory, 10) === 1) Response.error('不支持重命名目录');
 
-    const newPath = CLOUD_PREFIX + newName;
-    if (newPath !== row.file_path) {
+    const isDirectory = parseInt(row.is_directory, 10) === 1;
+    const oldPath = row.file_path;
+    const newPath = isDirectory
+      ? cloudPathFor(newName, parentDirOf(oldPath))
+      : cloudPathFor(newName, parentDirOf(oldPath));
+
+    if (newPath !== oldPath) {
       const conflict = DB.one(
         `SELECT id FROM web_hosting_files WHERE space_id = ? AND file_path = ? AND id != ?`,
         [spaceId, newPath, id]
       );
-      if (conflict) Response.error('同名文件已存在');
-      DB.update('web_hosting_files', {
-        file_path: newPath,
-        content_type: guessCloudContentType(newName),
-        updated_at: nowStr(),
-      }, 'id = ?', [id]);
+      if (conflict) Response.error(isDirectory ? '同名目录已存在' : '同名文件已存在');
+
+      if (isDirectory) {
+        // 目录改名：同步更新所有子孙路径
+        const prefix = oldPath + '/';
+        const children = DB.all(
+          `SELECT id, file_path FROM web_hosting_files WHERE space_id = ? AND file_path LIKE ?`,
+          [spaceId, prefix + '%']
+        );
+        DB.update('web_hosting_files', {
+          file_path: newPath,
+          content_type: null,
+          updated_at: nowStr(),
+        }, 'id = ?', [id]);
+        for (const child of children) {
+          DB.update('web_hosting_files', {
+            file_path: newPath + child.file_path.slice(oldPath.length),
+            updated_at: nowStr(),
+          }, 'id = ?', [child.id]);
+        }
+      } else {
+        DB.update('web_hosting_files', {
+          file_path: newPath,
+          content_type: guessCloudContentType(newName),
+          updated_at: nowStr(),
+        }, 'id = ?', [id]);
+      }
     }
 
-    Auth.logAudit(schoolId, 0, 'cloud_file_rename', `重命名云文件: ${username} -> ${newName}`);
-    Response.success({ id: id, name: newName, file_path: newPath }, '已重命名');
+    Auth.logAudit(schoolId, 0, 'cloud_file_rename', `重命名云文件: ${username} -> ${newPath}`);
+    Response.success({
+      id: id,
+      name: newName,
+      file_path: newPath,
+      parent_dir: parentDirOf(newPath),
+      is_directory: isDirectory ? 1 : 0,
+    }, '已重命名');
   }
 
   if (method === 'POST' && action === 'create-dir') {
     const name = String(body.name ?? '').trim();
+    const dir = normalizeCloudDir(body.dir);
     if (name === '') Response.error('目录名不能为空');
-    if (!/^[a-zA-Z0-9_\-\.]+$/.test(name)) Response.error('目录名只能包含字母、数字、下划线、连字符和点');
+    if (!validCloudName(name)) Response.error('目录名不能包含 / \\ : * ? " < > | 等字符');
+    if (dir === null) Response.error('目录路径不合法');
+    if (dir !== '' && !cloudDirExists(spaceId, dir)) Response.error('目标目录不存在');
 
     const now = nowStr();
     ensureCloudDir(spaceId, now);
-    const dirPath = CLOUD_PREFIX + name;
+    const dirPath = cloudPathFor(name, dir);
     const exists = DB.one(
       `SELECT id FROM web_hosting_files WHERE space_id = ? AND file_path = ?`,
       [spaceId, dirPath]
@@ -306,7 +381,9 @@ module.exports = async (ctx) => {
       updated_at: now,
     });
     Auth.logAudit(schoolId, 0, 'cloud_file_mkdir', `创建云目录: ${username} -> ${dirPath}`);
-    Response.success({ id: id, name: name, file_path: dirPath }, '目录已创建');
+    Response.success({
+      id: id, name: name, file_path: dirPath, parent_dir: dir, is_directory: 1,
+    }, '目录已创建');
   }
 
   if (method === 'POST' && action === 'delete') {
@@ -316,6 +393,17 @@ module.exports = async (ctx) => {
       [id, spaceId, CLOUD_PREFIX + '%']
     );
     if (!row) Response.error('云文件不存在');
+
+    if (parseInt(row.is_directory, 10) === 1) {
+      // 目录：递归删除所有子孙条目
+      DB.delete(
+        'web_hosting_files',
+        `space_id = ? AND (file_path = ? OR file_path LIKE ?)`,
+        [spaceId, row.file_path, row.file_path + '/%']
+      );
+      Auth.logAudit(schoolId, 0, 'cloud_file_delete', `删除云目录: ${username} -> ${row.file_path}`);
+      Response.success(null, '目录已删除');
+    }
 
     DB.delete('web_hosting_files', 'id = ?', [id]);
     Auth.logAudit(schoolId, 0, 'cloud_file_delete', `删除云文件: ${username} -> ${row.file_path}`);
@@ -666,6 +754,54 @@ module.exports = async (ctx) => {
 /** basename() 等价 */
 function basename(p) {
   return String(p).split('/').pop();
+}
+
+/** 云文件/目录名：允许中文/空格，禁止路径分隔符、控制字符、.. 与首尾空白；最多 180 字节 */
+function validCloudName(name) {
+  const value = String(name ?? '').trim();
+  if (value === '' || value === '.' || value === '..') return false;
+  if (Buffer.byteLength(value, 'utf8') > 180) return false;
+  return !/[\/\\:*?"<>|\x00-\x1F]/.test(value);
+}
+
+/** 规范化云目录（相对 `/.cloud/` 的路径；根目录返回 ''）。非法返回 null。 */
+function normalizeCloudDir(dir) {
+  if (dir === undefined || dir === null) return '';
+  let result = String(dir).replace(/\\/g, '/').trim();
+  result = result.replace(/^\/+|\/+$/g, '');
+  if (result === '' || result === '.') return '';
+  if (result.indexOf('/.cloud') === 0) result = result.slice('/.cloud'.length).replace(/^\/+/, '');
+  const parts = result.split('/').filter(Boolean);
+  for (const part of parts) {
+    if (!validCloudName(part)) return null;
+  }
+  return parts.join('/');
+}
+
+/** 由父目录与名称生成完整 cloud 路径。 */
+function cloudPathFor(name, dir) {
+  const cleanDir = dir ? String(dir).replace(/^\/+|\/+$/g, '') : '';
+  return CLOUD_PREFIX + (cleanDir ? cleanDir + '/' : '') + name;
+}
+
+/** 完整路径 → 相对 `/.cloud/` 的父目录（根为 ''）。 */
+function parentDirOf(filePath) {
+  const p = String(filePath === undefined || filePath === null ? '' : filePath);
+  const idx = p.lastIndexOf('/');
+  if (idx < 0) return '';
+  const dir = p.slice(0, idx);
+  if (dir === '/.cloud') return '';
+  return dir.indexOf(CLOUD_PREFIX) === 0 ? dir.slice(CLOUD_PREFIX.length) : '';
+}
+
+/** 判断云目录是否存在。 */
+function cloudDirExists(spaceId, dir) {
+  if (!dir) return true;
+  const row = DB.one(
+    `SELECT 1 AS x FROM web_hosting_files WHERE space_id = ? AND file_path = ? AND is_directory = 1`,
+    [spaceId, CLOUD_PREFIX + dir]
+  );
+  return !!row;
 }
 
 /** pathinfo($name, PATHINFO_EXTENSION) 等价（以点开头的隐藏文件无扩展名） */

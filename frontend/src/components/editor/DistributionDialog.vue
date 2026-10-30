@@ -1,8 +1,8 @@
 <template>
-  <Teleport to="body">
-    <div v-if="visible" class="dd-overlay" @click.self="onClose">
-      <div class="dd-card">
-        <div class="dd-header">
+  <Teleport to="body" :disabled="!!embedded">
+    <div v-if="visible" :class="embedded ? 'dd-embedded' : 'dd-overlay'" @click.self="embedded ? undefined : onClose()">
+      <div :class="embedded ? 'dd-embedded-inner' : 'dd-card'">
+        <div class="dd-header" v-if="!embedded">
           <div class="dd-title">
             <Icon icon="ri-git-branch-line" :size="16" />
             <span>分发配置</span>
@@ -277,6 +277,8 @@ const props = defineProps<{
   visible: boolean;
   file: { id: string; name: string; icon?: string } | null;
   overview: DistributionOverview | null;
+  /** 嵌入模式（FilePropertiesDialog 的分发配置 Tab）：不渲染遮罩与标题栏 */
+  embedded?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -527,6 +529,15 @@ watch(
   () => props.visible,
   (visible) => {
     if (visible) open();
+  },
+  { immediate: true }
+);
+
+// 嵌入模式下切换源文件时重新校验
+watch(
+  () => props.file?.id,
+  () => {
+    if (props.visible) open();
   }
 );
 
@@ -638,6 +649,32 @@ function onClose() {
   border-radius: var(--radius-lg);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
   overflow: hidden;
+}
+
+/* 嵌入模式：仅渲染内容与底部按钮（用于 FilePropertiesDialog 的分发配置 Tab） */
+.dd-embedded {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.dd-embedded-inner {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.dd-embedded-inner .dd-body {
+  padding-top: var(--spacer-3);
 }
 
 .dd-header {

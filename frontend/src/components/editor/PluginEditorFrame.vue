@@ -30,6 +30,7 @@ const emit = defineEmits<{
   (e: 'ready'): void;
   (e: 'save', content: string): void;
   (e: 'notify', msg: string): void;
+  (e: 'fallback', reason: string): void;
   (e: 'pluginRequest', requestId: number, action: string, payload: any): void;
   (e: 'setRibbon', groups: any[]): void;
 }>();
@@ -85,6 +86,10 @@ ${html}
     // 通知平台更新“靠左”Ribbon 分组（插件自定义左侧工具栏）
     setRibbon: (groups) => {
       window.parent.postMessage({ __csesPluginSetRibbon: true, groups }, '*');
+    },
+    // 插件无法识别当前文件格式时，请求平台回退到默认编辑器（不应用本插件）
+    fallback: (reason) => {
+      window.parent.postMessage({ __csesPluginFallback: true, reason: String(reason || '') }, '*');
     }
   };
   // 监听父窗口命令
@@ -132,6 +137,11 @@ function onPluginMessage(e: MessageEvent) {
   // 处理插件直接保存
   if (e.data.__csesPluginSave) {
     emit('save', e.data.content || '');
+  }
+
+  // 插件请求回退到默认编辑器
+  if (e.data.__csesPluginFallback) {
+    emit('fallback', String(e.data.reason || ''));
   }
 
   // 处理插件自定义左侧 Ribbon

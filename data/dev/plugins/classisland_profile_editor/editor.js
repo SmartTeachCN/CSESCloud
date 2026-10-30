@@ -2,7 +2,7 @@
  * ClassIsland 档案编辑器（.json 通用注册 + 关键格式识别）
  *
  * - 文件为 ClassIsland 档案（TimeLayouts / ClassPlans / Subjects 关键结构）时进入结构化编辑；
- * - 否则回退为通用 JSON 编辑器。
+ *   否则调用 CSEditor.fallback() 交给平台默认编辑器（不再内置通用 JSON / 源码视图）。
  * - 编辑体验对齐 ClassIsland 2 档案设置窗口：
  *   · 科目：左表格 + 右详情，支持 ClassIsland 默认预设科目（与客户端同 GUID）；
  *   · 课表：列表 / 周视图 / 月视图（月视图支持预定课表 OrderedSchedules）、临时层、课程快速选择面板、
@@ -28,9 +28,28 @@ var uiState = { collapse: { classplans: false, timelayouts: false }, durClass: 4
 var quickSelectCtx = null;         // 快速选择面板上下文 {type:'subject',planId,idx} / {type:'plan',dateKey}
 var quickDockTarget = null;        // 常驻快速选择菜单的当前目标 {type:'lesson'|'week', planId, idx}
 var dirty = false;
-var rawDirty = false;              // 源码视图手动改过、尚未载入
 var validationErrors = [];
 var validationWarnings = [];
+
+// ================= 平台回退（非 ClassIsland 档案） =================
+// 文件未识别为 ClassIsland 档案时，不再由插件内部提供通用 JSON 编辑器，
+// 而是请求平台回退：EditorPane 收到 __csesPluginFallback 后停用本插件并改用默认编辑器。
+var fallbackActive = false;     // 已请求回退：停止渲染与保存
+var fallbackRequested = false;  // 避免重复请求
+function requestPlatformFallback(reason) {
+  fallbackActive = true;
+  if (fallbackRequested) return;
+  fallbackRequested = true;
+  var msg = reason || '未识别为 ClassIsland 档案';
+  try {
+    if (window.CSEditor && typeof window.CSEditor.fallback === 'function') {
+      window.CSEditor.fallback(msg);
+    } else if (window.parent && window.parent !== window) {
+      // 兼容尚未注入 fallback SDK 的宿主
+      window.parent.postMessage({ __csesPluginFallback: true, reason: msg }, '*');
+    }
+  } catch (e) { /* ignore */ }
+}
 
 var DEFAULT_GROUP_GUID = 'acaf4ef0-e261-4262-b941-34ea93cb4369';
 var EMPTY_GUID = '00000000-0000-0000-0000-000000000000';
@@ -288,7 +307,7 @@ function restoreViewState() {
     if (!raw) return;
     var st = JSON.parse(raw);
     if (!st || typeof st !== 'object') return;
-    if (['classplans', 'timelayouts', 'subjects', 'raw'].indexOf(st.view) >= 0) view = st.view;
+    if (['classplans', 'timelayouts', 'subjects'].indexOf(st.view) >= 0) view = st.view;
     if (['list', 'week', 'month'].indexOf(st.classPlanSubView) >= 0) classPlanSubView = st.classPlanSubView;
     if (['list', 'visual'].indexOf(st.timeLayoutSubView) >= 0) timeLayoutSubView = st.timeLayoutSubView;
     if (st.selectedTimeLayoutId) selectedTimeLayoutId = st.selectedTimeLayoutId;
@@ -314,7 +333,7 @@ function loadFromContent(content) {
   catch (e) {
     isProfile = false;
     profile = null;
-    enterGenericMode('JSON 解析失败：' + e.message);
+    requestPlatformFallback('JSON 解析失败：' + e.message);
     return false;
   }
   var det = detectClassIslandProfile(parsed);
@@ -323,85 +342,73 @@ function loadFromContent(content) {
     profileFmt = det.fmt || '2x';
     profile = normalizeProfile(parsed);
     enterProfileMode();
-  } else {
-    isProfile = false;
-    profile = parsed;
-    enterGenericMode(det.reason);
+    return true;
   }
-  return true;
+  // 非 ClassIsland 档案：交给平台默认编辑器，插件停止渲染与保存
+  isProfile = false;
+  profile = null;
+  requestPlatformFallback(det.reason);
+  return false;
 }
 
+/** 保存统一输出格式化 JSON（仅 Profile 模式；回退后本插件不再保存） */
 function buildOutput() {
-  if (isProfile) return JSON.stringify(profile, null, 4);
-  var el = $('ciGeneric');
-  var text = el ? el.value : (window.CSEditor && window.CSEditor.file ? window.CSEditor.file.content : '');
-  // 非 ClassIsland JSON：尽量格式化，失败则原样保存
-  try { return JSON.stringify(JSON.parse(text), null, 4); } catch (e) { return text; }
+  if (!isProfile || !profile) return '';
+  return JSON.stringify(profile, null, 4);
 }
 
 function saveConfig() {
-  if (isProfile) {
-    runValidation();
-    if (validationErrors.length > 0) {
-      var msg = validationErrors.slice(0, 5).join('\n');
-      if (!confirm('存在 ' + validationErrors.length + ' 个验证错误，仍要保存吗？\n\n' + msg)) return;
-    }
-    persistViewState();
+  if (fallbackActive || !isProfile) return;
+  runValidation();
+  if (validationErrors.length > 0) {
+    var msg = validationErrors.slice(0, 5).join('\n');
+    if (!confirm('存在 ' + validationErrors.length + ' 个验证错误，仍要保存吗？\n\n' + msg)) return;
   }
+  persistViewState();
   var text = buildOutput();
   if (window.CSEditor) {
     if (window.CSEditor.emitSave) window.CSEditor.emitSave(text);
     else if (window.CSEditor.saveContent) window.CSEditor.saveContent(text);
   }
   dirty = false;
-  rawDirty = false;
   lastSnapshot = snapshot();
   updateStats();
 }
 
 // ================= 模式切换 =================
+/** 格式化：按档案规范归一化当前 profile 并重绘（保存时统一输出格式化 JSON，无源码视图） */
+function formatProfile() {
+  if (!isProfile || !profile) return;
+  commitUndo();
+  profile = normalizeProfile(profile);
+  dirty = true;
+  revalidateSelections();
+  renderAll();
+  runValidation();
+  commitUndo();
+  updateStats('已格式化');
+}
+
 function enterProfileMode() {
   var badge = $('ciFormatBadge');
   badge.className = 'ci-badge ci-is-profile';
   $('ciFormatText').textContent = 'ClassIsland 档案（' + (profileFmt === '1x' ? '1.x 时间格式' : '2.x 时间格式') + '）';
   $('ciViewTabs').style.display = '';
-  $('ciGenericView').style.display = 'none';
   var tabs = document.querySelectorAll('#ciViewTabs .ci-view-tab');
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('disabled');
   revalidateSelections();
   lastSnapshot = snapshot();
-  switchView(view === 'raw' ? 'raw' : view);
+  switchView(view);
   renderAll();
   runValidation();
 }
 
-function enterGenericMode(reason) {
-  var badge = $('ciFormatBadge');
-  badge.className = 'ci-badge ci-not-profile';
-  $('ciFormatText').textContent = '通用 JSON（未识别为 ClassIsland 档案）';
-  $('ciViewTabs').style.display = 'none';
-  $('ciGenericView').style.display = '';
-  var views = document.querySelectorAll('.ci-view:not(#ciGenericView):not(#ciViewRaw)');
-  for (var i = 0; i < views.length; i++) views[i].style.display = 'none';
-  var el = $('ciGeneric');
-  if (el && !el.value) el.value = window.CSEditor && window.CSEditor.file ? (window.CSEditor.file.content || '') : '';
-  var nameInput = $('ciProfileName');
-  if (nameInput) { nameInput.value = isPlainObject(profile) && typeof profile.Name === 'string' ? profile.Name : ''; nameInput.disabled = true; }
-  updateStats(isPlainObject(profile) ? ('原因：' + reason) : '');
-  validationErrors = []; validationWarnings = []; renderIssues();
-}
-
 function redetect() {
   var text = (window.CSEditor && window.CSEditor.file ? (window.CSEditor.file.content || '') : '');
-  var rawEl = $('ciRaw');
-  if (rawEl && rawEl.value) text = rawEl.value;
-  var genericEl = $('ciGeneric');
-  if (!isProfile && genericEl && genericEl.value) text = genericEl.value;
-  if (rawDirty && rawEl && rawEl.value) text = rawEl.value;
   $('ciProfileName').disabled = false;
   var prevView = view;
   if (!loadFromContent(text)) return;
-  if (isProfile && view !== prevView) switchView(prevView === 'raw' ? 'raw' : prevView);
+  if (view !== prevView) switchView(prevView);
 }
 
 function updateStats(extra) {
@@ -418,12 +425,12 @@ function updateStats(extra) {
 }
 
 function switchView(v) {
+  var map = { classplans: 'ciViewClassPlans', timelayouts: 'ciViewTimeLayouts', subjects: 'ciViewSubjects' };
+  if (!map[v]) v = 'classplans';
   view = v;
-  var map = { classplans: 'ciViewClassPlans', timelayouts: 'ciViewTimeLayouts', subjects: 'ciViewSubjects', raw: 'ciViewRaw' };
   for (var key in map) { $(map[key]).style.display = key === v ? '' : 'none'; }
   var tabs = document.querySelectorAll('#ciViewTabs .ci-view-tab');
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-view') === v);
-  if (v === 'raw' && !rawDirty && profile) $('ciRaw').value = JSON.stringify(profile, null, 4);
   // 应用子视图（列表/周视图/月视图、列表/可视化）的持久化状态
   if (v === 'classplans') applyClassPlanSubView();
   if (v === 'timelayouts') applyTimeLayoutSubView();
@@ -1986,23 +1993,6 @@ function toggleIssues() {
   $('ciIssuesPanel').classList.toggle('collapsed');
 }
 
-// ================= 源码视图 =================
-function onRawInput() { rawDirty = true; dirty = true; }
-function syncFromRaw() {
-  var text = $('ciRaw').value;
-  $('ciProfileName').disabled = false;
-  if (!loadFromContent(text)) return;
-  dirty = true;
-  commitUndo();
-}
-function onGenericInput() {
-  dirty = true;
-  try {
-    var obj = JSON.parse($('ciGeneric').value);
-    if (isPlainObject(obj) && typeof obj.Name === 'string') { $('ciProfileName').value = obj.Name; $('ciProfileName').disabled = false; }
-  } catch (e) { /* 保留输入 */ }
-}
-
 function onNameInput() {
   if (!isProfile || !profile) return;
   profile.Name = $('ciProfileName').value;
@@ -2024,6 +2014,7 @@ function ensureProfileMode() {
 }
 
 function handleCommand(cmd) {
+  if (fallbackActive) return;
   try {
     switch (cmd) {
       case 'save': saveConfig(); break;
@@ -2038,8 +2029,7 @@ function handleCommand(cmd) {
       case 'ci-add-classplan': addClassPlan(); break;
       case 'ci-add-group': addGroup(); break;
       case 'ci-validate': if (isProfile) { runValidation(); alert('校验完成：' + validationErrors.length + ' 个错误，' + validationWarnings.length + ' 个警告'); } break;
-      case 'ci-format': if (isProfile) { $('ciRaw').value = JSON.stringify(profile, null, 4); switchView('raw'); } break;
-      case 'ci-toggle-raw': if (isProfile) switchView(view === 'raw' ? 'classplans' : 'raw'); break;
+      case 'ci-format': if (isProfile) { formatProfile(); } break;
     }
   } catch (e) { /* 用户取消等 */ }
 }
@@ -2098,9 +2088,9 @@ function diffMinutes(start, end) {
   var content = window.CSEditor && window.CSEditor.file ? (window.CSEditor.file.content || '') : '';
   restoreViewState();
   loadFromContent(content);
-  if (isProfile) {
-    revalidateSelections();
-    runValidation();
-    switchView(view);
-  }
+  // 非 ClassIsland 档案已请求平台回退：不再渲染或接管保存
+  if (fallbackActive || !isProfile) return;
+  revalidateSelections();
+  runValidation();
+  switchView(view);
 })();

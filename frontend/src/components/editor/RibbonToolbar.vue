@@ -9,8 +9,29 @@
           <Icon v-else :icon="editorInfo.icon || 'ri-file-edit-line'" :size="26" />
         </div>
         <div class="info-texts" v-if="editorInfo">
-          <span class="info-title" :title="editorInfo.title">{{ editorInfo.title }}</span>
-          <span class="info-type">{{ editorInfo.type }}</span>
+          <input
+            v-if="editableTitle && titleEditing"
+            ref="titleInputRef"
+            v-model="titleDraft"
+            class="info-title-input"
+            @keyup.enter="commitTitle"
+            @keyup.esc="cancelTitleEditing"
+            @blur="commitTitle"
+            @click.stop
+          />
+          <span
+            v-else
+            class="info-title"
+            :class="{ editable: editableTitle }"
+            :title="editableTitle ? editorInfo.title + '（点击重命名）' : editorInfo.title"
+            @click="onTitleClick"
+          >{{ editorInfo.title }}</span>
+          <span class="info-type-row">
+            <span class="info-type">{{ editorInfo.type }}</span>
+            <span v-if="distributed" class="info-distributed" title="已分发配置实例">
+              <Icon icon="ri-git-branch-line" :size="9" /> 已分发
+            </span>
+          </span>
         </div>
         <button
           v-if="editorInfo?.editButtonLabel"
@@ -18,7 +39,7 @@
           @click="$emit('edit-click')"
           :title="editorInfo.editButtonLabel"
         >
-          <Icon icon="ri-pencil-line" :size="14" />
+          <Icon :icon="editButtonIcon || 'ri-pencil-line'" :size="14" />
         </button>
       </div>
       <!-- 小行2：更新时间 + 编辑人 -->
@@ -231,6 +252,12 @@ const props = defineProps<{
   systemRightSelectedTool?: string;
   /** 是否展示靠右的中间“视图”工具区（真正文件编辑器开启，实例编辑器不开启） */
   showViewRibbon?: boolean;
+  /** 文件标题是否可点击行内重命名（仅云端 own 文件） */
+  editableTitle?: boolean;
+  /** 文件类型旁是否显示“已分发”徽标 */
+  distributed?: boolean;
+  /** 编辑按钮图标（默认铅笔；轻编辑器传入属性图标） */
+  editButtonIcon?: string;
 }>();
 
 const emit = defineEmits<{
@@ -240,6 +267,7 @@ const emit = defineEmits<{
   (e: 'redo'): void;
   (e: 'autosize-change', value: boolean): void;
   (e: 'edit-click'): void;
+  (e: 'title-change', title: string): void;
 }>();
 
 const editorSettings = useEditorSettings();
@@ -253,6 +281,40 @@ const fontPopoverStyle = ref<{ top: string; left: string }>({ top: '100px', left
 const autoSave = ref(true);
 const activeTool = ref(props.selectedTool || '');
 const saving = ref(!!props.saving);
+
+// ===== 文件标题行内重命名 =====
+const titleEditing = ref(false);
+const titleDraft = ref('');
+const titleInputRef = ref<HTMLInputElement | null>(null);
+
+function onTitleClick() {
+  if (!props.editableTitle || !props.editorInfo) return;
+  titleDraft.value = props.editorInfo.title;
+  titleEditing.value = true;
+  requestAnimationFrame(() => {
+    titleInputRef.value?.focus();
+    titleInputRef.value?.select();
+  });
+}
+
+function commitTitle() {
+  if (!titleEditing.value) return;
+  const next = titleDraft.value.trim();
+  const current = props.editorInfo?.title || '';
+  titleEditing.value = false;
+  if (!next || next === current) return;
+  emit('title-change', next);
+}
+
+function cancelTitleEditing() {
+  titleEditing.value = false;
+  titleDraft.value = '';
+}
+
+// 切换文件时取消未提交的标题编辑
+watch(() => props.editorInfo?.title, () => {
+  if (titleEditing.value) cancelTitleEditing();
+});
 
 const hasSubInfo = computed(() => !!(props.editorInfo?.lastUpdated || props.editorInfo?.lastEditor));
 
@@ -411,10 +473,58 @@ function emitSave() {
   line-height: 1.3;
 }
 
+.info-title.editable {
+  cursor: text;
+  border-radius: var(--radius-xs);
+  padding: 0 2px;
+  margin: 0 -2px;
+}
+.info-title.editable:hover {
+  background: var(--subtle-secondary);
+  box-shadow: inset 0 0 0 1px var(--divider-stroke);
+}
+
+.info-title-input {
+  width: 100%;
+  min-width: 60px;
+  max-width: 220px;
+  height: 22px;
+  padding: 0 4px;
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--accent-base);
+  border-radius: var(--radius-xs);
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.info-type-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-1);
+  min-width: 0;
+}
+
 .info-type {
   font-size: var(--font-size-xs);
   color: var(--text-tertiary);
   line-height: 1.3;
+}
+
+.info-distributed {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+  padding: 0 3px;
+  border-radius: var(--radius-xs);
+  font-size: 9px;
+  line-height: 1.4;
+  color: var(--status-warning);
+  background: rgba(255, 140, 0, 0.12);
+  white-space: nowrap;
 }
 
 .info-edit-btn {

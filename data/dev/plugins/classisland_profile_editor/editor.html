@@ -24,10 +24,6 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
       <span>科目</span>
     </button>
-    <button class="ci-view-tab" data-view="raw" onclick="switchView('raw')">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-      <span>JSON 源码</span>
-    </button>
   </div>
 
   <div class="ci-body">
@@ -124,24 +120,6 @@
           <div class="ci-empty">选择左侧科目以编辑详情</div>
         </div>
       </div>
-    </div>
-
-    <!-- ===== JSON 源码 ===== -->
-    <div class="ci-view" id="ciViewRaw" style="display:none">
-      <div class="ci-panel-bar">
-        <span class="ci-panel-title">JSON 源码（保留未知字段，Ctrl+S 保存）</span>
-        <button class="ci-btn small" onclick="syncFromRaw()">从源码载入</button>
-      </div>
-      <textarea class="ci-raw" id="ciRaw" spellcheck="false" oninput="onRawInput()"></textarea>
-    </div>
-
-    <!-- ===== 通用 JSON 回退编辑器（非 ClassIsland 格式） ===== -->
-    <div class="ci-view" id="ciGenericView" style="display:none">
-      <div class="ci-generic-tip">
-        当前文件不是 ClassIsland 档案（未识别到 TimeLayouts / ClassPlans / Subjects 关键结构），已回退为通用 JSON 编辑器。
-        档案需包含 <code>TimeLayouts</code>、<code>ClassPlans</code>、<code>Subjects</code> 三个对象后才能进入结构化编辑。
-      </div>
-      <textarea class="ci-raw" id="ciGeneric" spellcheck="false" oninput="onGenericInput()"></textarea>
     </div>
   </div>
 

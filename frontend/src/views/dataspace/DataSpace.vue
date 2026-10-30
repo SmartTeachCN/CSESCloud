@@ -84,9 +84,6 @@
         <div class="usage-text">{{ usage.usedDisplay }} / {{ usage.quotaDisplay }}</div>
         <div class="usage-detail">
           <div class="usage-item">
-            <span class="usage-dot" style="background:#107C10"></span>实例文件 {{ usage.breakdown?.instance_files?.display || '0 B' }}
-          </div>
-          <div class="usage-item">
             <span class="usage-dot" style="background:#0067C0"></span>云文件 {{ usage.breakdown?.web_hosting?.display || '0 B' }}
           </div>
           <div class="usage-item">
@@ -287,7 +284,7 @@
                   <div v-if="!activeTab" class="panel-empty"><Icon icon="ri-settings-3-line" :size="36" /><span>选择文件查看操作</span></div>
                   <div v-else class="action-list">
                     <button class="action-item" @click="saveCurrentTab" :disabled="saving || isReadOnly"><Icon icon="ri-save-line" :size="16" /><div><div class="action-title">保存</div><div class="action-desc">保存到云端</div></div></button>
-                    <button class="action-item" @click="downloadFile()" v-if="activeTab.source !== 'instance_config' && activeTab.source !== 'webspace_config'"><Icon icon="ri-download-2-line" :size="16" /><div><div class="action-title">下载</div><div class="action-desc">下载到本地</div></div></button>
+                    <button class="action-item" @click="downloadFile()" v-if="activeTab.source !== 'webspace_config'"><Icon icon="ri-download-2-line" :size="16" /><div><div class="action-title">下载</div><div class="action-desc">下载到本地</div></div></button>
                     <button class="action-item danger" @click="confirmDeleteActive" v-if="!activeTab.protected"><Icon icon="ri-delete-bin-line" :size="16" /><div><div class="action-title">删除</div><div class="action-desc">删除此文件</div></div></button>
                   </div>
                 </div>
@@ -367,7 +364,7 @@
             <button class="ctx-item" @click="openFile(ctxMenuNode); ctxMenuNode = null">
               <Icon icon="ri-file-edit-line" :size="14" />打开
             </button>
-            <button class="ctx-item" @click="downloadFile(ctxMenuNode); ctxMenuNode = null" v-if="ctxMenuNode.source !== 'instance_config' && ctxMenuNode.source !== 'webspace_config'">
+            <button class="ctx-item" @click="downloadFile(ctxMenuNode); ctxMenuNode = null" v-if="ctxMenuNode.source !== 'webspace_config'">
               <Icon icon="ri-download-2-line" :size="14" />下载
             </button>
             <div class="ctx-divider"></div>
@@ -463,7 +460,7 @@ const showShareDialog = ref(false);
 // ===== 数据 =====
 const loading = ref(false);
 const treeData = ref<any[]>([]);
-const expandedDirs = ref<Set<string>>(new Set(['/实例文件', '/云文件', '/网页空间', '/版本历史', '/操作记录']));
+const expandedDirs = ref<Set<string>>(new Set(['/云文件', '/网页空间', '/版本历史', '/操作记录']));
 const selectedDir = ref<string>('');
 const selectedDirNode = computed(() => {
   if (!selectedDir.value) return null;
@@ -734,7 +731,6 @@ async function handleRibbonRefresh() {
   try {
     const params: any = { path: tab.path, source: tab.source };
     if (node?.file_id) params.file_id = node.file_id;
-    if (node?.instance_id) params.instance_id = node.instance_id;
     if (node?.space_id) params.space_id = node.space_id;
     if (node?.version_id) params.version_id = node.version_id;
     if (node?.history_id) params.history_id = node.history_id;
@@ -777,7 +773,6 @@ function isTextFile(node: any): boolean {
 }
 function sourceLabel(source: string): string {
   const map: Record<string, string> = {
-    instance_config: '实例配置', instance_file: '实例文件', instance: '实例',
     cloud_file: '云文件', webspace_config: '网页空间配置', webspace_file: '网页空间文件',
     webspace: '网页空间', version_record: '版本历史', history_record: '操作记录',
     system: '系统目录',
@@ -838,7 +833,6 @@ async function openFile(node: any) {
   try {
     const params: any = { path: node.path, source: node.source };
     if (node.file_id) params.file_id = node.file_id;
-    if (node.instance_id) params.instance_id = node.instance_id;
     if (node.space_id) params.space_id = node.space_id;
     if (node.version_id) params.version_id = node.version_id;
     if (node.history_id) params.history_id = node.history_id;
@@ -1145,7 +1139,6 @@ async function executeDelete() {
     const params: any = { path: node.path, source: node.source };
     if (node.file_id) params.file_id = node.file_id;
     if (node.space_id) params.space_id = node.space_id;
-    if (node.instance_id) params.instance_id = node.instance_id;
     await dataSpaceApi.delete(params);
     showToast('success', '已删除');
     closeTab(node.path);

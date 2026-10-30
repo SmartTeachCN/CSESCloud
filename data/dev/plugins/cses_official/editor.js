@@ -1,7 +1,8 @@
 // ============================================================
 // CSES 编辑器 - 官方版（UI 样板：ClassIsland 档案编辑器）
 // - 注册 .yml 后缀：按 CSES 模板自动识别格式（V1.0 / V2.0），
-//   匹配成功进入结构化编辑；否则回退为通用 YAML 编辑器。
+//   匹配成功进入结构化编辑；否则调用 CSEditor.fallback() 交给平台默认编辑器。
+// - 不提供「YAML 源码」视图：源码编辑统一由平台的默认编辑器（Monaco）承担。
 // - 编辑体验对齐 ClassIsland 2 档案设置窗口：
 //   · 课程表：列表 / 周视图、课程快速选择面板（常驻 Dock + 弹窗）；
 //   · 科目：左表格 + 右详情，预设常用科目；
@@ -24,10 +25,29 @@ var uiState = { collapse: { schedules: false, config: false }, durClass: 40, aut
 var quickSelectCtx = null;     // 快速选择面板上下文 {schedIdx, clsIdx}
 var quickDockTarget = null;    // 常驻快速选择菜单的当前目标 {schedIdx, clsIdx}
 var dirty = false;
-var rawDirty = false;          // 源码视图手动改过、尚未载入
 var validationErrors = [];
 var validationWarnings = [];
 var presetOpen = false;
+
+// ================= 平台回退（非 CSES 文件） =================
+// 文件未识别为 CSES 模板时，不再由插件内部提供通用 YAML 编辑器，
+// 而是请求平台回退：EditorPane 收到 __csesPluginFallback 后停用本插件并改用默认编辑器。
+var fallbackActive = false;     // 已请求回退：停止渲染与保存
+var fallbackRequested = false;  // 避免重复请求
+function requestPlatformFallback(reason) {
+  fallbackActive = true;
+  if (fallbackRequested) return;
+  fallbackRequested = true;
+  var msg = reason || '未识别为 CSES 课表模板';
+  try {
+    if (window.CSEditor && typeof window.CSEditor.fallback === 'function') {
+      window.CSEditor.fallback(msg);
+    } else if (window.parent && window.parent !== window) {
+      // 兼容尚未注入 fallback SDK 的宿主
+      window.parent.postMessage({ __csesPluginFallback: true, reason: msg }, '*');
+    }
+  } catch (e) { /* ignore */ }
+}
 
 var WEEK_MAP = { all: '通用', odd: '单周', even: '双周' };
 var DAY_NAMES = { 1: '周一', 2: '周二', 3: '周三', 4: '周四', 5: '周五', 6: '周六', 7: '周日' };
@@ -474,7 +494,7 @@ function restoreViewState() {
     if (!raw) return;
     var st = JSON.parse(raw);
     if (!st || typeof st !== 'object') return;
-    if (['schedules', 'subjects', 'config', 'raw'].indexOf(st.view) >= 0) view = st.view;
+    if (['schedules', 'subjects', 'config'].indexOf(st.view) >= 0) view = st.view;
     if (['list', 'week'].indexOf(st.scheduleSubView) >= 0) scheduleSubView = st.scheduleSubView;
     if (typeof st.selectedScheduleIdx === 'number') selectedScheduleIdx = st.selectedScheduleIdx;
     if (typeof st.selectedClassIdx === 'number') selectedClassIdx = st.selectedClassIdx;
@@ -507,37 +527,35 @@ function loadFromContent(content) {
     csesVersion = det.version;
     cses = normalizeCses(parsed, det.version);
     enterCsesMode();
-  } else {
-    isCses = false;
-    cses = null;
-    enterGenericMode(det.reason);
+    return true;
   }
-  return true;
+  // 非 CSES：交给平台默认编辑器，插件停止渲染与保存
+  isCses = false;
+  cses = null;
+  requestPlatformFallback(det.reason);
+  return false;
 }
 
-/** 保存统一输出 YAML；非 CSES 文件原样保存文本（避免精简解析器破坏未知结构） */
+/** 保存统一输出 YAML（仅 CSES 模式；回退后本插件不再保存） */
 function buildOutput() {
-  if (isCses) return yamlDump(cses);
-  var el = $('csGeneric');
-  return el ? el.value : ((window.CSEditor && window.CSEditor.file && window.CSEditor.file.content) || '');
+  if (!isCses || !cses) return '';
+  return yamlDump(cses);
 }
 
 function saveConfig() {
-  if (isCses) {
-    runValidation();
-    if (validationErrors.length > 0) {
-      var msg = validationErrors.slice(0, 5).join('\n');
-      if (!confirm('存在 ' + validationErrors.length + ' 个验证错误，仍要保存吗？\n\n' + msg)) return;
-    }
-    persistViewState();
+  if (fallbackActive || !isCses) return;
+  runValidation();
+  if (validationErrors.length > 0) {
+    var msg = validationErrors.slice(0, 5).join('\n');
+    if (!confirm('存在 ' + validationErrors.length + ' 个验证错误，仍要保存吗？\n\n' + msg)) return;
   }
+  persistViewState();
   var text = buildOutput();
   if (window.CSEditor) {
     if (window.CSEditor.emitSave) window.CSEditor.emitSave(text);
     else if (window.CSEditor.saveContent) window.CSEditor.saveContent(text);
   }
   dirty = false;
-  rawDirty = false;
   lastSnapshot = snapshot();
   updateStats();
 }
@@ -545,8 +563,22 @@ function saveConfig() {
 /** 平台 Ctrl+S / Ribbon 保存与编辑器内 Ctrl+S 可能同时触发，去抖合并 */
 var saveTimer = null;
 function requestSave() {
+  if (fallbackActive) return;
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveConfig, 50);
+}
+
+/** 格式化：按 CSES 规范归一化当前模型并重绘（保存时统一输出规范 YAML，无源码视图） */
+function formatModel() {
+  if (!isCses || !cses) return;
+  commitUndo();
+  cses = normalizeCses(cses, csesVersion);
+  dirty = true;
+  revalidateSelections();
+  renderAll();
+  runValidation();
+  commitUndo();
+  updateStats('已格式化');
 }
 
 // ================= 模式切换 =================
@@ -555,7 +587,6 @@ function enterCsesMode() {
   badge.className = 'cs-badge cs-is-cses';
   $('csFormatText').textContent = 'CSES 模板 V' + csesVersion + '.0';
   $('csViewTabs').style.display = '';
-  $('csGenericView').style.display = 'none';
   $('csConfigTab').style.display = csesVersion === 2 ? '' : 'none';
   $('csConfigName').style.display = csesVersion === 2 ? '' : 'none';
   $('csUpgradeBtn').style.display = csesVersion === 1 ? '' : 'none';
@@ -563,34 +594,14 @@ function enterCsesMode() {
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('disabled');
   revalidateSelections();
   lastSnapshot = snapshot();
-  switchView(view === 'raw' ? 'raw' : view);
+  switchView(view);
   renderAll();
   runValidation();
 }
 
-function enterGenericMode(reason) {
-  var badge = $('csFormatBadge');
-  badge.className = 'cs-badge cs-not-cses';
-  $('csFormatText').textContent = '通用 YAML（未识别为 CSES）';
-  $('csViewTabs').style.display = 'none';
-  $('csGenericView').style.display = '';
-  var views = document.querySelectorAll('.cs-view:not(#csGenericView)');
-  for (var i = 0; i < views.length; i++) views[i].style.display = 'none';
-  var el = $('csGeneric');
-  if (el && !el.value) el.value = window.CSEditor && window.CSEditor.file ? (window.CSEditor.file.content || '') : '';
-  $('csConfigName').style.display = 'none';
-  $('csUpgradeBtn').style.display = 'none';
-  updateStats('原因：' + reason);
-  validationErrors = []; validationWarnings = []; renderIssues();
-}
-
 function redetect() {
   var text = (window.CSEditor && window.CSEditor.file ? (window.CSEditor.file.content || '') : '');
-  var rawEl = $('csRaw');
-  if (isCses && rawEl && rawEl.value && (rawDirty || view === 'raw')) text = rawEl.value;
-  var genericEl = $('csGeneric');
-  if (!isCses && genericEl && genericEl.value) text = genericEl.value;
-  if (!loadFromContent(text)) return;
+  loadFromContent(text);
 }
 
 /** 非识别文件初始化为 CSES V2.0 空白模板（Ribbon 新建课程表/科目等命令入口） */
@@ -649,12 +660,12 @@ function updateStats(extra) {
 
 function switchView(v) {
   if (v === 'config' && csesVersion !== 2) v = 'schedules';
+  var map = { schedules: 'csViewSchedules', subjects: 'csViewSubjects', config: 'csViewConfig' };
+  if (!map[v]) v = 'schedules';
   view = v;
-  var map = { schedules: 'csViewSchedules', subjects: 'csViewSubjects', config: 'csViewConfig', raw: 'csViewRaw' };
   for (var key in map) { $(map[key]).style.display = key === v ? '' : 'none'; }
   var tabs = document.querySelectorAll('#csViewTabs .cs-view-tab');
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-view') === v);
-  if (v === 'raw' && !rawDirty && cses) $('csRaw').value = yamlDump(cses);
   if (v === 'schedules') applyScheduleSubView();
   persistViewState();
   renderAll();
@@ -1553,20 +1564,9 @@ function toggleIssues() {
   $('csIssuesPanel').classList.toggle('collapsed');
 }
 
-// ================= 源码 / 通用回退视图 =================
-function onRawInput() { rawDirty = true; dirty = true; }
-function syncFromRaw() {
-  var text = $('csRaw').value;
-  if (!loadFromContent(text)) return;
-  dirty = true;
-  commitUndo();
-}
-function onGenericInput() {
-  dirty = true;
-}
-
 // ================= Ribbon 命令（保存由平台保存按钮触发） =================
 function handleCommand(cmd) {
+  if (fallbackActive) return;
   try {
     switch (cmd) {
       case 'undo': undo(); break;
@@ -1578,8 +1578,7 @@ function handleCommand(cmd) {
       case 'cs-add-subject': ensureCsesMode(); addSubject(); break;
       case 'cs-preset-subject': ensureCsesMode(); switchView('subjects'); presetOpen = true; renderAll(); break;
       case 'cs-validate': if (isCses) { runValidation(); alert('校验完成：' + validationErrors.length + ' 个错误，' + validationWarnings.length + ' 个警告'); } break;
-      case 'cs-format': if (isCses) { rawDirty = false; switchView('raw'); } break;
-      case 'cs-toggle-raw': if (isCses) switchView(view === 'raw' ? 'schedules' : 'raw'); break;
+      case 'cs-format': if (isCses) { formatModel(); } break;
     }
   } catch (e) { /* 用户取消等 */ }
 }
@@ -1620,9 +1619,9 @@ window.addEventListener('beforeunload', function (e) {
   var content = window.CSEditor && window.CSEditor.file ? (window.CSEditor.file.content || '') : '';
   restoreViewState();
   loadFromContent(content);
-  if (isCses) {
-    revalidateSelections();
-    runValidation();
-    switchView(view === 'config' && csesVersion !== 2 ? 'schedules' : view);
-  }
+  // 非 CSES 文件已请求平台回退：不再渲染或接管保存
+  if (fallbackActive || !isCses) return;
+  revalidateSelections();
+  runValidation();
+  switchView(view);
 })();

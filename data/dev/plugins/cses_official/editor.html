@@ -9,7 +9,7 @@
     </div>
   </div>
 
-  <!-- ===== 视图切换（课程表 / 科目 / 配置 / YAML 源码） ===== -->
+  <!-- ===== 视图切换（课程表 / 科目 / 配置） ===== -->
   <div class="cs-view-tabs" id="csViewTabs">
     <button class="cs-view-tab" data-view="schedules" onclick="switchView('schedules')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -22,10 +22,6 @@
     <button class="cs-view-tab" data-view="config" id="csConfigTab" onclick="switchView('config')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       <span>配置</span>
-    </button>
-    <button class="cs-view-tab" data-view="raw" onclick="switchView('raw')">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-      <span>YAML 源码</span>
     </button>
   </div>
 
@@ -125,25 +121,6 @@
         <div id="csSpanRows"></div>
         <div class="cs-hint" id="csCycleHint"></div>
       </div>
-    </div>
-
-    <!-- ===== YAML 源码 ===== -->
-    <div class="cs-view" id="csViewRaw" style="display:none">
-      <div class="cs-panel-bar">
-        <span class="cs-panel-title">YAML 源码（保存统一写入 YAML，保留未知字段，Ctrl+S 保存）</span>
-        <button class="cs-btn small" onclick="syncFromRaw()">从源码载入</button>
-      </div>
-      <textarea class="cs-raw" id="csRaw" spellcheck="false" oninput="onRawInput()"></textarea>
-    </div>
-
-    <!-- ===== 通用 YAML 回退编辑器（非 CSES 格式） ===== -->
-    <div class="cs-view" id="csGenericView" style="display:none">
-      <div class="cs-generic-tip">
-        当前文件不是 CSES 课表（未识别到 <code>version</code> + <code>subjects</code> / <code>schedules</code> 关键结构），已回退为通用 YAML 编辑器。<br>
-        CSES V1.0 需包含 <code>version: 1</code>、<code>subjects</code>、<code>schedules</code>；V2.0 需包含 <code>version: 2</code>、<code>configuration</code>、<code>subjects</code>、<code>schedules</code>。
-        点击 Ribbon「新建课程表」可将文件初始化为 CSES V2.0 空白模板。
-      </div>
-      <textarea class="cs-raw" id="csGeneric" spellcheck="false" oninput="onGenericInput()"></textarea>
     </div>
   </div>
 

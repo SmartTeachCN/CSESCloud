@@ -15,7 +15,7 @@
 
       <template v-if="sidebarOpen">
         <!-- 云文件区域 -->
-        <div class="cloud-section">
+        <div class="cloud-section" @contextmenu.prevent="onCloudAreaCtxMenu($event)">
           <div class="cloud-divider">
             <span>{{ sidebarView === 'files' ? '云文件' : '配置实例' }}</span>
             <div class="cloud-divider-line"></div>
@@ -34,17 +34,17 @@
               >实例</button>
             </div>
             <div class="cloud-plus-menu-wrapper" v-if="sidebarView === 'files'">
-              <button class="cloud-plus-btn" @click="showCloudPlusMenu = !showCloudPlusMenu" title="操作">
+              <button class="cloud-plus-btn" @click="showCloudPlusMenu = !showCloudPlusMenu" title="新建 / 上传">
                 <Icon icon="ri-add-line" :size="14" />
               </button>
               <div v-if="showCloudPlusMenu" class="cloud-plus-menu" @click.stop>
-                <button class="plus-item" @click="showCloudNewDialog = true; showCloudPlusMenu = false">
+                <button class="plus-item" @click="startDraft('file'); showCloudPlusMenu = false">
                   <Icon icon="ri-file-add-line" :size="14" />
                   <span>新建文件</span>
                 </button>
-                <button class="plus-item" @click="showCloudNewDirDialog = true; showCloudPlusMenu = false">
+                <button class="plus-item" @click="startDraft('dir'); showCloudPlusMenu = false">
                   <Icon icon="ri-folder-add-line" :size="14" />
-                  <span>新建目录</span>
+                  <span>新建文件夹</span>
                 </button>
                 <button class="plus-item" @click="triggerCloudUpload(); showCloudPlusMenu = false">
                   <Icon icon="ri-upload-2-line" :size="14" />
@@ -77,37 +77,83 @@
             <div class="login-text">登录以使用云文件</div>
             <button class="login-btn" @click="goLogin">登录</button>
           </div>
-          <div v-else-if="sidebarView === 'files'" class="cloud-file-list">
-            <div v-if="cloudLoading" class="cloud-loading">加载中...</div>
-            <div
-              v-for="file in cloudFiles"
-              :key="file.id"
-              class="cloud-file-item"
-              :class="{ active: currentFile?.id === file.id, 'shared-from-other': file.source === 'shared' }"
-              @click="openCloudFile(file)"
-              @contextmenu.prevent="onCloudFileCtxMenu(file, $event)"
-            >
-              <span class="cloud-file-icon"><Icon :icon="file.icon" :size="16" /></span>
-              <span class="cloud-file-name">{{ file.name }}</span>
-              <span
-                v-if="distributedCount(file) > 0"
-                class="cloud-file-dist-badge"
-                :title="'已分发 ' + distributedCount(file) + ' 个配置实例'"
+          <template v-else-if="sidebarView === 'files'">
+            <!-- 当前目录面包屑 -->
+            <div class="cloud-breadcrumb">
+              <button class="cloud-crumb" :class="{ active: !currentDir }" title="根目录" @click="navigateDir('')">
+                <Icon icon="ri-database-2-line" :size="11" />
+                <span>根目录</span>
+              </button>
+              <template v-for="(seg, idx) in dirSegments" :key="'crumb-' + idx">
+                <Icon icon="ri-arrow-right-s-line" :size="12" class="cloud-crumb-sep" />
+                <button
+                  class="cloud-crumb"
+                  :class="{ active: idx === dirSegments.length - 1 }"
+                  :title="seg"
+                  @click="navigateDir(dirPathAt(idx))"
+                >{{ seg }}</button>
+              </template>
+            </div>
+            <div class="cloud-file-list" @contextmenu.prevent="onCloudAreaCtxMenu($event)">
+              <div v-if="cloudLoading" class="cloud-loading">加载中...</div>
+              <!-- 新建草稿行（行内输入，Enter 提交，Esc 取消） -->
+              <div v-if="draft" class="cloud-file-item draft" :class="{ directory: draft.kind === 'dir' }">
+                <span class="cloud-file-icon"><Icon :icon="draft.kind === 'dir' ? 'ri-folder-3-line' : 'ri-file-2-line'" :size="16" /></span>
+                <input
+                  ref="draftInputRef"
+                  v-model="draft.name"
+                  class="cloud-inline-input"
+                  :placeholder="draft.kind === 'dir' ? '新建文件夹' : '新建文件.txt'"
+                  @keyup.enter="onDraftEnter"
+                  @keyup.esc="cancelDraft"
+                  @blur="onDraftBlur"
+                  @click.stop
+                />
+                <span class="cloud-file-size draft-hint">{{ draft.kind === 'dir' ? '文件夹' : '文件' }}</span>
+              </div>
+              <div
+                v-for="item in visibleCloudFiles"
+                :key="item.id"
+                class="cloud-file-item"
+                :class="{ active: currentFile?.id === item.id, directory: item.is_directory, 'shared-from-other': item.source === 'shared', renaming: renamingId === item.id }"
+                @click="onCloudItemClick(item)"
+                @contextmenu.prevent.stop="onCloudItemCtxMenu(item, $event)"
               >
-                <Icon icon="ri-git-branch-line" :size="9" /> 已分发
-              </span>
-              <span v-if="file.is_shared && file.source !== 'shared'" class="cloud-file-shared-badge" title="已分享">
-                <Icon icon="ri-share-line" :size="10" />
-              </span>
-              <span v-if="file.source === 'shared'" class="cloud-file-shared-from-badge" :title="'来自 ' + file.shared_from + ' 的分享'">
-                <Icon icon="ri-share-forward-line" :size="10" /> 来自分享
-              </span>
-              <span class="cloud-file-size">{{ file.size }}</span>
+                <span class="cloud-file-icon"><Icon :icon="item.icon" :size="16" /></span>
+                <input
+                  v-if="renamingId === item.id"
+                  v-model="renameValue"
+                  class="cloud-inline-input"
+                  @keyup.enter="commitInlineRename(item)"
+                  @keyup.esc="cancelInlineRename"
+                  @blur="onRenameBlur(item)"
+                  @click.stop
+                />
+                <span v-else class="cloud-file-name" :title="item.name">{{ item.name }}</span>
+                <template v-if="!item.is_directory">
+                  <span
+                    v-if="distributedCount(item) > 0"
+                    class="cloud-file-dist-badge"
+                    :title="'已分发 ' + distributedCount(item) + ' 个配置实例'"
+                  >
+                    <Icon icon="ri-git-branch-line" :size="9" /> 已分发
+                  </span>
+                  <span v-if="item.is_shared && item.source !== 'shared'" class="cloud-file-shared-badge" title="已分享">
+                    <Icon icon="ri-share-line" :size="10" />
+                  </span>
+                  <span v-if="item.source === 'shared'" class="cloud-file-shared-from-badge" :title="'来自 ' + item.shared_from + ' 的分享'">
+                    <Icon icon="ri-share-forward-line" :size="10" /> 来自分享
+                  </span>
+                  <span class="cloud-file-size">{{ item.size }}</span>
+                </template>
+                <span v-else class="cloud-file-size">{{ dirChildCount(item) }} 项</span>
+              </div>
+              <div v-if="!cloudLoading && visibleCloudFiles.length === 0 && !draft" class="cloud-empty">
+                <div class="cloud-empty-title">{{ currentDir ? '此文件夹为空' : '暂无云文件' }}</div>
+                <div class="cloud-empty-hint">右键或点「+」新建文件 / 文件夹</div>
+              </div>
             </div>
-            <div v-if="!cloudLoading && cloudFiles.length === 0" class="cloud-empty">
-              <span>暂无云文件</span>
-            </div>
-          </div>
+          </template>
 
           <!-- 配置实例视图（文件 / 实例切换） -->
           <div v-else class="instance-panel">
@@ -187,11 +233,14 @@
           </div>
         </div>
 
-        <!-- 存储信息 -->
+        <!-- 云存储用量 -->
         <div class="sidebar-footer">
-          <div class="storage-info">
-            <div class="storage-label">云存储</div>
-            <div class="storage-bar"><div class="storage-fill" :style="{ width: storagePercent + '%' }"></div></div>
+          <div class="storage-info" :title="'已用 ' + storageUsed + ' / 配额 ' + storageTotal">
+            <div class="storage-label">
+              <span>云存储</span>
+              <span class="storage-percent">{{ storagePercentText }}</span>
+            </div>
+            <div class="storage-bar"><div class="storage-fill" :class="{ warning: storagePercent >= 90 }" :style="{ width: storagePercent + '%' }"></div></div>
             <div class="storage-text">{{ storageUsed }} / {{ storageTotal }}</div>
           </div>
         </div>
@@ -277,6 +326,9 @@
         :system-right-tools="systemRightTools"
         :system-right-selected-tool="isSourceView ? 'toggle-view' : ''"
         :selected-tool="immersive ? 'immersive' : ''"
+        :editable-title="canRenameCurrentFile"
+        :distributed="currentFileDistributed"
+        :edit-button-icon="cardEditButtonIcon"
         :can-undo="!!currentFile"
         :can-redo="!!currentFile"
         :can-save="!!currentFile"
@@ -295,7 +347,8 @@
         @redo="handleRedo"
         @tool-click="onRibbonTool"
         @autosize-change="onAutoSaveChange"
-        @edit-click="openLocalFile"
+        @edit-click="onFileCardActionClick"
+        @title-change="onFileCardTitleChange"
       />
 
       <!-- 编辑器主体 -->
@@ -361,29 +414,77 @@
             </div>
           </Teleport>
 
-          <!-- 云文件右键菜单 -->
+          <!-- 云文件区域右键菜单（空白 / 文件 / 目录） -->
           <Teleport to="body">
-            <div v-if="cloudCtxMenu.visible" class="context-menu-overlay" @click="cloudCtxMenu.visible = false" @contextmenu.prevent="cloudCtxMenu.visible = false">
-              <div class="context-menu" :style="{ left: cloudCtxMenu.x + 'px', top: cloudCtxMenu.y + 'px' }">
-                <button class="ctx-item" @click="openCloudFile(cloudCtxMenu.file!); cloudCtxMenu.visible = false">
-                  <Icon icon="ri-folder-open-line" :size="14" /> 打开
-                </button>
-                <button class="ctx-item" @click="handleShareCloudFile(cloudCtxMenu.file!); cloudCtxMenu.visible = false" v-if="cloudCtxMenu.file && cloudCtxMenu.file.source !== 'shared'">
-                  <Icon icon="ri-share-forward-line" :size="14" /> 分享
-                </button>
-                <button class="ctx-item" @click="openDistributionDialog(cloudCtxMenu.file!); cloudCtxMenu.visible = false" v-if="cloudCtxMenu.file && cloudCtxMenu.file.source === 'owned'">
-                  <Icon icon="ri-git-branch-line" :size="14" /> 分发配置
-                </button>
-                <button class="ctx-item" @click="downloadCloudFile(cloudCtxMenu.file!); cloudCtxMenu.visible = false">
-                  <Icon icon="ri-download-line" :size="14" /> 下载
-                </button>
-                <div class="ctx-divider"></div>
-                <button class="ctx-item" @click="renameCloudFile(cloudCtxMenu.file!); cloudCtxMenu.visible = false" v-if="cloudCtxMenu.file && cloudCtxMenu.file.source !== 'shared'">
-                  <Icon icon="ri-edit-line" :size="14" /> 重命名
-                </button>
-                <button class="ctx-item danger" @click="deleteCloudFile(cloudCtxMenu.file!); cloudCtxMenu.visible = false" v-if="cloudCtxMenu.file && cloudCtxMenu.file.source !== 'shared'">
-                  <Icon icon="ri-delete-bin-line" :size="14" /> 删除
-                </button>
+            <div v-if="cloudCtxMenu.visible" class="context-menu-overlay" @click="closeCloudCtxMenu" @contextmenu.prevent="closeCloudCtxMenu">
+              <div class="context-menu" :style="{ left: cloudCtxMenu.x + 'px', top: cloudCtxMenu.y + 'px' }" @contextmenu.prevent.stop>
+                <template v-if="cloudCtxMenu.type === 'blank'">
+                  <button class="ctx-item" @click="startDraft('file'); closeCloudCtxMenu()">
+                    <Icon icon="ri-file-add-line" :size="14" /> 新建文件
+                  </button>
+                  <button class="ctx-item" @click="startDraft('dir'); closeCloudCtxMenu()">
+                    <Icon icon="ri-folder-add-line" :size="14" /> 新建文件夹
+                  </button>
+                  <div class="ctx-divider"></div>
+                  <button class="ctx-item" @click="triggerCloudUpload(); closeCloudCtxMenu()">
+                    <Icon icon="ri-upload-2-line" :size="14" /> 上传文件
+                  </button>
+                  <button class="ctx-item" @click="refreshCloudFiles(); closeCloudCtxMenu()">
+                    <Icon icon="ri-refresh-line" :size="14" /> 刷新
+                  </button>
+                </template>
+                <template v-else-if="cloudCtxMenu.file && cloudCtxMenu.file.is_directory">
+                  <button class="ctx-item" @click="enterDirectory(cloudCtxMenu.file!); closeCloudCtxMenu()">
+                    <Icon icon="ri-folder-open-line" :size="14" /> 打开
+                  </button>
+                  <div class="ctx-divider"></div>
+                  <button class="ctx-item" @click="startInlineRename(cloudCtxMenu.file!); closeCloudCtxMenu()">
+                    <Icon icon="ri-edit-line" :size="14" /> 重命名
+                  </button>
+                  <button class="ctx-item danger" @click="deleteCloudItem(cloudCtxMenu.file!); closeCloudCtxMenu()">
+                    <Icon icon="ri-delete-bin-line" :size="14" /> 删除
+                  </button>
+                </template>
+                <template v-else-if="cloudCtxMenu.file">
+                  <button class="ctx-item" @click="openCloudFile(cloudCtxMenu.file!); closeCloudCtxMenu()">
+                    <Icon icon="ri-folder-open-line" :size="14" /> 打开
+                  </button>
+                  <button class="ctx-item" @click="openFileProperties(cloudCtxMenu.file!); closeCloudCtxMenu()">
+                    <Icon icon="ri-information-line" :size="14" /> 属性
+                  </button>
+                  <button
+                    class="ctx-item"
+                    v-if="isDistributable(cloudCtxMenu.file)"
+                    @click="openFileDistribution(cloudCtxMenu.file!); closeCloudCtxMenu()"
+                  >
+                    <Icon icon="ri-git-branch-line" :size="14" /> 分发配置
+                  </button>
+                  <button
+                    class="ctx-item"
+                    v-if="cloudCtxMenu.file.source !== 'shared'"
+                    @click="handleShareCloudFile(cloudCtxMenu.file!); closeCloudCtxMenu()"
+                  >
+                    <Icon icon="ri-share-forward-line" :size="14" /> 分享
+                  </button>
+                  <button class="ctx-item" @click="downloadCloudFile(cloudCtxMenu.file!); closeCloudCtxMenu()">
+                    <Icon icon="ri-download-line" :size="14" /> 下载
+                  </button>
+                  <div class="ctx-divider"></div>
+                  <button
+                    class="ctx-item"
+                    v-if="cloudCtxMenu.file.source !== 'shared'"
+                    @click="startInlineRename(cloudCtxMenu.file!); closeCloudCtxMenu()"
+                  >
+                    <Icon icon="ri-edit-line" :size="14" /> 重命名
+                  </button>
+                  <button
+                    class="ctx-item danger"
+                    v-if="cloudCtxMenu.file.source !== 'shared'"
+                    @click="deleteCloudItem(cloudCtxMenu.file!); closeCloudCtxMenu()"
+                  >
+                    <Icon icon="ri-delete-bin-line" :size="14" /> 删除
+                  </button>
+                </template>
               </div>
             </div>
           </Teleport>
@@ -536,40 +637,6 @@
     </div>
   </div>
 
-  <!-- 新建云文件对话框 -->
-  <Teleport to="body">
-    <div v-if="showCloudNewDialog" class="dialog-overlay" @click.self="showCloudNewDialog = false">
-      <div class="dialog-card">
-        <h3>新建云文件</h3>
-        <div class="dialog-field">
-          <label>文件名</label>
-          <input type="text" v-model="newCloudFileName" class="dialog-input" placeholder="例如：config.json" @keyup.enter="createCloudFile" />
-        </div>
-        <div class="dialog-actions">
-          <button class="secondary-btn" @click="showCloudNewDialog = false">取消</button>
-          <button class="primary-btn" @click="createCloudFile">创建</button>
-        </div>
-      </div>
-    </div>
-  </Teleport>
-
-  <!-- 新建云目录对话框 -->
-  <Teleport to="body">
-    <div v-if="showCloudNewDirDialog" class="dialog-overlay" @click.self="showCloudNewDirDialog = false">
-      <div class="dialog-card">
-        <h3>新建目录</h3>
-        <div class="dialog-field">
-          <label>目录名</label>
-          <input type="text" v-model="newCloudDirName" class="dialog-input" placeholder="例如：images" @keyup.enter="createCloudDir" />
-        </div>
-        <div class="dialog-actions">
-          <button class="secondary-btn" @click="showCloudNewDirDialog = false">取消</button>
-          <button class="primary-btn" @click="createCloudDir">创建</button>
-        </div>
-      </div>
-    </div>
-  </Teleport>
-
   <!-- 从模板新建对话框（选择插件后释放其示例文件） -->
   <Teleport to="body">
     <div v-if="showTplDialog" class="dialog-overlay" @click.self="showTplDialog = false">
@@ -602,23 +669,6 @@
     </div>
   </Teleport>
 
-  <!-- 重命名对话框 -->
-  <Teleport to="body">
-    <div v-if="showRenameDialog" class="dialog-overlay" @click.self="showRenameDialog = false">
-      <div class="dialog-card">
-        <h3>重命名</h3>
-        <div class="dialog-field">
-          <label>新名称</label>
-          <input type="text" v-model="renameFileName" class="dialog-input" @keyup.enter="confirmRename" />
-        </div>
-        <div class="dialog-actions">
-          <button class="secondary-btn" @click="showRenameDialog = false">取消</button>
-          <button class="primary-btn" @click="confirmRename">确定</button>
-        </div>
-      </div>
-    </div>
-  </Teleport>
-
   <!-- 分享对话框 -->
   <ShareDialog
     :visible="showShareDialog"
@@ -632,12 +682,15 @@
     @updated="loadCloudFiles"
   />
 
-  <!-- 分发配置对话框（云文件右键 → 分发配置） -->
-  <DistributionDialog
-    :visible="showDistributionDialog"
-    :file="distributionFile"
+  <!-- 文件属性对话框（属性 / 分发配置 Tab） -->
+  <FilePropertiesDialog
+    :visible="showPropertiesDialog"
+    :info="propertiesInfo"
+    :initial-tab="propertiesTab"
+    :distribution-file="propertiesDistributionFile"
     :overview="distributionOverview"
-    @close="showDistributionDialog = false"
+    :can-distribute="!!propertiesDistributionFile"
+    @close="showPropertiesDialog = false"
     @saved="onDistributionSaved"
   />
 
@@ -665,7 +718,7 @@ import OperationHistoryPanel from '../../components/editor/panels/OperationHisto
 import VersionHistoryPanel from '../../components/editor/panels/VersionHistoryPanel.vue';
 import WorkspaceConfig from '../../components/editor/panels/WorkspaceConfig.vue';
 import StatusBarExtensions from '../../components/editor/panels/StatusBarExtensions.vue';
-import DistributionDialog from '../../components/editor/DistributionDialog.vue';
+import FilePropertiesDialog from '../../components/editor/FilePropertiesDialog.vue';
 import InstanceManagerDialog from '../../components/editor/InstanceManagerDialog.vue';
 import { pluginApi, distributionsApi } from '../../api';
 import { useAuth } from '../../composables/useAuth';
@@ -681,13 +734,9 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const cloudUploadInput = ref<HTMLInputElement | null>(null);
 const isLoggedIn = computed(() => user.value?.type === 'alliance');
 const storageUsed = ref('0 B');
-const storageTotal = ref('100 MB');
-
-const storagePercent = computed(() => {
-  const used = parseFloat(storageUsed.value);
-  const total = parseFloat(storageTotal.value);
-  return total > 0 ? (used / total) * 100 : 0;
-});
+const storageTotal = ref('0 B');
+const storagePercent = ref(0);
+const storagePercentText = computed(() => `${Math.round(storagePercent.value * 10) / 10}%`);
 
 // ===== 文件管理 =====
 interface EditorFile {
@@ -701,6 +750,13 @@ interface EditorFile {
   content?: string;
   ext?: string;
   readOnly?: boolean;
+  /** 云端文件编辑者（后端 owner）/ 本地文件为“本地文件” */
+  owner?: string;
+  /** 云端文件完整路径或本地文件名 */
+  path?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  isShared?: number;
 }
 
 interface CloudFile {
@@ -713,6 +769,32 @@ interface CloudFile {
   source?: string;
   shared_from?: string;
   shared_permission?: string;
+  /** 是否目录（后端 is_directory=1） */
+  is_directory: boolean;
+  /** 相对 /.cloud/ 的父目录（''=根目录；shared 文件为 ''） */
+  parent_dir: string;
+  file_path: string;
+  file_type: string;
+  file_size_raw: number;
+  content_type?: string;
+  owner: string;
+  owner_username: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** 文件属性对话框数据（属性页） */
+interface FilePropertyInfo {
+  name: string;
+  typeLabel: string;
+  size: string;
+  sourceLabel: string;
+  owner: string;
+  path: string;
+  createdAt: string;
+  updatedAt: string;
+  sharedLabel: string;
+  distributedCount: number;
 }
 
 /** 配置实例 DTO（对应 spec 3.4 的 InstanceDTO，接口未就绪时字段可缺失） */
@@ -965,11 +1047,258 @@ function onTabDragEnd() { dragTabIdx = -1; }
 // ===== 云文件加号菜单 =====
 const showCloudPlusMenu = ref(false);
 
-// ===== 云文件右键菜单 =====
-const cloudCtxMenu = ref<{ visible: boolean; x: number; y: number; file: CloudFile | null }>({ visible: false, x: 0, y: 0, file: null });
+// ===== 当前目录（相对 /.cloud/，'' = 根目录） =====
+const currentDir = ref('');
+const dirSegments = computed(() => (currentDir.value ? currentDir.value.split('/') : []));
 
-function onCloudFileCtxMenu(file: CloudFile, e: MouseEvent) {
-  cloudCtxMenu.value = { visible: true, x: e.clientX, y: e.clientY, file };
+/** 云文件/目录名规则（与后端一致）：允许中文/空格，禁止路径分隔符与控制字符 */
+function isValidCloudName(raw: string): boolean {
+  const value = (raw || '').trim();
+  if (value === '' || value === '.' || value === '..') return false;
+  if (new TextEncoder().encode(value).length > 180) return false;
+  // eslint-disable-next-line no-control-regex
+  return !/[\/\\:*?"<>|\u0000-\u001f]/.test(value);
+}
+
+function dirPathAt(index: number): string {
+  return dirSegments.value.slice(0, index + 1).join('/');
+}
+
+function dirRelativePath(dir: CloudFile): string {
+  const parent = dir.parent_dir || '';
+  return parent ? `${parent}/${dir.name}` : dir.name;
+}
+
+function dirChildCount(dir: CloudFile): number {
+  const rel = dirRelativePath(dir);
+  return cloudFiles.value.filter((f) => (f.parent_dir || '') === rel).length;
+}
+
+function navigateDir(dir: string) {
+  if (!isLoggedIn.value) return;
+  cancelDraft();
+  cancelInlineRename();
+  currentDir.value = dir;
+}
+
+function enterDirectory(dir: CloudFile) {
+  navigateDir(dirRelativePath(dir));
+}
+
+/** 当前目录的直接子项：目录优先 + 名称排序；分享文件仅出现在根目录 */
+const visibleCloudFiles = computed<CloudFile[]>(() => {
+  const dir = currentDir.value;
+  const items = cloudFiles.value.filter((f) => {
+    if (f.source === 'shared') return dir === '';
+    return (f.parent_dir || '') === dir;
+  });
+  return [...items].sort((a, b) => {
+    if (a.is_directory !== b.is_directory) return a.is_directory ? -1 : 1;
+    return a.name.localeCompare(b.name, 'zh-CN');
+  });
+});
+
+function onCloudItemClick(item: CloudFile) {
+  if (item.is_directory) enterDirectory(item);
+  else openCloudFile(item);
+}
+
+/** 同步已打开标签的名称/扩展名（currentFile 与 tab 为同一对象） */
+function updateOpenTabName(id: string, name: string) {
+  const tab = openTabs.value.find((t) => t.id === id);
+  if (!tab) return;
+  tab.name = name;
+  tab.ext = name.split('.').pop()?.toLowerCase() || '';
+}
+
+// ===== 行内新建（draft 行） =====
+const draft = ref<{ kind: 'file' | 'dir'; name: string } | null>(null);
+const draftInputRef = ref<HTMLInputElement | null>(null);
+let draftBusy = false;
+
+function focusDraftInput() {
+  requestAnimationFrame(() => {
+    draftInputRef.value?.focus();
+    draftInputRef.value?.select();
+  });
+}
+
+function startDraft(kind: 'file' | 'dir') {
+  if (!isLoggedIn.value) {
+    alert('请先登录后再新建');
+    return;
+  }
+  showCloudPlusMenu.value = false;
+  closeCloudCtxMenu();
+  cancelInlineRename();
+  draft.value = { kind, name: kind === 'dir' ? '新建文件夹' : '新建文件.txt' };
+  focusDraftInput();
+}
+
+function cancelDraft() {
+  draft.value = null;
+}
+
+async function submitDraft(): Promise<boolean> {
+  if (draftBusy) return false;
+  const current = draft.value;
+  if (!current) return true;
+  const name = current.name.trim();
+  if (!name) return false;
+  if (!isValidCloudName(name)) {
+    alert('名称不能包含 / \\ : * ? " < > | 等字符，且不能为空，请修改后重试');
+    return false;
+  }
+  draftBusy = true;
+  try {
+    if (current.kind === 'dir') {
+      await api.post('/cloud-files?action=create-dir', { name, dir: currentDir.value });
+    } else {
+      const ext = name.split('.').pop() || 'txt';
+      await cloudApi.create({ name, content: '', file_type: ext, dir: currentDir.value });
+    }
+    draft.value = null;
+    await loadCloudFiles();
+    return true;
+  } catch (e: any) {
+    alert('新建失败：' + (e?.message || '未知错误'));
+    return false;
+  } finally {
+    draftBusy = false;
+  }
+}
+
+async function onDraftEnter() {
+  const ok = await submitDraft();
+  if (!ok && draft.value) focusDraftInput();
+}
+
+async function onDraftBlur() {
+  if (!draft.value) return;
+  // 空名称视为取消；其余情况失焦提交，失败时重新聚焦继续编辑
+  if (!draft.value.name.trim()) {
+    cancelDraft();
+    return;
+  }
+  const ok = await submitDraft();
+  if (!ok && draft.value) focusDraftInput();
+}
+
+// ===== 行内重命名 =====
+const renamingId = ref<string | null>(null);
+const renameValue = ref('');
+let renameBusy = false;
+
+/** v-for 内不能使用普通 ref，聚焦通过 class 查询当前行内输入框 */
+function focusRenameInput() {
+  requestAnimationFrame(() => {
+    const input = document.querySelector<HTMLInputElement>('.cloud-file-item.renaming .cloud-inline-input');
+    input?.focus();
+    input?.select();
+  });
+}
+
+function startInlineRename(item: CloudFile) {
+  if (item.source === 'shared' || draft.value) return;
+  renamingId.value = item.id;
+  renameValue.value = item.name;
+  focusRenameInput();
+}
+
+function cancelInlineRename() {
+  renamingId.value = null;
+  renameValue.value = '';
+}
+
+function isNameConflict(item: CloudFile, name: string): boolean {
+  const dir = item.parent_dir || '';
+  return cloudFiles.value.some(
+    (f) => f.id !== item.id && f.name === name && (f.parent_dir || '') === dir
+  );
+}
+
+async function commitInlineRename(item: CloudFile) {
+  if (renameBusy || renamingId.value !== item.id) return;
+  const newName = renameValue.value.trim();
+  if (!newName) {
+    cancelInlineRename();
+    return;
+  }
+  if (!isValidCloudName(newName)) {
+    alert('名称不能包含 / \\ : * ? " < > | 等字符，且不能为空，请修改后重试');
+    focusRenameInput();
+    return;
+  }
+  if (newName === item.name) {
+    cancelInlineRename();
+    return;
+  }
+  if (isNameConflict(item, newName)) {
+    alert('当前目录已存在同名' + (item.is_directory ? '文件夹' : '文件'));
+    focusRenameInput();
+    return;
+  }
+  renameBusy = true;
+  try {
+    await cloudApi.rename({ id: Number(item.id), name: newName });
+    updateOpenTabName(item.id, newName);
+    if (item.is_directory) {
+      // 目录改名后同步已打开标签的文件路径（供属性/递归删除等使用）
+      const oldPath = item.file_path || '';
+      const oldPrefix = oldPath.replace(/\/+$/, '') + '/';
+      const newDirPath = oldPath.slice(0, oldPath.length - item.name.length) + newName;
+      const newPrefix = newDirPath.replace(/\/+$/, '') + '/';
+      for (const tab of openTabs.value) {
+        if (tab.path && tab.path.startsWith(oldPrefix)) {
+          tab.path = newPrefix + tab.path.slice(oldPrefix.length);
+        }
+      }
+    }
+    cancelInlineRename();
+    await loadCloudFiles();
+    // 源文件改名后同步刷新实例列表中展示的源文件名
+    if (!item.is_directory) loadOverview(true);
+  } catch (e: any) {
+    alert('重命名失败：' + (e?.message || '未知错误'));
+    cancelInlineRename();
+  } finally {
+    renameBusy = false;
+  }
+}
+
+function onRenameBlur(item: CloudFile) {
+  if (renamingId.value === item.id) void commitInlineRename(item);
+}
+
+// ===== 云文件区域右键菜单（空白 / 文件 / 目录） =====
+type CloudCtxTarget = 'blank' | 'file' | 'dir';
+
+const cloudCtxMenu = ref<{
+  visible: boolean;
+  x: number;
+  y: number;
+  type: CloudCtxTarget;
+  file: CloudFile | null;
+}>({ visible: false, x: 0, y: 0, type: 'blank', file: null });
+
+function openCloudCtxMenu(type: CloudCtxTarget, file: CloudFile | null, e: MouseEvent) {
+  cloudCtxMenu.value = { visible: true, x: e.clientX, y: e.clientY, type, file };
+}
+
+function onCloudItemCtxMenu(item: CloudFile, e: MouseEvent) {
+  openCloudCtxMenu(item.is_directory ? 'dir' : 'file', item, e);
+}
+
+function onCloudAreaCtxMenu(e: MouseEvent) {
+  if (sidebarView.value !== 'files' || draft.value) return;
+  const target = e.target as HTMLElement | null;
+  // 仅空白区域触发（行/按钮/面包屑/菜单各自处理或忽略）
+  if (target?.closest('button, input, .cloud-file-item, .cloud-breadcrumb, .cloud-plus-menu, .context-menu')) return;
+  openCloudCtxMenu('blank', null, e);
+}
+
+function closeCloudCtxMenu() {
+  cloudCtxMenu.value.visible = false;
 }
 
 // ===== 云文件 API 封装 =====
@@ -978,7 +1307,9 @@ const cloudApi = {
   get: (id: number) => api.get<any>(`/cloud-files?action=get&id=${id}`),
   create: (body: any) => api.post('/cloud-files?action=create', body),
   update: (body: any) => api.post('/cloud-files?action=update', body),
+  rename: (body: { id: number; name: string }) => api.post('/cloud-files?action=rename', body),
   delete: (id: number) => api.post('/cloud-files?action=delete', { id }),
+  usage: () => api.get<any>('/cloud-files?action=usage'),
 };
 
 async function loadCloudFiles() {
@@ -986,24 +1317,72 @@ async function loadCloudFiles() {
   cloudLoading.value = true;
   try {
     const data = await cloudApi.list();
-    cloudFiles.value = (data || []).map((f: any) => ({
-      id: String(f.id),
-      name: f.name,
-      icon: iconMap[f.file_type] || 'ri-file-2-line',
-      size: formatFileSize(f.file_size || 0),
-      url: '#',
-      file_type: f.file_type,
-      updated_at: f.updated_at,
-      is_shared: f.is_shared || 0,
-      source: f.source || 'owned',
-      shared_from: f.shared_from || '',
-      shared_permission: f.shared_permission || '',
-    }));
+    cloudFiles.value = (data || []).map((f: any) => {
+      const isDirectory = Number(f.is_directory) === 1 || f.file_type === 'dir';
+      const fileType = f.file_type || (isDirectory ? 'dir' : '');
+      return {
+        id: String(f.id),
+        name: f.name,
+        icon: isDirectory ? 'ri-folder-3-line' : (iconMap[fileType] || 'ri-file-2-line'),
+        size: isDirectory ? '' : formatFileSize(f.file_size || 0),
+        url: '#',
+        file_type: fileType,
+        is_directory: isDirectory,
+        parent_dir: typeof f.parent_dir === 'string' ? f.parent_dir : '',
+        file_path: f.file_path || '',
+        file_size_raw: Number(f.file_size) || 0,
+        content_type: f.content_type || '',
+        owner: f.owner || f.shared_from || '',
+        owner_username: f.owner_username || f.owner || f.shared_from || '',
+        created_at: f.created_at || '',
+        updated_at: f.updated_at || '',
+        is_shared: f.is_shared || 0,
+        source: f.source || 'owned',
+        shared_from: f.shared_from || '',
+        shared_permission: f.shared_permission || '',
+      } as CloudFile;
+    });
+    // 当前目录若已不存在（被删除/改名），回到根目录
+    if (currentDir.value && !cloudFiles.value.some((f) => f.is_directory && dirRelativePath(f) === currentDir.value)) {
+      currentDir.value = '';
+    }
+    void loadUsage();
   } catch {
     cloudFiles.value = [];
   } finally {
     cloudLoading.value = false;
   }
+}
+
+/** 加载云存储用量：used/quota/percent（字节） */
+async function loadUsage() {
+  if (!isLoggedIn.value) return;
+  try {
+    const data = await cloudApi.usage();
+    const used = Number(data?.used) || 0;
+    const quota = Number(data?.quota) || 0;
+    const percent = Number(data?.percent);
+    storageUsed.value = formatStorageSize(used);
+    storageTotal.value = formatStorageSize(quota);
+    storagePercent.value = Number.isFinite(percent)
+      ? Math.max(0, Math.min(100, percent))
+      : (quota > 0 ? Math.min(100, (used / quota) * 100) : 0);
+  } catch {
+    /* 静默失败：保留上次用量 */
+  }
+}
+
+function formatStorageSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index++;
+  }
+  const digits = index === 0 ? 0 : value >= 100 ? 0 : 1;
+  return `${value.toFixed(digits)} ${units[index]}`;
 }
 
 function refreshCloudFiles() {
@@ -1018,38 +1397,6 @@ function formatFileSize(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-}
-
-// ===== 新建云文件/目录 =====
-const showCloudNewDialog = ref(false);
-const newCloudFileName = ref('');
-const showCloudNewDirDialog = ref(false);
-const newCloudDirName = ref('');
-
-async function createCloudFile() {
-  const name = newCloudFileName.value.trim();
-  if (!name) return;
-  showCloudNewDialog.value = false;
-  newCloudFileName.value = '';
-  try {
-    await cloudApi.create({ name, content: '', file_type: name.split('.').pop() || 'txt' });
-    await loadCloudFiles();
-  } catch (e: any) {
-    console.error('创建云文件失败', e);
-  }
-}
-
-async function createCloudDir() {
-  const name = newCloudDirName.value.trim();
-  if (!name) return;
-  showCloudNewDirDialog.value = false;
-  newCloudDirName.value = '';
-  try {
-    await api.post('/cloud-files?action=create-dir', { name });
-    await loadCloudFiles();
-  } catch (e: any) {
-    console.error('创建目录失败', e);
-  }
 }
 
 // ===== 从模板新建（选择插件后释放其示例文件到云文件） =====
@@ -1105,19 +1452,23 @@ async function releasePluginSamples(plugin: any) {
       alert(`插件「${plugin.name}」没有可用的示例文件`);
       return;
     }
-    const existing = new Set(cloudFiles.value.map(f => f.name));
+    const existing = new Set(
+      visibleCloudFiles.value.filter((f) => !f.is_directory).map((f) => f.name)
+    );
     const created: string[] = [];
     for (const f of files) {
       const name = uniqueCloudName(f.name, existing);
       existing.add(name);
       const ext = name.includes('.') ? name.split('.').pop()! : 'txt';
-      await cloudApi.create({ name, content: f.content || '', file_type: ext });
+      await cloudApi.create({ name, content: f.content || '', file_type: ext, dir: currentDir.value });
       created.push(name);
     }
     showTplDialog.value = false;
     await loadCloudFiles();
-    // 释放后打开第一个示例文件
-    const first = cloudFiles.value.find(f => f.name === created[0]);
+    // 释放后打开第一个示例文件（当前目录内）
+    const first = cloudFiles.value.find(
+      (f) => f.name === created[0] && !f.is_directory && (f.parent_dir || '') === currentDir.value
+    );
     if (first) await openCloudFile(first);
     alert(`已从「${plugin.name}」释放 ${created.length} 个示例文件：\n${created.join('\n')}`);
   } catch (e: any) {
@@ -1137,34 +1488,47 @@ function handleCloudUpload(event: Event) {
   const target = event.target as HTMLInputElement;
   const file = target.files?.[0];
   if (!file) return;
-  // Upload via cloud files API
+  // 上传到当前目录
+  const uploadDir = currentDir.value;
   const reader = new FileReader();
   reader.onload = async (e) => {
     const content = e.target?.result as string;
     const ext = file.name.split('.').pop()?.toLowerCase() || 'txt';
     try {
-      await cloudApi.create({ name: file.name, content, file_type: ext });
+      await cloudApi.create({ name: file.name, content, file_type: ext, dir: uploadDir });
       await loadCloudFiles();
     } catch (err: any) {
-      console.error('上传失败', err);
+      alert('上传失败：' + (err?.message || '未知错误'));
     }
   };
   reader.readAsText(file);
   target.value = '';
 }
 
-async function deleteCloudFile(file: CloudFile) {
-  if (!confirm(`确定删除云文件 "${file.name}" 吗？`)) return;
+/** 删除云文件 / 目录（目录递归删除） */
+async function deleteCloudItem(item: CloudFile) {
+  const isDir = item.is_directory;
+  const message = isDir
+    ? `确定删除文件夹「${item.name}」及其全部内容吗？此操作不可恢复。`
+    : `确定删除云文件「${item.name}」吗？`;
+  if (!confirm(message)) return;
   try {
-    await cloudApi.delete(Number(file.id));
-    if (currentFile.value?.id === file.id) {
+    await cloudApi.delete(Number(item.id));
+    if (isDir) {
+      // 关闭被删除目录下的已打开标签
+      const dirPrefix = (item.file_path || '').replace(/\/+$/, '') + '/';
+      if (dirPrefix !== '/') {
+        const toClose = openTabs.value.filter((t) => t.path && t.path.startsWith(dirPrefix));
+        toClose.forEach((t) => closeTab(t));
+      }
+    } else if (currentFile.value?.id === item.id) {
       closeTab(currentFile.value);
     }
     await loadCloudFiles();
     // 源文件删除后实例可能变为警告状态，静默刷新实例列表
     loadOverview(true);
   } catch (e: any) {
-    console.error('删除云文件失败', e);
+    alert('删除失败：' + (e?.message || '未知错误'));
   }
 }
 
@@ -1193,56 +1557,6 @@ function downloadCloudFile(file: CloudFile) {
   }
 }
 
-const showRenameDialog = ref(false);
-const renameFileName = ref('');
-let renameTargetFile: CloudFile | null = null;
-
-function renameCloudFile(file: CloudFile) {
-  renameTargetFile = file;
-  renameFileName.value = file.name;
-  showRenameDialog.value = true;
-}
-
-/** 云文件名与新建规则一致：字母/数字/下划线/连字符/点 */
-const CLOUD_FILE_NAME_RE = /^[a-zA-Z0-9_\-.]+$/;
-
-async function confirmRename() {
-  const target = renameTargetFile;
-  if (!target) return;
-  const newName = renameFileName.value.trim();
-  if (!newName) {
-    alert('文件名不能为空');
-    return;
-  }
-  if (!CLOUD_FILE_NAME_RE.test(newName)) {
-    alert('文件名只能包含字母、数字、下划线（_）、连字符（-）和点（.），请修改后重试');
-    return;
-  }
-  if (newName === target.name) {
-    showRenameDialog.value = false;
-    renameTargetFile = null;
-    return;
-  }
-  try {
-    // 后端 cloud-files update 支持改名（内容不变）
-    await cloudApi.update({ id: Number(target.id), name: newName });
-    // 更新已打开标签的名称与扩展名
-    const tab = openTabs.value.find(t => t.id === target.id);
-    if (tab) {
-      tab.name = newName;
-      tab.ext = newName.split('.').pop()?.toLowerCase() || '';
-    }
-    showRenameDialog.value = false;
-    renameTargetFile = null;
-    await loadCloudFiles();
-    // 源文件改名后同步刷新实例列表中展示的源文件名
-    loadOverview(true);
-  } catch (e: any) {
-    // 失败时保留对话框与输入内容，方便修改后重试
-    alert('重命名失败：' + (e?.message || '未知错误'));
-  }
-}
-
 function handleShareCloudFile(file: CloudFile) {
   // Open the file first, then share
   openCloudFile(file).then(() => {
@@ -1256,8 +1570,11 @@ const distributionOverview = ref<DistributionOverview | null>(null);
 const distributionOverviewLoaded = ref(false);
 const overviewLoading = ref(false);
 const overviewError = ref('');
-const showDistributionDialog = ref(false);
-const distributionFile = ref<CloudFile | null>(null);
+// 文件属性 / 分发配置对话框
+const showPropertiesDialog = ref(false);
+const propertiesTab = ref<'props' | 'distribution'>('props');
+const propertiesInfo = ref<FilePropertyInfo | null>(null);
+const propertiesDistributionFile = ref<CloudFile | null>(null);
 const showInstanceDialog = ref(false);
 const editingInstance = ref<DistributionInstance | null>(null);
 const copiedInstanceKey = ref('');
@@ -1283,10 +1600,10 @@ const distributedCounts = computed<Map<number, number>>(() => {
   return map;
 });
 
-/** 可作为源文件的云文件（仅自己拥有的文件，分享文件不可用于分发） */
+/** 可用作分发源文件的云文件（仅自己拥有的文件，排除目录与分享文件） */
 const ownedCloudFiles = computed(() => {
   return cloudFiles.value
-    .filter((f) => f.source !== 'shared')
+    .filter((f) => f.source !== 'shared' && !f.is_directory)
     .map((f) => ({ id: f.id, name: f.name }));
 });
 
@@ -1369,6 +1686,11 @@ async function loadOverview(silent = false) {
 
 function switchSidebarView(view: 'files' | 'instances') {
   sidebarView.value = view;
+  if (view !== 'files') {
+    cancelDraft();
+    cancelInlineRename();
+    showCloudPlusMenu.value = false;
+  }
   if (view === 'instances' && (!distributionOverviewLoaded.value || overviewError.value)) {
     loadOverview();
   }
@@ -1399,35 +1721,121 @@ function formatInstanceTime(value?: string): string {
   return text.length > 16 ? text.slice(0, 16) : text;
 }
 
-/** 打开分发配置对话框；确保已有实例组信息后再打开 */
-async function openDistributionDialog(file: CloudFile) {
-  if (!isLoggedIn.value) {
-    alert('请先登录后再使用「分发配置」');
+// ===== 文件属性 / 分发配置对话框 =====
+function cloudFileById(id: string): CloudFile | undefined {
+  return cloudFiles.value.find((f) => f.id === id);
+}
+
+function isDistributable(file: CloudFile | null): boolean {
+  return !!file && file.source === 'owned' && !file.is_directory;
+}
+
+function buildCloudFileInfo(file: CloudFile): FilePropertyInfo {
+  const sourceLabel = file.source === 'shared'
+    ? `来自分享${file.shared_from ? '（' + file.shared_from + '）' : ''}`
+    : '云端文件';
+  const sharedLabel = file.source === 'shared'
+    ? '来自分享'
+    : (file.is_shared ? '已分享' : '未分享');
+  return {
+    name: file.name,
+    typeLabel: file.is_directory ? '文件夹' : (file.file_type ? file.file_type.toUpperCase() : '文件'),
+    size: file.is_directory ? '—' : file.size,
+    sourceLabel,
+    owner: file.owner || file.owner_username || '—',
+    path: file.file_path || '—',
+    createdAt: file.created_at || '—',
+    updatedAt: file.updated_at || '—',
+    sharedLabel,
+    distributedCount: file.is_directory ? 0 : distributedCount(file),
+  };
+}
+
+function buildCurrentFileInfo(): FilePropertyInfo | null {
+  const file = currentFile.value;
+  if (!file) return null;
+  const cloud = cloudFileById(file.id);
+  if (cloud) return buildCloudFileInfo(cloud);
+  return {
+    name: file.name,
+    typeLabel: currentFileType.value,
+    size: file.size,
+    sourceLabel: file.source === 'local' ? '本地文件' : (file.source === 'shared' ? '来自分享' : '云端文件'),
+    owner: file.source === 'local' ? '本地文件' : (file.owner || '—'),
+    path: file.path || file.name,
+    createdAt: file.createdAt || '—',
+    updatedAt: file.updatedAt || file.modified || '—',
+    sharedLabel: file.source === 'shared' ? '来自分享' : '未分享',
+    distributedCount: 0,
+  };
+}
+
+function distributionFileForCurrent(): CloudFile | null {
+  const file = currentFile.value;
+  if (!file || file.source !== 'cloud') return null;
+  const cloud = cloudFileById(file.id);
+  return cloud && isDistributable(cloud) ? cloud : null;
+}
+
+/** 打开属性窗口（默认属性 Tab） */
+function openFileProperties(file?: CloudFile) {
+  const info = file ? buildCloudFileInfo(file) : buildCurrentFileInfo();
+  if (!info) {
+    openLocalFile();
     return;
   }
-  if (file.source === 'shared') {
-    alert('分享文件不能配置分发，请对自己拥有的云文件使用「分发配置」');
-    return;
-  }
-  distributionFile.value = file;
-  const hadOverview = !!distributionOverview.value;
-  if (!hadOverview) {
-    await loadOverview(true);
-  }
-  showDistributionDialog.value = true;
-  // 已有实例列表时后台静默刷新，确保对话框内“同名实例 → 更新”的判断是最新的
-  if (hadOverview) {
+  propertiesInfo.value = info;
+  // 分发配置 Tab 只对“正在查看的这个 own 文件”（或当前 own 文件）开放
+  propertiesDistributionFile.value = file
+    ? (isDistributable(file) ? file : null)
+    : distributionFileForCurrent();
+  propertiesTab.value = 'props';
+  showPropertiesDialog.value = true;
+  // 有分发能力时不阻塞地刷新实例总览（供分发 Tab 的同名判断/组信息）
+  if (propertiesDistributionFile.value) {
     void loadOverview(true);
   }
 }
 
+/** 右键“分发配置”：打开属性窗口并定位到分发配置 Tab */
+async function openFileDistribution(file: CloudFile) {
+  if (!isDistributable(file)) {
+    alert('仅自己拥有的云端文件可以配置分发');
+    return;
+  }
+  propertiesInfo.value = buildCloudFileInfo(file);
+  propertiesDistributionFile.value = file;
+  propertiesTab.value = 'distribution';
+  showPropertiesDialog.value = true;
+  const hadOverview = !!distributionOverview.value;
+  if (!hadOverview) {
+    await loadOverview(true);
+  } else {
+    // 后台静默刷新，确保“同名实例 → 更新”的判断最新
+    void loadOverview(true);
+  }
+}
+
+/** Ribbon 文件卡片「属性」按钮 */
+function onFileCardActionClick() {
+  if (currentFile.value) openFileProperties();
+  else openLocalFile();
+}
+
 async function onDistributionSaved() {
   await Promise.all([loadOverview(true), loadCloudFiles()]);
+  // 属性页“分发实例数”同步刷新
+  if (showPropertiesDialog.value && propertiesDistributionFile.value) {
+    const cloud = cloudFileById(propertiesDistributionFile.value.id);
+    if (cloud) propertiesInfo.value = buildCloudFileInfo(cloud);
+  }
 }
 
 async function openInstanceSourceFile(inst: DistributionInstance) {
   const fileId = Number(inst.source_file_id);
-  const target = cloudFiles.value.find((f) => Number(f.id) === fileId && f.source !== 'shared');
+  const target = cloudFiles.value.find(
+    (f) => Number(f.id) === fileId && f.source !== 'shared' && !f.is_directory
+  );
   if (!target) {
     alert('源文件不在当前云文件列表中，可能已被删除或尚未加载，请刷新后重试');
     return;
@@ -1585,15 +1993,68 @@ const editorInfo = computed(() => {
     icon: 'ri-file-2-line',
     editButtonLabel: '打开文件',
   };
+  const cloud = cloudFileById(currentFile.value.id);
+  const isLocal = currentFile.value.source === 'local';
   return {
     title: currentFile.value.name,
     type: currentFileType.value,
     icon: currentFile.value.icon,
     lastUpdated: currentFile.value.modified,
-    lastEditor: currentFile.value.source === 'local' ? '本地文件' : '云端文件',
-    editButtonLabel: '打开文件',
+    // 云端文件显示后端返回的真实编辑者；本地文件显示「本地文件」
+    lastEditor: isLocal
+      ? '本地文件'
+      : (cloud?.owner || currentFile.value.owner || '云端文件'),
+    editButtonLabel: '属性',
   };
 });
+
+/** 文件卡片「属性」按钮图标（未打开文件时保持“打开文件”语义） */
+const cardEditButtonIcon = computed(() => (currentFile.value ? 'ri-information-line' : 'ri-pencil-line'));
+
+/** 当前文件是否可在标题处行内重命名（仅云端自己拥有的文件） */
+const canRenameCurrentFile = computed(() => {
+  const file = currentFile.value;
+  return !!file && file.source === 'cloud' && !file.readOnly;
+});
+
+/** 当前文件是否已分发（文件卡片「已分发」徽标） */
+const currentFileDistributed = computed(() => {
+  const file = currentFile.value;
+  if (!file) return false;
+  const cloud = cloudFileById(file.id);
+  return cloud ? distributedCount(cloud) > 0 : false;
+});
+
+/** 文件卡片标题行内重命名 → 调用后端 rename，并同步标签/列表 */
+async function onFileCardTitleChange(rawTitle: string) {
+  const file = currentFile.value;
+  if (!file || file.source !== 'cloud') return;
+  const newName = rawTitle.trim();
+  if (!newName) {
+    alert('文件名不能为空');
+    return;
+  }
+  if (!isValidCloudName(newName)) {
+    alert('名称不能包含 / \\ : * ? " < > | 等字符，且不能为空，请修改后重试');
+    return;
+  }
+  if (newName === file.name) return;
+  const cloud = cloudFileById(file.id);
+  const dir = cloud?.parent_dir || '';
+  if (cloudFiles.value.some((f) => f.id !== file.id && f.name === newName && (f.parent_dir || '') === dir)) {
+    alert('当前目录已存在同名文件');
+    return;
+  }
+  try {
+    await cloudApi.rename({ id: Number(file.id), name: newName });
+    updateOpenTabName(file.id, newName);
+    updatePluginIndicator(file.ext);
+    await loadCloudFiles();
+    loadOverview(true);
+  } catch (e: any) {
+    alert('重命名失败：' + (e?.message || '未知错误'));
+  }
+}
 
 const lineCount = computed(() => currentFile.value?.content ? currentFile.value.content.split('\n').length : 0);
 const charCount = computed(() => currentFile.value?.content ? currentFile.value.content.length : 0);
@@ -1725,13 +2186,17 @@ function onEditorContextMenu(e: MouseEvent) {
 
 // ===== 文件属性 =====
 const fileProperties = computed(() => {
-  if (!currentFile.value) return [];
+  const file = currentFile.value;
+  if (!file) return [];
+  const cloud = cloudFileById(file.id);
   return [
-    { label: '文件名', value: currentFile.value.name },
-    { label: '大小', value: currentFile.value.size },
+    { label: '文件名', value: file.name },
+    { label: '大小', value: file.size },
     { label: '类型', value: currentFileType.value },
-    { label: '修改时间', value: currentFile.value.modified },
-    { label: '来源', value: currentFile.value.source === 'local' ? '本地' : '云端' }
+    { label: '修改时间', value: file.modified },
+    { label: '来源', value: file.source === 'local' ? '本地' : (file.source === 'shared' ? '来自分享' : '云端') },
+    { label: '编辑者', value: cloud?.owner || file.owner || (file.source === 'local' ? '本地文件' : '—') },
+    { label: '路径', value: cloud?.file_path || file.path || '—' },
   ];
 });
 
@@ -1808,19 +2273,24 @@ async function openCloudFile(cloudFile: CloudFile) {
       name: cloudFile.name,
       icon: cloudFile.icon,
       size: cloudFile.size,
-      modified: data.updated_at || '未知',
+      modified: data.updated_at || cloudFile.updated_at || '未知',
       dirty: false,
       source: isFromShare ? 'shared' : 'cloud',
       content: data.content || '',
       ext,
       readOnly: isReadOnly,
+      owner: cloudFile.owner || cloudFile.owner_username || '',
+      path: cloudFile.file_path || cloudFile.name,
+      createdAt: cloudFile.created_at || '',
+      updatedAt: data.updated_at || cloudFile.updated_at || '',
+      isShared: cloudFile.is_shared || 0,
     };
     if (isReadOnly) {
       alert('此文件为只读分享，无法编辑。');
     }
     openFile(editorFile);
   } catch (e: any) {
-    console.error('加载云文件失败', e);
+    alert('加载云文件失败：' + (e?.message || '未知错误'));
   }
 }
 
@@ -2082,14 +2552,21 @@ function onShareDialogClose() {
 
 async function handleShare() {
   if (!currentFile.value) return;
+  if (currentFile.value.source === 'shared') {
+    alert('来自分享的文件不能再分享');
+    return;
+  }
   if (currentFile.value.source !== 'cloud') {
     if (!confirm('当前文件尚未保存到云文件。\n\n确认分享将自动上传到云文件，是否继续？')) return;
     try {
       const ext = currentFile.value.ext || 'txt';
       const name = currentFile.value.name;
-      await cloudApi.create({ name, content: currentFile.value.content || '', file_type: ext });
+      const uploadDir = currentDir.value;
+      await cloudApi.create({ name, content: currentFile.value.content || '', file_type: ext, dir: uploadDir });
       await loadCloudFiles();
-      const uploaded = cloudFiles.value.find(f => f.name === name && f.source === 'owned');
+      const uploaded = cloudFiles.value.find(
+        (f) => f.name === name && f.source === 'owned' && !f.is_directory && (f.parent_dir || '') === uploadDir
+      );
       if (uploaded) {
         currentFile.value.source = 'cloud';
         currentFile.value.id = uploaded.id;
@@ -2336,12 +2813,63 @@ onMounted(() => {
 .login-btn { padding: var(--spacer-1) var(--spacer-4); background: var(--accent-base); color: white; border: none; border-radius: var(--radius-md); font-size: var(--font-size-sm); font-weight: 500; cursor: pointer; }
 .login-btn:hover { background: var(--accent-hover); }
 
-.cloud-file-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: var(--spacer-1); }
-.cloud-file-item { display: flex; align-items: center; gap: var(--spacer-2); padding: var(--spacer-2); background: transparent; border-radius: var(--radius-sm); font-size: var(--font-size-sm); color: var(--text-secondary); cursor: pointer; }
+/* 当前目录面包屑 */
+.cloud-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 0 var(--spacer-2);
+  flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.cloud-breadcrumb::-webkit-scrollbar { display: none; }
+.cloud-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 120px;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-xs);
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.cloud-crumb:hover { background: var(--subtle-secondary); color: var(--text-primary); }
+.cloud-crumb.active { color: var(--text-primary); font-weight: 600; }
+.cloud-crumb-sep { color: var(--text-tertiary); flex-shrink: 0; opacity: 0.6; }
+
+.cloud-file-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; padding-bottom: var(--spacer-3); }
+.cloud-file-item { display: flex; align-items: center; gap: var(--spacer-2); min-height: 30px; padding: var(--spacer-1) var(--spacer-2); background: transparent; border-radius: var(--radius-sm); font-size: var(--font-size-sm); color: var(--text-secondary); cursor: pointer; }
 .cloud-file-item:hover { background: var(--subtle-secondary); color: var(--text-primary); }
 .cloud-file-item.active { background: var(--subtle-pressed); color: var(--text-primary); }
-.cloud-file-icon { font-size: 16px; }
-.cloud-file-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cloud-file-item.directory .cloud-file-icon { color: var(--accent-base); }
+.cloud-file-item.directory .cloud-file-name { color: var(--text-primary); }
+.cloud-file-item.renaming { background: var(--subtle-secondary); }
+.cloud-file-item.draft { border: 1px dashed var(--accent-base); background: var(--accent-bg); }
+.cloud-file-icon { display: inline-flex; align-items: center; flex-shrink: 0; font-size: 16px; }
+.cloud-file-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cloud-inline-input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 4px;
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--accent-base);
+  border-radius: var(--radius-xs);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  outline: none;
+  box-sizing: border-box;
+}
+.draft-hint { color: var(--accent-base) !important; }
 .cloud-file-size { font-size: var(--font-size-xs); color: var(--text-tertiary); flex-shrink: 0; }
 .cloud-file-shared-badge { display: inline-flex; align-items: center; color: var(--status-success); flex-shrink: 0; }
 .cloud-file-dist-badge {
@@ -2357,7 +2885,18 @@ onMounted(() => {
   border-radius: var(--radius-xs);
 }
 .cloud-file-shared-from-badge { display: inline-flex; align-items: center; gap: 2px; font-size: 9px; color: var(--accent-base); background: var(--accent-bg); padding: 0 4px; border-radius: var(--radius-xs); flex-shrink: 0; }
-.cloud-empty { text-align: center; padding: var(--spacer-4); font-size: var(--font-size-xs); color: var(--text-tertiary); }
+.cloud-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--spacer-4);
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+.cloud-empty-title { color: var(--text-secondary); font-size: var(--font-size-xs); }
+.cloud-empty-hint { font-size: 10px; color: var(--text-tertiary); }
 
 /* ===== 配置实例视图（侧栏） ===== */
 .instance-panel {
@@ -2550,9 +3089,11 @@ onMounted(() => {
 
 .sidebar-footer { padding: var(--spacer-3); border-top: 1px solid var(--divider-stroke); background: var(--subtle-secondary); }
 .storage-info { display: flex; flex-direction: column; gap: var(--spacer-1); }
-.storage-label { font-size: var(--font-size-xs); font-weight: 500; color: var(--text-tertiary); }
+.storage-label { display: flex; align-items: center; justify-content: space-between; gap: var(--spacer-2); font-size: var(--font-size-xs); font-weight: 500; color: var(--text-tertiary); }
+.storage-percent { font-size: 10px; color: var(--text-tertiary); font-weight: 400; }
 .storage-bar { height: 4px; background: var(--divider-stroke); border-radius: var(--radius-full); overflow: hidden; }
 .storage-fill { height: 100%; background: var(--accent-base); border-radius: var(--radius-full); transition: width var(--fast-duration); }
+.storage-fill.warning { background: var(--status-warning); }
 .storage-text { font-size: var(--font-size-xs); color: var(--text-tertiary); }
 
 /* ---- 主编辑区 ---- */
