@@ -1,5 +1,5 @@
 /**
- * AI 自定义模型管理 API（1:1 转换自 api/ai/models.php）
+ * AI 自定义模型管理 API（移植自旧实现）
  *
  *  GET  action=list              列出当前用户的模型
  *  POST action=create            创建模型

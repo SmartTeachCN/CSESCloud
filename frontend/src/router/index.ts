@@ -175,7 +175,7 @@ const router = createRouter({
 });
 
 router.beforeEach(async (to, _from, next) => {
-  // 已登录态由 cookie 维护；首次进入 /console 时拉一次 me.php
+  // 已登录态由 cookie 维护；首次进入 /console 时拉一次 /api/auth/me
   if (to.meta.requiresAuth === false) {
     next();
     return;

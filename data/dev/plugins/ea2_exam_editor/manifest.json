@@ -1,0 +1,33 @@
+{
+  "plugin_key": "ea2_exam_editor",
+  "name": "EA2 考试档案编辑器",
+  "version": "2.1.0",
+  "description": "ExamAware2 考试档案结构化编辑器。支持考试场次管理、材料清单、时间重叠检查、实时验证。注册 .ea2 后缀。",
+  "extensions": [
+    "ea2"
+  ],
+  "icon": "asset:icon.png",
+  "ribbon": [
+    {
+      "label": "场次",
+      "tools": [
+        { "id": "ea2-add", "label": "新建场次", "icon": "ri-add-line", "command": "ea2-add-exam" },
+        { "id": "ea2-wizard", "label": "创建向导", "icon": "ri-magic-line", "command": "ea2-wizard" },
+        { "id": "ea2-sort", "label": "时间排序", "icon": "ri-sort-asc", "command": "ea2-sort" }
+      ]
+    },
+    {
+      "label": "编辑",
+      "tools": [
+        { "id": "ea2-format", "label": "格式化", "icon": "ri-code-s-slash-line", "command": "ea2-format" },
+        { "id": "ea2-validate", "label": "校验", "icon": "ri-error-warning-line", "command": "ea2-validate" },
+        { "id": "ea2-material", "label": "添加材料", "icon": "ri-folder-add-line", "command": "ea2-add-material" }
+      ]
+    }
+  ],
+  "status": "published",
+  "developer_username": "system",
+  "is_official": true,
+  "created_at": "2026-08-15 13:49:29",
+  "updated_at": "2026-08-18 11:05:00"
+}

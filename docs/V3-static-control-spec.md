@@ -1,204 +1,141 @@
-# V3 改造架构说明（轻编辑器配置实例化 + 静态集控）
+# V3 配置分发架构说明（轻编辑器配置实例化）
 
-> 本文件是 V3 分支的实施契约，所有参与改造的成员必须遵循本文件的接口与文件边界。
+> 本文件是 V3 分支的接口契约与实施说明。所有对外地址均为 Node.js 原生路径，**不使用 PHP 后缀**。
 
 ## 1. 目标
 
 1. 移除“校园集控 / 实例云控”管理界面，以及 WebSocket、REST 设备控制、EA2 设备、
    PHP 实例沙箱等**动态集控**能力。
 2. 轻编辑器（`/console/editor/light`）同时管理 **云文件** 与 **配置实例**：
-   - 普通云文件保持现有列表展示方式不变；
-   - 文件右键新增「分发配置」；
-   - 新增配置实例管理入口（查看 / 编辑 / 删除 / 复制清单 / 下载清单 / 打开源文件）。
-3. 静态集控实现参考 `E:\CsesWebEditor`（`classisland/manifest.php`、`classisland/file.php`、
-   `classisland/convert.php`），由 NodeJS 云应用模块提供：
-   - `GET /classisland/manifest.php?id=<实例组标识>` —— ClassIsland 2.0 集控清单；
-   - `GET /classisland/file.php?id=<实例组标识>/<实例标识>&key=<数据源>` —— 六类数据源；
-   - `GET /control/file.php?format=ci&id=...&key=...` —— 兼容旧地址（无 key 时返回清单）。
-4. “配置实例”复用平台既有的**实例云应用模块**（`instances` / `apps` / `instance_groups` /
-   实例文件与存储模块），其服务端云应用模块由 NodeJS 编写（`server/apps/`）。
+   - 普通云文件保持现有列表展示；
+   - 文件右键 **「分发配置」**，按源文件内容自动识别分发格式；
+   - 实例视图支持查看、编辑、删除、复制/打开地址、打开源文件。
+3. 分发格式（参考 `E:\CsesWebEditor` 的 ClassIsland 静态集控实现）：
 
-## 2. 数据模型（在原有表上增量扩展）
+| 格式 | 识别依据 | 实例应用 | 分发形式 |
+|---|---|---|---|
+| `classisland` | Profile JSON：`ClassPlans` / `TimeLayouts` / `Subjects` | `classisland` | 静态集控清单 + 六类数据源 |
+| `cses` | `version` / `subjects` / `schedules` / `extraKey` | `cses_config` | 公开配置地址（原文件内容） |
+| `examaware` | `examName` / `examInfos` 或 `.ea2` | `examaware` | 公开配置地址（原文件内容） |
 
-- `instances` 新增：
-  - `app_key TEXT`（已有增量迁移，需补进 `schema.sql`）
-  - `source_file_id INTEGER`：轻编辑器源文件 `web_hosting_files.id`
-  - `updated_at TEXT`
-- `instance_groups` 新增：
-  - `dir_id TEXT`：对外公开的实例组标识（12 位小写字母/数字，唯一）
-  - `updated_at TEXT`
-- 配置实例的语义：
-  - 一条 `instances` 记录 = 一个配置实例；
-  - `name` 即 ClassIsland 侧填写的“实例标识”（中文/空格允许，禁止 `/ \ : * ? " < > |`、`..`、首字符 `.`）；
-  - `group_id` 指向该用户的实例组；`app_key = 'cses_static_control'`；
-  - `config` JSON：`{ "format": "classisland", "organization_name": "...", "file_name": "..." }`。
-- 源文件内容实时读取（不复制），文件保存后静态集控数据立即更新；清单版本号取实例组内
-  所有源文件 `updated_at` 的最大值换算的 Unix 秒。
+4. 复用实例云应用模块（`instances` / `apps` / `instance_groups` / 实例文件与存储），
+   云应用服务端模块由 NodeJS 编写（`server/apps/`）。
 
-## 3. 服务端模块边界
+## 2. 数据模型
 
-### 3.1 `server/lib/classisland-convert.js`（新增，backend-static 负责）
+- `instances`：
+  - `app_key`：`classisland` / `cses_config` / `examaware`
+  - `name`：ClassIsland 侧填写的实例标识 / 公开地址中的实例标识
+  - `source_file_id`：轻编辑器源文件 `web_hosting_files.id`
+  - `config` JSON：`{ format, app_key, organization_name, file_name, ext }`
+  - `updated_at`
+- `instance_groups`：`dir_id`（对外公开的实例组标识，12 位小写字母/数字）、`updated_at`。
+- 一个所有者只有一个默认实例组；同一实例组下实例标识唯一（跨格式共享）。
+- 源文件内容实时读取；ClassIsland 清单版本号取组内 ClassIsland 实例源文件 `updated_at`
+  最大值的 Unix 秒。
 
-从 `E:\CsesWebEditor\classisland\convert.php` 1:1 移植的纯函数模块：
+## 3. 公开接口（无需登录）
 
-```js
-CORE_VERSION = '2.0.0.0'
-validDirId(id) / validInstanceId(id)
-stableUuid(namespace, name)          // UUID v5 风格（crypto sha1）
-normTime(v) / normDays(v)
-section(doc, name)                    // 顶层 + extraKey，忽略大小写
-profile(doc, namespace, section)      // section: 'ClassPlans'|'TimeLayouts'|'Subjects'
-policy(doc) / credentials(doc) / settings(doc)
-document(doc, key, namespace)         // 六类数据源分发；未知 key 返回 null
-DATA_SOURCE_KEYS = ['ClassPlans','TimeLayouts','Subjects','Policy','Credentials','Settings']
-manifest(dirId, version, baseUrl)     // ClassIsland 2.0 清单
-```
+| 接口 | 说明 |
+|---|---|
+| `GET /classisland/manifest?id=<实例组标识>` | ClassIsland 2.0 静态集控清单 |
+| `GET /classisland/file?id=<实例组标识>/<实例标识>&key=<数据源>` | 六类数据源（ClassPlans / TimeLayouts / Subjects / Settings / Policy / Credentials） |
+| `GET /config/<实例组标识>/<实例标识>.<扩展名>` | CSES / ExamAware 原始配置（`application/json` / `text/yaml`） |
 
-要点：`StartTime/EndTime` 为 `HH:MM:SS`，同时输出 `StartSecond/EndSecond`；稳定 GUID；
-空对象输出 `{}`（JS 天然满足）；星期 0=周日；v2 多启用日拆成多个 ClassPlan。
+约定：
 
-### 3.2 `server/apps/`（新增，backend-static 负责）
+- 成功：原始 JSON / YAML 内容，无 `{code}` 包装；`Cache-Control: no-store`，允许跨域。
+- 失败：HTTP 400/404 + `{ "error": "中文错误信息" }`。
+- 基础地址优先取 `X-Forwarded-Proto` / `X-Forwarded-Host`，否则使用请求协议与 Host。
+- ClassIsland 三个档案数据源按协议返回 Profile 结构（只填充请求区块，其余为空对象）；
+  Policy / Credentials / Settings 若档案中存在则直出，否则返回空对象。
 
-NodeJS 云应用模块注册表 + 内置“静态集控”云应用：
+## 4. 管理接口（联盟账户）
 
-- `server/apps/index.js`
-  ```js
-  get(appKey) -> module | null
-  list() -> [{ appKey, name, description }]
-  ```
-- `server/apps/cses-static-control/index.js`
-  ```js
-  appKey = 'cses_static_control'
-  name = 'CSES 静态集控'
-  resolveGroup(db, dirId)                    // -> { group } | { error, status }
-  resolveInstance(db, dirId, instanceId)     // -> { instance, group, file } | { error, status }
-  version(db, groupId)                       // -> unix 秒（无数据返回 0）
-  manifest(db, dirId, baseUrl)               // -> { json } | { error, status }
-  payload(db, dirId, instanceId, key)        // -> { json } | { error, status }
-  urls(baseUrl, dirId, instanceId)           // -> { manifest, file_template }
-  managementProfile(manifestUrl)             // -> ClassIsland 管理清单下载对象
-  validateContent(content, fileName)         // -> { ok, document, stats, warnings } | { ok:false, error }
-  ```
-- 数据源解析：`web_hosting_files.content`（Buffer 转 utf8）→ `.json` 用 `JSON.parse`，
-  其他（含 `.yml/.yaml`）用 `js-yaml` 解析；必须能识别为 CSES 文档
-  （含 `version` 或 `subjects` / `schedules` / `extraKey`）。
-
-### 3.3 公开静态集控路由（`server/lib/static-control-public.js`，backend-static 负责）
-
-导出 Express handler（由 Lead 在 `server/index.js` 挂载）：
-
-```js
-manifestHandler(req, res)        // /classisland/manifest.php  /classisland/manifest
-fileHandler(req, res)            // /classisland/file.php      /classisland/file
-controlFileHandler(req, res)     // /control/file.php（format=ci 兼容）
-```
-
-- 成功：`Content-Type: application/json; charset=utf-8`，原始 JSON（无 `{code}` 包装），
-  设置 `Cache-Control: no-store`，允许 `Access-Control-Allow-Origin: *`。
-- 失败：HTTP 400/404 + `{ "error": "中文错误信息" }`（与参考实现一致）。
-- 基础地址从请求推导：`X-Forwarded-Proto`/`X-Forwarded-Host` 优先，否则 `req.protocol`/Host。
-
-### 3.4 `server/api/distributions.js`（新增，backend-static 负责）
-
-鉴权：`Auth.requireAlliance()`；所有者 = `Auth.ownerKey()`（`alliance:<username>`）。
+`/api/distributions`：
 
 | 方法 | action | 入参 | 返回 |
 |---|---|---|---|
-| GET | `overview` | – | `{ group, base_url, manifest_url, file_url_template, instances }` |
+| GET | `overview` | – | `{ group, base_url, formats, instances }` |
 | GET | `list` | – | `InstanceDTO[]` |
 | GET | `get` | `id` | `InstanceDTO` |
 | POST | `create` | `{ file_id, instance_id?, organization_name?, group_name? }` | `InstanceDTO` |
 | POST | `update` | `{ id, instance_id?, organization_name?, file_id? }` | `InstanceDTO` |
 | POST | `delete` | `{ id }` | `null` |
-| POST | `validate` | `{ file_id }` | `{ ok, document: {version,subjects,schedules}, classplans, timelayouts, warnings[] }` |
-| GET | `manifest` | `id` | 管理清单 JSON（附件下载） |
+| POST | `validate` | `{ file_id }` | 格式识别 / 统计 / 地址预览 |
+| GET | `manifest` | `id` | ClassIsland 管理清单（仅 `classisland` 格式） |
 
-`InstanceDTO`：
+`InstanceDTO` 关键字段：
 
 ```json
 {
   "id": 1,
-  "instance_uid": "inst-xxxx",
   "name": "高一1班",
-  "app_key": "cses_static_control",
-  "source_file_id": 12,
-  "source_file_name": "高一1班.yml",
-  "source_file_type": "yml",
-  "source_updated_at": "2026-10-24 20:00:00",
-  "group_id": 3,
+  "app_key": "classisland",
+  "format": "classisland",
+  "format_label": "ClassIsland 配置",
+  "format_mode": "static",
   "group_dir_id": "ab12cd34ef56",
-  "organization_name": "CSES Cloud (ab12cd34ef56)",
-  "status": "running",
-  "created_at": "...",
-  "updated_at": "...",
+  "source_file_id": 12,
+  "source_file_name": "高一1班.json",
+  "valid": true,
   "version": 1761316800,
   "urls": {
-    "manifest": "http://host/classisland/manifest.php?id=ab12cd34ef56",
-    "file_template": "http://host/classisland/file.php?id=ab12cd34ef56/{id}&key={key}"
-  },
-  "valid": true,
-  "warning": ""
+    "kind": "static",
+    "manifest": "http://host/classisland/manifest?id=ab12cd34ef56",
+    "file_template": "http://host/classisland/file?id=ab12cd34ef56/{id}&key={key}"
+  }
 }
 ```
 
-- 文件名/实例标识默认取源文件名去扩展名；非法字符替换为 `-`，组内重名自动加 `-2`。
-- 每组每个实例标识唯一；一个所有者只有一个默认实例组（首次 overview/create 时惰性创建，
-  `dir_id` 12 位小写字母/数字）。
+`format_mode = "url"` 时：`urls = { kind: "url", source: "http://host/config/<组>/<实例>.<扩展名>" }`。
 
-### 3.5 前端 API（Lead 修改 `frontend/src/api/index.ts`）
+`validate` 返回：
 
-```ts
-export const distributionsApi = {
-  overview: () => api.get<any>('/distributions?action=overview'),
-  list: () => api.get<any[]>('/distributions?action=list'),
-  get: (id: number) => api.get<any>(`/distributions?action=get&id=${id}`),
-  create: (body: any) => api.post<any>('/distributions?action=create', body),
-  update: (id: number, body: any) => api.post<any>('/distributions?action=update', { id, ...body }),
-  remove: (id: number) => api.post('/distributions?action=delete', { id }),
-  validate: (fileId: number) => api.post<any>('/distributions?action=validate', { file_id: fileId }),
-  manifestUrl: (id: number) => `/api/distributions?action=manifest&id=${id}`
-};
+```json
+{
+  "ok": true,
+  "format": "cses",
+  "format_label": "CSES 配置",
+  "mode": "url",
+  "default_instance_id": "高一1班",
+  "document": { "subjects": 2, "schedules": 1, "classplans": 0, "timelayouts": 0, "exams": 0 },
+  "warnings": [],
+  "group": { "id": 3, "dir_id": "ab12cd34ef56", "name": "配置分发" },
+  "existing_instance": null,
+  "urls": { "kind": "url", "source": "http://host/config/ab12cd34ef56/高一1班.yml" }
+}
 ```
 
-同时删除 `campusApi`、`instancesApi`、`groupsApi`、`schoolsApi`、`storageApi`、
-`instanceFilesApi`、`authApi.loginInstanceSub`（由对应前端清理任务先移除引用）。
+## 5. 服务端模块
 
-## 4. 前端交互（frontend-light-editor 负责）
+```
+server/lib/distribution-formats.js     # 格式识别 / 解析 / 校验 / 地址生成
+server/apps/index.js                   # NodeJS 云应用注册表
+server/apps/classisland/index.js       # ClassIsland 档案 → 静态集控
+server/apps/cses-config/index.js       # CSES 配置 → 公开配置地址
+server/apps/examaware/index.js         # ExamAware 配置 → 公开配置地址
+server/apps/lib/raw-config.js          # 公开配置地址通用解析
+server/lib/classisland-convert.js      # 清单生成与 ClassIsland 结构辅助
+server/lib/static-control-public.js    # 公开接口 handler（manifest/file/config）
+server/api/distributions.js            # 分发管理 API
+```
 
-`frontend/src/views/editor/LightEditor.vue`：
+## 6. 前端交互
 
-- 云文件列表保持现状（`普通文件保持当前列表显示`）；仅给“已分发”文件加一个小徽标（可选）。
-- 云文件右键菜单新增 **「分发配置」**（仅自己拥有的文件；分享文件不显示）。
-- 侧栏云文件标题旁增加「文件 / 实例」视图切换（或等效入口），实例视图即“配置实例管理”：
-  - 空状态提示：在文件上右键 →「分发配置」；
-  - 列表项：实例标识、源文件名、实例组标识、状态（正常/源文件异常）、更新时间；
-  - 操作：打开源文件、编辑实例、复制清单链接、下载 ClassIsland 清单、查看数据源、删除。
-- 新建 / 编辑分发对话框（`DistributionDialog.vue`）：
-  1. 展示源文件名与 CSES 校验结果（`validate`）；
-  2. 实例标识（默认文件名去扩展名）、组织名称（默认 `CSES Cloud (组标识)`）、实例组标识只读；
-  3. 已存在同名实例时提示并可“更新现有实例”；
-  4. 成功后展示来源地址、清单地址与 ClassIsland 接入步骤（参考 README），
-     提供“复制清单地址 / 下载清单文件 / 复制数据源模板”。
-- 交互与样式复用现有 `editor.css` 与 `context-menu` / `dialog` 体系，不引入新依赖。
+- 普通云文件列表保持现状；已分发文件显示徽标；右键「分发配置」。
+- 分发对话框：
+  - 展示识别出的格式 / 统计 / 警告；
+  - `static`：展示清单地址、数据源模板、ClassIsland 接入步骤、下载清单；
+  - `url`：展示配置地址、复制、打开链接，并提示适用客户端（CSES / ExamAware 2）。
+- 实例视图与编辑对话框按 `urls.kind` 展示/复制/打开对应地址，显示格式徽标。
+- 所有模态框使用毛玻璃背景（overlay 模糊 + flyout 背景），不允许透明。
 
-## 5. 移除清单（backend-cleanup / frontend-cleanup 负责）
-
-后端删除：`server/api/campus-control.js`、`server/api/control.js`、`server/api/rest-control.js`、
-`server/api/instance-php.js`、`server/api/dev/cc-packages.js`、`server/api/v1/device-enrollments.js`、
-`server/lib/ws-control.js`、`server/lib/instance-php-sandbox.js`、`adapters/`、`docs/ea2-handover.md`；
-清理 services/dev-fs/instances/seed 中的 ea2/cc/control_manifest/campus 引用；移除 `ws` 依赖。
-
-前端删除：`views/campus/*`、`components/campus/*`、`views/instances/*`、`components/instances/*`、
-`composables/useSchool.ts`、`views/services/ServiceList.vue`、`InstancePropertiesPanel.vue`；
-路由/导航/首页/落地页/登录重定向/开发者中心/AI 页面/分享预览页中所有校园集控、实例云控、
-设备控制、WebSocket 入口与文案。
-
-## 6. 验收
+## 7. 验收
 
 1. `pnpm --dir frontend build` 通过；
-2. `node server/index.js` 可启动，无 ws / control / campus 相关日志；
-3. 冒烟：联盟登录 → 创建云文件（CSES YAML）→ 分发配置 → 访问
-   `/classisland/manifest.php?id=<dir>` 与 `/classisland/file.php?id=<dir>/<实例>&key=Subjects`
-   返回正确 JSON；取消分发后返回 404；
-4. 旧动态接口（`/api/ws-control`、`/api/rest-control`、`/api/control`）不可用；
-5. README 与帮助文档更新为 V3 说明。
+2. `node server/index.js` 启动，日志出现 `[public-config]`，无 PHP 后缀路由；
+3. `_smoke_static_control.js` 覆盖三种格式分发、源文件更新、改名、云文件重命名与清理，全部通过；
+4. 旧动态端点（`/api/campus-control`、`/api/rest-control`、`/api/control`、
+   `/api/instance-php`、`/api/ws-control`）返回 404；
+5. 全仓库检索不再存在 PHP 后缀链接（历史快照分支除外）。

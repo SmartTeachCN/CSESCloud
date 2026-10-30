@@ -1,5 +1,5 @@
 /**
- * CSES Cloud - API 响应与工具函数（NodeJS 版，1:1 复刻 lib/response.php）
+ * CSES Cloud - API 响应与工具函数（NodeJS 版，移植自旧实现）
  */
 
 /** 响应已发送哨兵：模拟 PHP exit 语义（Response::json 之后的代码不再执行） */

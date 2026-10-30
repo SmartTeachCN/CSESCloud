@@ -148,9 +148,9 @@ const features = [
   },
   {
     icon: 'ri-share-forward-line',
-    title: '配置分发（静态集控）',
-    desc: '把 CSES 配置一键分发为 ClassIsland 2.0 静态集控清单',
-    items: ['右键分发配置', 'ClassIsland 清单', '六类数据源', '源文件实时同步']
+    title: '配置分发',
+    desc: 'ClassIsland 档案一键分发为静态集控；CSES / ExamAware 配置提供公开地址',
+    items: ['右键分发配置', 'ClassIsland 清单', 'CSES / ExamAware 地址', '源文件实时同步']
   },
   {
     icon: 'ri-folder-3-line',
@@ -174,7 +174,7 @@ const features = [
 
 const solutions = [
   { icon: 'ri-folder-3-line', title: '数据空间', desc: '统一管理云文件与网页空间' },
-  { icon: 'ri-share-circle-line', title: '静态集控接入', desc: 'ClassIsland 通过清单地址自动获取配置' },
+  { icon: 'ri-share-circle-line', title: '静态集控接入', desc: 'ClassIsland 通过清单地址自动同步档案数据' },
   { icon: 'ri-shield-check-line', title: '安全审计', desc: '完整的操作日志与数据导出' },
   { icon: 'ri-notification-3-line', title: '通知中心', desc: '实时推送系统通知与告警' }
 ];

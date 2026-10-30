@@ -1,5 +1,5 @@
 /**
- * 数据空间 API（NodeJS 版，1:1 复刻 api/data-space.php）
+ * 数据空间 API（NodeJS 版，移植自旧实现）
  * 统一管理用户在服务器上活动产生的所有文件
  */
 const { nowStr } = require('../lib/response');

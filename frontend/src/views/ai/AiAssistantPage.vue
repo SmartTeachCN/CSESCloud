@@ -93,7 +93,7 @@
           <p>我可以帮你解答关于 CSES Cloud 平台的各种问题</p>
           <div class="suggestion-chips">
             <button class="chip" @click="sendSuggestion('轻编辑器怎么用？')">轻编辑器使用</button>
-            <button class="chip" @click="sendSuggestion('如何把云文件分发为静态集控配置？')">如何分发配置？</button>
+            <button class="chip" @click="sendSuggestion('如何分发 ClassIsland 配置并接入静态集控？')">如何分发配置？</button>
             <button class="chip" @click="sendSuggestion('开发者中心如何使用？')">开发者中心使用</button>
             <button class="chip" @click="sendSuggestion('数据空间怎么管理云文件？')">数据空间管理</button>
           </div>

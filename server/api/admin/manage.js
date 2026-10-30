@@ -1,5 +1,5 @@
 /**
- * 管理后台 API（1:1 转换自 api/admin/manage.php）
+ * 管理后台 API（移植自旧实现）
  * 仅临时管理员或最高管理员可访问
  *
  * 操作：
@@ -34,7 +34,7 @@ const { nowStr } = require('../../lib/response');
 function writeServerConfig(config) {
   const configPath = path.join(__dirname, '..', '..', 'lib', 'server-config.js');
   const exportStr = `/**
- * CSES Cloud - 服务器配置文件（由管理后台自动写回，等价 lib/server-config.php 的 var_export 导出）
+ * CSES Cloud - 服务器配置文件（由管理后台自动写回，等价旧版的 var_export 导出）
  */
 module.exports = ${JSON.stringify(config, null, 2)};
 `;

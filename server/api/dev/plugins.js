@@ -27,7 +27,7 @@ const { nowStr, HttpSent } = require('../../lib/response');
 const { PluginFS } = require('../../lib/dev-fs');
 
 /** 示例文件仅支持文本扩展名（二进制无法放入 JSON 响应） */
-const SAMPLE_TEXT_EXTS = ['yml', 'yaml', 'json', 'txt', 'md', 'xml', 'csv', 'html', 'htm', 'css', 'js', 'ini', 'toml'];
+const SAMPLE_TEXT_EXTS = ['yml', 'yaml', 'json', 'txt', 'md', 'xml', 'csv', 'html', 'htm', 'css', 'js', 'ini', 'toml', 'ea2'];
 
 /** 按 plugin_key 查找插件（支持 id 兼容） */
 function findPlugin(fs, query) {

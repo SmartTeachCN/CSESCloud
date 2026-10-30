@@ -1,5 +1,5 @@
 /**
- * CSES Cloud - NodeJS 后端服务入口（1:1 复刻 server.php 路由）
+ * CSES Cloud - NodeJS 后端服务入口（V3，全部为 NodeJS 原生路由）
  *
  * 开发模式：仅处理 /api/ 请求（前端由 Vite 开发服务器代理）
  * 生产模式：处理 /api/ 请求 + 提供 dist/ 静态文件（SPA 回退）
@@ -40,9 +40,9 @@ app.use((req, res, next) => {
     upload.any()(req, res, (err) => {
       // multipart 解析失败时静默降级为无文件（保持 JSON 流程可用）
       if (err) console.warn('[upload] multipart 解析警告:', err.message);
-      req.phpFiles = {};
+      req.uploadedFiles = {};
       for (const f of req.files || []) {
-        req.phpFiles[f.fieldname] = {
+        req.uploadedFiles[f.fieldname] = {
           name: f.originalname,
           tmp_name: f.buffer,
           size: f.size,
@@ -148,12 +148,11 @@ try {
   console.warn('[db] app_key 回填跳过:', e.message);
 }
 
-// ── API 路由（/api/{path} 与 /api/{path}.php 均映射到 server/api/{path}.js） ──
+// ── API 路由（/api/{path} 映射到 server/api/{path}.js） ──
 const apiRouter = express.Router();
 
 apiRouter.all(/.*/, (req, res) => {
-  let apiPath = req.path.replace(/^\/+/, '');
-  if (apiPath.endsWith('.php')) apiPath = apiPath.slice(0, -4);
+  const apiPath = req.path.replace(/^\/+/, '');
 
   // 防目录穿越
   const handlerFile = path.normalize(path.join(API_DIR, apiPath + '.js'));
@@ -189,21 +188,19 @@ app.use('/api', apiRouter);
 // ── 导出文件静态目录（/exports） ──
 app.use('/exports', express.static(path.join(ROOT, 'exports'), { fallthrough: true }));
 
-// ── 静态集控公开接口（ClassIsland 2.0 集控协议，无需登录） ──
-// /classisland/manifest.php  → 集控清单
-// /classisland/file.php      → 六类数据源（ClassPlans / TimeLayouts / Subjects / Settings / Policy / Credentials）
-// /control/file.php          → 旧地址兼容（format=ci）
+// ── 公开配置 / 静态集控接口（无需登录，全部为 NodeJS 原生路径） ──
+// /classisland/manifest  → ClassIsland 2.0 静态集控清单
+// /classisland/file      → 六类数据源（ClassPlans / TimeLayouts / Subjects / Settings / Policy / Credentials）
+// /config/<组>/<实例>.<扩展名> → CSES / ExamAware 原始配置
 try {
   const staticControlPublic = require('./lib/static-control-public');
-  app.get(['/classisland/manifest.php', '/classisland/manifest'], staticControlPublic.manifestHandler);
-  app.get(['/classisland/file.php', '/classisland/file'], staticControlPublic.fileHandler);
-  app.get(['/control/file.php', '/control/file'], staticControlPublic.controlFileHandler);
-  console.log('[static-control] 静态集控接口已挂载 (/classisland/manifest.php, /classisland/file.php)');
+  staticControlPublic.register(app);
+  console.log('[public-config] 静态集控 / 公开配置接口已挂载 (/classisland/manifest, /config/:dir/:file)');
 } catch (e) {
-  console.warn('[static-control] 静态集控接口挂载失败:', e.message);
+  console.warn('[public-config] 公开配置接口挂载失败:', e.message);
 }
 
-// ── 网页托管路由（/site/{slug}）——1:1 复刻 server.php ──
+// ── 网页托管路由（/site/{slug}） ──
 app.get(/^\/site\/([a-z0-9-]+)(\/.*)?$/i, (req, res) => {
   const slug = req.params[0];
   let filePath = req.params[1] || '/';

@@ -520,7 +520,9 @@ function formatDate(dateStr: string): string {
 .share-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -531,8 +533,11 @@ function formatDate(dateStr: string): string {
   width: 480px;
   max-width: 90vw;
   max-height: 85vh;
-  background: var(--layer-default);
-  border-radius: var(--radius-md);
+  background: var(--flyout-bg);
+  backdrop-filter: var(--flyout-backdrop);
+  -webkit-backdrop-filter: var(--flyout-backdrop);
+  border: 1px solid var(--flyout-border);
+  border-radius: var(--radius-lg);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
   overflow: hidden;
   display: flex;

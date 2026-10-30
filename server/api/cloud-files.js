@@ -225,6 +225,7 @@ module.exports = async (ctx) => {
     if (body.name !== undefined && body.name !== null) {
       const newName = String(body.name).trim();
       if (newName === '') Response.error('文件名不能为空');
+      if (!/^[a-zA-Z0-9_\-\.]+$/.test(newName)) Response.error('文件名只能包含字母、数字、下划线、连字符和点');
       const newPath = CLOUD_PREFIX + newName;
       // 检查新路径是否冲突
       if (newPath !== row.file_path) {
@@ -246,6 +247,66 @@ module.exports = async (ctx) => {
 
     DB.update('web_hosting_files', updates, 'id = ?', [id]);
     Response.success(null, '已保存');
+  }
+
+  if (method === 'POST' && action === 'rename') {
+    const id = parseInt(body.id ?? 0, 10) || 0;
+    const newName = String(body.name ?? '').trim();
+    if (id <= 0) Response.error('缺少文件 ID');
+    if (newName === '') Response.error('文件名不能为空');
+    if (!/^[a-zA-Z0-9_\-\.]+$/.test(newName)) Response.error('文件名只能包含字母、数字、下划线、连字符和点');
+
+    const row = DB.one(
+      `SELECT * FROM web_hosting_files WHERE id = ? AND space_id = ? AND file_path LIKE ?`,
+      [id, spaceId, CLOUD_PREFIX + '%']
+    );
+    if (!row) Response.error('云文件不存在');
+    if (parseInt(row.is_directory, 10) === 1) Response.error('不支持重命名目录');
+
+    const newPath = CLOUD_PREFIX + newName;
+    if (newPath !== row.file_path) {
+      const conflict = DB.one(
+        `SELECT id FROM web_hosting_files WHERE space_id = ? AND file_path = ? AND id != ?`,
+        [spaceId, newPath, id]
+      );
+      if (conflict) Response.error('同名文件已存在');
+      DB.update('web_hosting_files', {
+        file_path: newPath,
+        content_type: guessCloudContentType(newName),
+        updated_at: nowStr(),
+      }, 'id = ?', [id]);
+    }
+
+    Auth.logAudit(schoolId, 0, 'cloud_file_rename', `重命名云文件: ${username} -> ${newName}`);
+    Response.success({ id: id, name: newName, file_path: newPath }, '已重命名');
+  }
+
+  if (method === 'POST' && action === 'create-dir') {
+    const name = String(body.name ?? '').trim();
+    if (name === '') Response.error('目录名不能为空');
+    if (!/^[a-zA-Z0-9_\-\.]+$/.test(name)) Response.error('目录名只能包含字母、数字、下划线、连字符和点');
+
+    const now = nowStr();
+    ensureCloudDir(spaceId, now);
+    const dirPath = CLOUD_PREFIX + name;
+    const exists = DB.one(
+      `SELECT id FROM web_hosting_files WHERE space_id = ? AND file_path = ?`,
+      [spaceId, dirPath]
+    );
+    if (exists) Response.error('同名目录已存在');
+
+    const id = DB.insert('web_hosting_files', {
+      space_id: spaceId,
+      file_path: dirPath,
+      file_size: 0,
+      content_type: null,
+      content: null,
+      is_directory: 1,
+      created_at: now,
+      updated_at: now,
+    });
+    Auth.logAudit(schoolId, 0, 'cloud_file_mkdir', `创建云目录: ${username} -> ${dirPath}`);
+    Response.success({ id: id, name: name, file_path: dirPath }, '目录已创建');
   }
 
   if (method === 'POST' && action === 'delete') {
@@ -625,7 +686,7 @@ function escapeHtml(value) {
 // 确保云存储空间存在（复用班级主页的 ensureSpace 逻辑）
 function ensureCloudSpace(username)
 {
-  // 直接复用 web-hosting.php 中的 ensureSpace 逻辑
+  // 直接复用旧版中的 ensureSpace 逻辑
   let space = DB.one(
     `SELECT * FROM web_hosting_spaces WHERE alliance_username = ?`,
     [username]

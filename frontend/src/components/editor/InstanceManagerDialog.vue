@@ -16,31 +16,35 @@
           <!-- 实例信息 -->
           <div class="im-meta">
             <div class="im-meta-row">
+              <span class="im-meta-label">分发类型</span>
+              <span class="im-format-badge" :class="formatClass(instanceFormat)">{{ instanceFormatLabel }}</span>
+            </div>
+            <div class="im-meta-row">
               <span class="im-meta-label">实例组标识</span>
-              <span class="im-meta-value mono">{{ groupDirId || instance.group_dir_id || '-' }}</span>
+              <span class="im-meta-value mono">{{ groupDirId || displayInstance?.group_dir_id || '-' }}</span>
               <button
                 class="im-icon-btn"
-                :disabled="!(groupDirId || instance.group_dir_id)"
+                :disabled="!(groupDirId || displayInstance?.group_dir_id)"
                 title="复制实例组标识"
-                @click="copyText(groupDirId || instance.group_dir_id || '', 'group')"
+                @click="copyText(groupDirId || displayInstance?.group_dir_id || '', 'group')"
               >
                 <Icon :icon="copied === 'group' ? 'ri-check-line' : 'ri-file-copy-line'" :size="13" />
               </button>
             </div>
             <div class="im-meta-row">
               <span class="im-meta-label">状态</span>
-              <span class="im-status" :class="instance.valid === false ? 'warn' : 'ok'" :title="instance.warning || ''">
-                <Icon :icon="instance.valid === false ? 'ri-error-warning-line' : 'ri-checkbox-circle-line'" :size="12" />
-                <span>{{ instance.valid === false ? (instance.warning || '源文件异常') : '正常' }}</span>
+              <span class="im-status" :class="displayInstance?.valid === false ? 'warn' : 'ok'" :title="displayInstance?.warning || ''">
+                <Icon :icon="displayInstance?.valid === false ? 'ri-error-warning-line' : 'ri-checkbox-circle-line'" :size="12" />
+                <span>{{ displayInstance?.valid === false ? (displayInstance?.warning || '源文件异常') : '正常' }}</span>
               </span>
             </div>
             <div class="im-meta-row">
               <span class="im-meta-label">更新时间</span>
-              <span class="im-meta-value">{{ formatTime(instance.updated_at) }}</span>
+              <span class="im-meta-value">{{ formatTime(displayInstance?.updated_at) }}</span>
             </div>
-            <div class="im-meta-row" v-if="instance.instance_uid">
+            <div class="im-meta-row" v-if="displayInstance?.instance_uid">
               <span class="im-meta-label">实例 UID</span>
-              <span class="im-meta-value mono">{{ instance.instance_uid }}</span>
+              <span class="im-meta-value mono">{{ displayInstance?.instance_uid }}</span>
             </div>
           </div>
 
@@ -58,7 +62,7 @@
               @keyup.enter="save"
             />
             <div v-if="instanceNameError" class="im-field-error">{{ instanceNameError }}</div>
-            <div v-else class="im-field-hint">允许中文与空格，禁止 / \ : * ? " &lt; &gt; | 与「..」；ClassIsland 中填写的 ID 需与此一致。</div>
+            <div v-else class="im-field-hint">允许中文与空格，禁止 / \ : * ? " &lt; &gt; | 与「..」；用于标识该分发实例（ClassIsland 中填写的 ID 需与此一致）。</div>
           </div>
 
           <div class="im-field">
@@ -66,7 +70,7 @@
             <select v-model="fileId" class="im-select" :disabled="saving">
               <option v-for="f in fileOptions" :key="f.id" :value="f.id">{{ f.name }}</option>
             </select>
-            <div class="im-field-hint">修改源文件后，ClassIsland 同步时会读取新文件的内容。</div>
+            <div class="im-field-hint">修改源文件后，分发配置将随新文件内容更新（格式可能随之变化）。</div>
           </div>
 
           <div class="im-field">
@@ -82,12 +86,12 @@
             />
           </div>
 
-          <!-- 清单地址 -->
-          <div class="im-field" v-if="manifestUrl">
+          <!-- 静态集控：清单地址 -->
+          <div class="im-field" v-if="instanceMode === 'static'">
             <label class="im-label">清单地址</label>
             <div class="im-url-row">
-              <input class="im-url" :value="manifestUrl" readonly />
-              <button class="im-copy-btn" @click="copyText(manifestUrl, 'manifest')">
+              <input class="im-url" :value="manifestUrl" readonly placeholder="服务端未返回清单地址" />
+              <button class="im-copy-btn" :disabled="!manifestUrl" @click="copyText(manifestUrl, 'manifest')">
                 <Icon :icon="copied === 'manifest' ? 'ri-check-line' : 'ri-file-copy-line'" :size="13" />
                 <span>{{ copied === 'manifest' ? '已复制' : '复制' }}</span>
               </button>
@@ -95,6 +99,23 @@
                 <Icon icon="ri-download-line" :size="13" />
               </a>
             </div>
+            <div class="im-field-hint">{{ modeHint }}</div>
+          </div>
+
+          <!-- URL 格式：公开配置地址 -->
+          <div class="im-field" v-else>
+            <label class="im-label">配置地址</label>
+            <div class="im-url-row">
+              <input class="im-url" :value="configUrl" readonly placeholder="服务端未返回配置地址" />
+              <button class="im-copy-btn" :disabled="!configUrl" @click="copyText(configUrl, 'source')">
+                <Icon :icon="copied === 'source' ? 'ri-check-line' : 'ri-file-copy-line'" :size="13" />
+                <span>{{ copied === 'source' ? '已复制' : '复制' }}</span>
+              </button>
+              <a v-if="configUrl" class="im-download-btn" :href="configUrl" target="_blank" rel="noopener" title="打开配置地址">
+                <Icon icon="ri-external-link-line" :size="13" />
+              </a>
+            </div>
+            <div class="im-field-hint">{{ modeHint }}</div>
           </div>
 
           <div v-if="error" class="im-error">
@@ -128,10 +149,24 @@
 import { computed, ref, watch } from 'vue';
 import { distributionsApi } from '../../api';
 
+/** 分发模式：static=静态集控（ClassIsland 清单），url=公开配置地址（CSES / ExamAware） */
+type DistributionMode = 'static' | 'url';
+
+interface DistributionUrls {
+  kind?: string;
+  manifest?: string;
+  file_template?: string;
+  source?: string;
+}
+
 interface DistributionInstance {
   id: number;
   instance_uid?: string;
   name: string;
+  app_key?: string;
+  format?: string;
+  format_label?: string;
+  format_mode?: string;
   source_file_id?: number;
   source_file_name?: string;
   group_dir_id?: string;
@@ -139,7 +174,7 @@ interface DistributionInstance {
   status?: string;
   updated_at?: string;
   version?: number;
-  urls?: { manifest?: string; file_template?: string };
+  urls?: DistributionUrls;
   valid?: boolean;
   warning?: string;
 }
@@ -168,7 +203,65 @@ const saving = ref(false);
 const error = ref('');
 const successMessage = ref('');
 const copied = ref('');
+const savedInstance = ref<DistributionInstance | null>(null);
 let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 保存后优先展示服务端返回的新 DTO（换源文件/格式后地址随之更新） */
+const displayInstance = computed<DistributionInstance | null>(() => savedInstance.value || props.instance);
+
+function normalizeMode(value: unknown): DistributionMode {
+  return String(value || '') === 'url' ? 'url' : 'static';
+}
+
+function deriveFormat(instance: DistributionInstance | null): string {
+  if (!instance) return '';
+  if (instance.format) return instance.format;
+  if (instance.app_key === 'cses_config') return 'cses';
+  if (instance.app_key === 'examaware') return 'examaware';
+  return 'classisland';
+}
+
+function formatLabelOf(format?: string, label?: string): string {
+  const explicit = String(label || '').trim();
+  if (explicit) return explicit;
+  switch (format) {
+    case 'classisland': return 'ClassIsland';
+    case 'cses': return 'CSES';
+    case 'examaware': return 'ExamAware';
+    default: return '配置';
+  }
+}
+
+function formatClass(format?: string): string {
+  return format === 'classisland' || format === 'cses' || format === 'examaware'
+    ? `fmt-${format}`
+    : 'fmt-unknown';
+}
+
+const instanceFormat = computed(() => deriveFormat(displayInstance.value));
+const instanceFormatLabel = computed(() => {
+  return formatLabelOf(instanceFormat.value, displayInstance.value?.format_label);
+});
+const instanceMode = computed<DistributionMode>(() => {
+  return normalizeMode(displayInstance.value?.urls?.kind || displayInstance.value?.format_mode);
+});
+const modeHint = computed(() => {
+  if (instanceFormat.value === 'examaware') {
+    return '在 ExamAware 2 中使用该配置地址获取最新配置。';
+  }
+  if (instanceFormat.value === 'classisland') {
+    return 'ClassIsland 通过该清单地址同步实例组配置。';
+  }
+  return '将该配置地址添加到支持 CSES 配置的程序中使用。';
+});
+
+const manifestUrl = computed(() => displayInstance.value?.urls?.manifest || '');
+const configUrl = computed(() => displayInstance.value?.urls?.source || '');
+const downloadHref = computed(() => {
+  if (instanceMode.value !== 'static') return '';
+  const id = displayInstance.value?.id;
+  return typeof id === 'number' && Number.isFinite(id) ? distributionsApi.manifestUrl(id) : '';
+});
 
 const fileOptions = computed<CloudFileOption[]>(() => {
   const list: CloudFileOption[] = (props.cloudFiles || []).map((f) => ({ id: String(f.id), name: f.name }));
@@ -183,11 +276,6 @@ const fileOptions = computed<CloudFileOption[]>(() => {
 });
 
 const instanceNameError = computed(() => validateInstanceName(instanceName.value));
-const manifestUrl = computed(() => props.instance?.urls?.manifest || '');
-const downloadHref = computed(() => {
-  const id = props.instance?.id;
-  return typeof id === 'number' && Number.isFinite(id) ? distributionsApi.manifestUrl(id) : '';
-});
 const canSave = computed(() => {
   return !!props.instance && !instanceNameError.value && !!fileId.value && !saving.value;
 });
@@ -210,6 +298,7 @@ function reset() {
   successMessage.value = '';
   saving.value = false;
   copied.value = '';
+  savedInstance.value = null;
   if (copiedTimer) {
     clearTimeout(copiedTimer);
     copiedTimer = null;
@@ -287,8 +376,9 @@ async function save() {
       throw new Error('服务端未返回配置实例信息，请稍后重试。');
     }
     successMessage.value = '已保存';
-    const savedInstance: DistributionInstance = { ...dto, id: Number(dto.id) };
-    emit('saved', savedInstance);
+    const saved: DistributionInstance = { ...dto, id: Number(dto.id) };
+    savedInstance.value = saved;
+    emit('saved', saved);
   } catch (e: any) {
     error.value = e?.message || '保存失败，请稍后重试。';
   } finally {
@@ -312,7 +402,9 @@ function onClose() {
   position: fixed;
   inset: 0;
   z-index: 2000;
-  background: rgba(0, 0, 0, 0.4);
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -325,8 +417,10 @@ function onClose() {
   max-height: 86vh;
   display: flex;
   flex-direction: column;
-  background: var(--layer-default);
-  border: 1px solid var(--divider-stroke);
+  background: var(--flyout-bg);
+  backdrop-filter: var(--flyout-backdrop);
+  -webkit-backdrop-filter: var(--flyout-backdrop);
+  border: 1px solid var(--flyout-border);
   border-radius: var(--radius-lg);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
   overflow: hidden;
@@ -452,6 +546,23 @@ function onClose() {
 .im-status.warn {
   color: var(--status-warning);
 }
+
+/* 分发类型徽标 */
+.im-format-badge {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  font-size: 10px;
+  line-height: 1.5;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.im-format-badge.fmt-classisland { color: var(--accent-base); background: var(--accent-bg); }
+.im-format-badge.fmt-cses { color: var(--status-success); background: rgba(16, 124, 16, 0.1); }
+.im-format-badge.fmt-examaware { color: #7A5AF8; background: rgba(122, 90, 248, 0.12); }
+.im-format-badge.fmt-unknown { color: var(--text-secondary); background: var(--subtle-secondary); }
 
 .im-field {
   display: flex;

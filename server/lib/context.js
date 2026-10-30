@@ -23,7 +23,7 @@ function makeCtx(req, res) {
   ctx.Auth = makeAuth(req, res);
 
   // PHP $_FILES 等价（由 multer 中间件装配；字段名 -> {name, tmp_name(Buffer), size, error, type}）
-  ctx.files = req.phpFiles || {};
+  ctx.files = req.uploadedFiles || {};
   Object.defineProperty(ctx, 'body', {
     get: () => (req.body && typeof req.body === 'object' ? req.body : {}),
   });

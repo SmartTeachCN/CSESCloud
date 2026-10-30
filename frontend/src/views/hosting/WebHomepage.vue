@@ -1008,7 +1008,7 @@ function handleImport() {
   if (!confirm('导入将替换当前文本内容，是否继续？')) return;
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.txt,.json,.xml,.html,.css,.js,.ts,.md,.yaml,.yml,.php,.csv,.sql,.py,.ini,.env';
+  input.accept = '.txt,.json,.xml,.html,.css,.js,.ts,.md,.yaml,.yml,.csv,.sql,.py,.ini,.env';
   input.onchange = (e: any) => {
     const file = e.target.files?.[0];
     if (!file) return;

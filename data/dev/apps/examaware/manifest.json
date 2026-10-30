@@ -1,0 +1,17 @@
+{
+  "app_key": "examaware",
+  "name": "ExamAware 配置分发",
+  "version": "1.0.0",
+  "description": "把 ExamAware 2 考试配置（.ea2 / JSON）以公开配置地址提供，供 ExamAware 2 或其它考试编排程序直接拉取。",
+  "category": "配置分发",
+  "icon": "asset:icon.png",
+  "status": "published",
+  "developer_username": "system",
+  "is_shared": true,
+  "is_official": true,
+  "forked_from": null,
+  "forked_by": null,
+  "created_at": "2026-10-30 19:20:00",
+  "updated_at": "2026-10-30 19:20:00",
+  "ribbon": []
+}

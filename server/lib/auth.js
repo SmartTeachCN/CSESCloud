@@ -1,5 +1,5 @@
 /**
- * CSES Cloud - 会话与认证（NodeJS 版，1:1 复刻 lib/auth.php）
+ * CSES Cloud - 会话与认证（NodeJS 版，移植自旧实现）
  *
  * 会话实现：文件型会话（data/sessions/{sid}.json），对齐 PHP session 持久化行为。
  * 通过 makeAuth(req, res) 创建绑定到当前请求的 Auth 对象。

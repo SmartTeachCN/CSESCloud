@@ -127,6 +127,7 @@
                 <div v-for="inst in instances" :key="inst.id" class="instance-item">
                   <div class="instance-item-head">
                     <span class="instance-name" :title="inst.name">{{ inst.name }}</span>
+                    <span class="instance-format" :class="instanceFormatClass(inst)" :title="'分发类型：' + instanceFormatLabel(inst)">{{ instanceFormatLabel(inst) }}</span>
                     <span
                       class="instance-status"
                       :class="inst.valid ? 'ok' : 'warn'"
@@ -159,13 +160,16 @@
                       <Icon icon="ri-edit-line" :size="13" />
                     </button>
                     <button
-                      title="复制清单地址"
-                      @click.stop="copyInstanceManifest(inst)"
+                      :title="instanceMode(inst) === 'url' ? '复制配置地址' : '复制清单地址'"
+                      @click.stop="copyInstanceAddress(inst)"
                     >
-                      <Icon :icon="copiedInstanceKey === 'manifest-' + inst.id ? 'ri-check-line' : 'ri-file-copy-line'" :size="13" />
+                      <Icon :icon="copiedInstanceKey === 'copy-' + inst.id ? 'ri-check-line' : 'ri-file-copy-line'" :size="13" />
                     </button>
-                    <button title="下载 ClassIsland 清单文件" @click.stop="downloadInstanceManifest(inst)">
+                    <button v-if="instanceMode(inst) === 'static'" title="下载 ClassIsland 清单文件" @click.stop="downloadInstanceManifest(inst)">
                       <Icon icon="ri-download-line" :size="13" />
+                    </button>
+                    <button v-else title="打开配置地址" @click.stop="openInstanceConfigUrl(inst)">
+                      <Icon icon="ri-external-link-line" :size="13" />
                     </button>
                     <button class="danger" title="删除实例" @click.stop="deleteInstance(inst)">
                       <Icon icon="ri-delete-bin-line" :size="13" />
@@ -717,6 +721,9 @@ interface DistributionInstance {
   instance_uid?: string;
   name: string;
   app_key?: string;
+  format?: string;
+  format_label?: string;
+  format_mode?: string;
   source_file_id?: number;
   source_file_name?: string;
   source_file_type?: string;
@@ -728,10 +735,13 @@ interface DistributionInstance {
   created_at?: string;
   updated_at?: string;
   version?: number;
-  urls?: { manifest?: string; file_template?: string };
+  urls?: { kind?: string; manifest?: string; file_template?: string; source?: string };
   valid?: boolean;
   warning?: string;
 }
+
+/** 分发模式：static=静态集控（ClassIsland 清单），url=公开配置地址（CSES / ExamAware） */
+type DistributionMode = 'static' | 'url';
 
 /** GET /distributions?action=overview 的返回结构 */
 interface DistributionOverview {
@@ -1193,24 +1203,43 @@ function renameCloudFile(file: CloudFile) {
   showRenameDialog.value = true;
 }
 
+/** 云文件名与新建规则一致：字母/数字/下划线/连字符/点 */
+const CLOUD_FILE_NAME_RE = /^[a-zA-Z0-9_\-.]+$/;
+
 async function confirmRename() {
+  const target = renameTargetFile;
+  if (!target) return;
   const newName = renameFileName.value.trim();
-  if (!newName || !renameTargetFile) return;
-  showRenameDialog.value = false;
+  if (!newName) {
+    alert('文件名不能为空');
+    return;
+  }
+  if (!CLOUD_FILE_NAME_RE.test(newName)) {
+    alert('文件名只能包含字母、数字、下划线（_）、连字符（-）和点（.），请修改后重试');
+    return;
+  }
+  if (newName === target.name) {
+    showRenameDialog.value = false;
+    renameTargetFile = null;
+    return;
+  }
   try {
-    await api.post('/cloud-files?action=rename', { id: Number(renameTargetFile.id), name: newName });
-    // Update local tab if open
-    const tab = openTabs.value.find(t => t.id === renameTargetFile!.id);
+    // 后端 cloud-files update 支持改名（内容不变）
+    await cloudApi.update({ id: Number(target.id), name: newName });
+    // 更新已打开标签的名称与扩展名
+    const tab = openTabs.value.find(t => t.id === target.id);
     if (tab) {
       tab.name = newName;
       tab.ext = newName.split('.').pop()?.toLowerCase() || '';
     }
-    await loadCloudFiles();
+    showRenameDialog.value = false;
     renameTargetFile = null;
+    await loadCloudFiles();
     // 源文件改名后同步刷新实例列表中展示的源文件名
     loadOverview(true);
   } catch (e: any) {
-    console.error('重命名失败', e);
+    // 失败时保留对话框与输入内容，方便修改后重试
+    alert('重命名失败：' + (e?.message || '未知错误'));
   }
 }
 
@@ -1271,13 +1300,21 @@ function normalizeInstance(raw: any): DistributionInstance | null {
   if (!Number.isFinite(id)) return null;
   const sourceFileId = Number(raw.source_file_id);
   const urls = raw.urls && typeof raw.urls === 'object'
-    ? { manifest: raw.urls.manifest || '', file_template: raw.urls.file_template || '' }
+    ? {
+        kind: typeof raw.urls.kind === 'string' ? raw.urls.kind : '',
+        manifest: typeof raw.urls.manifest === 'string' ? raw.urls.manifest : '',
+        file_template: typeof raw.urls.file_template === 'string' ? raw.urls.file_template : '',
+        source: typeof raw.urls.source === 'string' ? raw.urls.source : '',
+      }
     : undefined;
   return {
     id,
     instance_uid: typeof raw.instance_uid === 'string' ? raw.instance_uid : '',
     name: String(raw.name ?? ''),
     app_key: typeof raw.app_key === 'string' ? raw.app_key : '',
+    format: typeof raw.format === 'string' ? raw.format : '',
+    format_label: typeof raw.format_label === 'string' ? raw.format_label : '',
+    format_mode: typeof raw.format_mode === 'string' ? raw.format_mode : '',
     source_file_id: Number.isFinite(sourceFileId) ? sourceFileId : undefined,
     source_file_name: typeof raw.source_file_name === 'string' ? raw.source_file_name : '',
     source_file_type: typeof raw.source_file_type === 'string' ? raw.source_file_type : '',
@@ -1407,21 +1444,72 @@ async function onInstanceSaved() {
   await Promise.all([loadOverview(true), loadCloudFiles()]);
 }
 
-async function copyInstanceManifest(inst: DistributionInstance) {
-  const url = inst.urls?.manifest || distributionOverview.value?.manifest_url || '';
+function normalizeMode(value: unknown): DistributionMode {
+  return String(value || '') === 'url' ? 'url' : 'static';
+}
+
+/** 实例分发模式：新契约 urls.kind / format_mode，缺失时按 static 降级 */
+function instanceMode(inst: DistributionInstance): DistributionMode {
+  return normalizeMode(inst.urls?.kind || inst.format_mode);
+}
+
+/** 由 format / app_key 推导格式标识（旧 DTO 只有 app_key） */
+function instanceFormat(inst: DistributionInstance): string {
+  if (inst.format) return inst.format;
+  if (inst.app_key === 'cses_config') return 'cses';
+  if (inst.app_key === 'examaware') return 'examaware';
+  return 'classisland';
+}
+
+/** 侧栏徽标使用短格式名（ClassIsland / CSES / ExamAware） */
+function instanceFormatLabel(inst: DistributionInstance): string {
+  switch (instanceFormat(inst)) {
+    case 'classisland': return 'ClassIsland';
+    case 'cses': return 'CSES';
+    case 'examaware': return 'ExamAware';
+    default: return inst.format_label?.trim() || '配置';
+  }
+}
+
+function instanceFormatClass(inst: DistributionInstance): string {
+  const format = instanceFormat(inst);
+  return format === 'classisland' || format === 'cses' || format === 'examaware'
+    ? `fmt-${format}`
+    : 'fmt-unknown';
+}
+
+/** 实例对外地址：静态集控=清单地址，URL 模式=公开配置地址 */
+function instanceAddress(inst: DistributionInstance): string {
+  if (instanceMode(inst) === 'url') return inst.urls?.source || '';
+  return inst.urls?.manifest || distributionOverview.value?.manifest_url || '';
+}
+
+async function copyInstanceAddress(inst: DistributionInstance) {
+  const url = instanceAddress(inst);
   if (!url) {
-    alert('清单地址暂不可用，请刷新实例列表后重试');
+    alert((instanceMode(inst) === 'url' ? '配置地址' : '清单地址') + '暂不可用，请刷新实例列表后重试');
     return;
   }
   try {
     await navigator.clipboard.writeText(url);
-    setCopiedInstanceKey(`manifest-${inst.id}`);
+    setCopiedInstanceKey(`copy-${inst.id}`);
   } catch {
-    alert('复制失败，请手动复制清单地址：' + url);
+    alert('复制失败，请手动复制：' + url);
   }
 }
 
+/** URL 模式：在新窗口打开公开配置地址 */
+function openInstanceConfigUrl(inst: DistributionInstance) {
+  const url = inst.urls?.source || '';
+  if (!url) {
+    alert('配置地址暂不可用，请刷新实例列表后重试');
+    return;
+  }
+  window.open(url, '_blank', 'noopener');
+}
+
 function downloadInstanceManifest(inst: DistributionInstance) {
+  if (instanceMode(inst) !== 'static') return;
   const id = Number(inst.id);
   if (!Number.isFinite(id)) return;
   const link = document.createElement('a');
@@ -1433,7 +1521,8 @@ function downloadInstanceManifest(inst: DistributionInstance) {
 }
 
 async function deleteInstance(inst: DistributionInstance) {
-  if (!confirm(`确定删除配置实例「${inst.name}」吗？\n删除后 ClassIsland 将无法再同步该实例的配置。`)) return;
+  const consumer = instanceMode(inst) === 'url' ? '使用该配置地址的程序' : 'ClassIsland';
+  if (!confirm(`确定删除配置实例「${inst.name}」吗？\n删除后${consumer}将无法再同步该实例的配置。`)) return;
   try {
     await distributionsApi.remove(Number(inst.id));
     if (editingInstance.value?.id === inst.id) {
@@ -1483,7 +1572,7 @@ const currentFileType = computed(() => {
   const typeMap: Record<string, string> = {
     json: 'JSON', xml: 'XML', yaml: 'YAML', yml: 'YAML', txt: '文本',
     js: 'JavaScript', ts: 'TypeScript', html: 'HTML', css: 'CSS',
-    md: 'Markdown', php: 'PHP', csv: 'CSV', sql: 'SQL', py: 'Python'
+    md: 'Markdown', csv: 'CSV', sql: 'SQL', py: 'Python'
   };
   return typeMap[ext] || ext.toUpperCase() || '文本';
 });
@@ -1650,7 +1739,7 @@ const fileProperties = computed(() => {
 const iconMap: Record<string, string> = {
   json: 'ri-file-2-line', xml: 'ri-file-list-3-line', yaml: 'ri-settings-3-line', yml: 'ri-settings-3-line',
   txt: 'ri-file-edit-line', js: 'ri-code-s-slash-line', ts: 'ri-code-s-slash-line',
-  html: 'ri-globe-line', css: 'ri-palette-line', md: 'ri-file-edit-line', php: 'ri-database-2-line',
+  html: 'ri-globe-line', css: 'ri-palette-line', md: 'ri-file-edit-line',
   csv: 'ri-bar-chart-line', sql: 'ri-database-2-line', py: 'ri-code-s-slash-line'
 };
 
@@ -1901,7 +1990,7 @@ function handleImport() {
   if (!confirm('导入将替换当前文本内容，是否继续？')) return;
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.txt,.json,.xml,.html,.css,.js,.ts,.md,.yaml,.yml,.php,.csv,.sql,.py,.ini,.env';
+  input.accept = '.txt,.json,.xml,.html,.css,.js,.ts,.md,.yaml,.yml,.csv,.sql,.py,.ini,.env';
   input.onchange = (e: any) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2312,6 +2401,22 @@ onMounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 分发类型徽标 */
+.instance-format {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  font-size: 9px;
+  line-height: 1.5;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.instance-format.fmt-classisland { color: var(--accent-base); background: var(--accent-bg); }
+.instance-format.fmt-cses { color: var(--status-success); background: rgba(16, 124, 16, 0.1); }
+.instance-format.fmt-examaware { color: #7A5AF8; background: rgba(122, 90, 248, 0.12); }
+.instance-format.fmt-unknown { color: var(--text-tertiary); background: var(--subtle-pressed); }
 .instance-status {
   display: inline-flex;
   align-items: center;

@@ -1,5 +1,5 @@
 /**
- * CSES Cloud - SQLite 数据库封装（NodeJS 版，1:1 复刻 lib/db.php）
+ * CSES Cloud - SQLite 数据库封装（NodeJS 版，移植自旧实现）
  *
  * 使用 Node.js 内置的 node:sqlite（Node >= 22.5），无需原生编译（Node-GYP），
  * Windows / Linux 开箱即用，便于在 Linux 服务器上部署。

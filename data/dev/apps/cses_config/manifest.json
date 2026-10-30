@@ -1,0 +1,17 @@
+{
+  "app_key": "cses_config",
+  "name": "CSES 配置分发",
+  "version": "1.0.0",
+  "description": "把 CSES 课程表配置（YAML / JSON）以公开配置地址提供，供支持 CSES 的程序、客户端或集控系统直接拉取。",
+  "category": "配置分发",
+  "icon": "asset:icon.png",
+  "status": "published",
+  "developer_username": "system",
+  "is_shared": true,
+  "is_official": true,
+  "forked_from": null,
+  "forked_by": null,
+  "created_at": "2026-10-30 19:20:00",
+  "updated_at": "2026-10-30 19:20:00",
+  "ribbon": []
+}

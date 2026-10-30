@@ -50,7 +50,7 @@ function buildAuthorizeUrl(req, state) {
   return `${c.authorize_url}?${params.toString()}`;
 }
 
-/** 授权码换 access_token（表单编码 POST，对齐 function/user.php::handleLogin） */
+/** 授权码换 access_token（表单编码 POST，对齐旧实现 handleLogin） */
 async function exchangeToken(code, redirectUri) {
   const c = oauthConfig();
   const body = new URLSearchParams({
@@ -75,7 +75,7 @@ async function exchangeToken(code, redirectUri) {
   return data.access_token;
 }
 
-/** 拉取联盟用户信息（Bearer，对齐 function/user.php::getUserInfo） */
+/** 拉取联盟用户信息（Bearer，对齐旧实现 getUserInfo） */
 async function fetchUserInfo(accessToken) {
   const c = oauthConfig();
   const resp = await fetch(c.userinfo_url, {

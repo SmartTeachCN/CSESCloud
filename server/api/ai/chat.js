@@ -476,14 +476,14 @@ async function generateReply(content, history, user, model = 'default', ownerKey
   }
 
   // ===== 配置分发 / 静态集控相关问题 =====
-  if (/(分发|distribut|静态集控|static.?control|classisland|清单|manifest)/u.test(text)) {
+  if (/(分发|distribut|静态集控|static.?control|classisland|examaware|清单|manifest|配置地址)/u.test(text)) {
     if (/(分发|distribut)/u.test(text)) {
-      return '分发配置：\n1. 在轻编辑器的云文件列表中找到 CSES 配置文件\n2. 右键选择「分发配置」（仅自己拥有的文件）\n3. 确认 CSES 校验结果，填写实例标识与组织名称\n4. 提交后得到清单地址与数据源模板\n\n分发后的配置会出现在「文件 / 实例」视图的实例列表中，可随时编辑、复制清单或取消分发。';
+      return '分发配置：\n1. 在轻编辑器的云文件列表中找到配置文件\n2. 右键选择「分发配置」（仅自己拥有的文件）\n3. 系统会自动识别格式：\n   - ClassIsland 档案 → 静态集控（清单 + 六类数据源）\n   - CSES 配置 → 公开配置地址（原文件内容）\n   - ExamAware 配置 → 公开配置地址\n4. 填写实例标识与组织名称并提交\n\n分发后的配置会出现在「文件 / 实例」视图的实例列表中，可随时编辑、复制地址或取消分发。';
     }
     if (/(接入|加入|classisland|客户端|使用)/u.test(text)) {
-      return 'ClassIsland 接入静态集控：\n1. 在轻编辑器完成「分发配置」，复制清单地址（manifest 地址）\n2. 在 ClassIsland 中选择「加入管理」，粘贴清单地址\n3. 客户端会按清单拉取六类数据源（ClassPlans / TimeLayouts / Subjects / Policy / Credentials / Settings）\n4. 源文件保存后数据立即更新，无需重新分发';
+      return 'ClassIsland 接入静态集控：\n1. 在轻编辑器中对 ClassIsland 档案完成「分发配置」，复制清单地址（manifest 地址）\n2. 在 ClassIsland 中选择「加入管理」，粘贴清单地址\n3. 客户端会按清单拉取六类数据源（ClassPlans / TimeLayouts / Subjects / Policy / Credentials / Settings）\n4. 源文件保存后数据立即更新，无需重新分发';
     }
-    return '静态集控：\n- 轻编辑器把 CSES 配置文件分发为 ClassIsland 2.0 静态集控数据源\n- 每个配置实例有唯一的实例标识与实例组标识\n- 支持清单地址访问与六类数据源\n- 取消分发后对应地址立即失效';
+    return '配置分发：\n- ClassIsland 档案 → 实例应用 classisland，提供静态集控清单与六类数据源\n- CSES / ExamAware 配置 → 实例应用 cses_config / examaware，提供公开配置地址（原文件内容）\n- 每个配置实例有唯一的实例标识与实例组标识\n- 取消分发后对应地址立即失效';
   }
 
   // ===== 登录相关问题 =====
@@ -513,7 +513,7 @@ async function generateReply(content, history, user, model = 'default', ownerKey
 
   // ===== 平台介绍 =====
   if (/(平台|platform|是什么|介绍|introduce|关于)/u.test(text)) {
-    return 'CSES Cloud 智教云是一个面向学校与教师的云端教学管理平台。\n\n核心功能：\n- 轻编辑器：在线编辑 CSES 云文件、管理配置实例\n- 配置分发 / 静态集控：把配置文件分发为 ClassIsland 2.0 静态集控数据源\n- 数据空间：云端文件与网页托管\n- 开发者中心：云应用、编辑器插件与共享市场\n- 联盟账户：跨学校身份与权限管理';
+    return 'CSES Cloud 智教云是一个面向学校与教师的云端教学管理平台。\n\n核心功能：\n- 轻编辑器：在线编辑云文件、管理配置实例\n- 配置分发：把 ClassIsland 档案分发为静态集控，CSES / ExamAware 配置提供公开配置地址\n- 数据空间：云端文件与网页托管\n- 开发者中心：云应用、编辑器插件与共享市场\n- 联盟账户：跨学校身份与权限管理';
   }
 
   // ===== 默认回复 =====

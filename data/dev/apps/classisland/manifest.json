@@ -1,0 +1,17 @@
+{
+  "app_key": "classisland",
+  "name": "ClassIsland 静态集控",
+  "version": "1.0.0",
+  "description": "把 ClassIsland 档案（Profile）作为实例应用分发：生成 ClassIsland 2.0 静态集控清单与六类数据源（ClassPlans / TimeLayouts / Subjects / Settings / Policy / Credentials），客户端通过清单地址自动同步。",
+  "category": "静态集控",
+  "icon": "asset:icon.png",
+  "status": "published",
+  "developer_username": "system",
+  "is_shared": true,
+  "is_official": true,
+  "forked_from": null,
+  "forked_by": null,
+  "created_at": "2026-10-30 19:20:00",
+  "updated_at": "2026-10-30 19:20:00",
+  "ribbon": []
+}

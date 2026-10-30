@@ -1,8 +1,15 @@
 /**
- * CSES Cloud 静态集控（ClassIsland）数据转换 —— NodeJS 版。
+ * CSES Cloud 静态集控（ClassIsland）辅助工具 —— NodeJS 版。
  *
- * 本文件是 `E:\CsesWebEditor\classisland\convert.php` 的 1:1 移植（纯函数，无 I/O），
- * 由 NodeJS 云应用 `server/apps/cses-static-control` 与公开静态集控接口复用。
+ * 本文件移植自旧项目的 ClassIsland 转换实现（纯函数，无 I/O）：
+ *   - 为 `server/apps/classisland`（ClassIsland 档案实例应用）提供清单生成、
+ *     GUID / 时间 / 星期等通用工具；
+ *   - 保留 CSES → ClassIsland 结构转换函数，供校验、预览或后续扩展复用。
+ *
+ * 注意：V3 起 CSES 配置分发不再经过本文件转换为 ClassIsland 数据源，而是以公开
+ * 配置地址原样提供（见 `server/lib/distribution-formats.js`）。
+ *
+ * 旧说明（CSES → ClassIsland 转换）仍适用于 profile()/document() 等函数：
  *
  * 云端保存的是 CSES 文档（`subjects` / `schedules` / `extraKey`），而 ClassIsland 的集控
  * 数据源要求 ClassIsland 自己的 JSON 结构，因此这里在服务端做一次转换：
@@ -97,8 +104,7 @@ function rawUrlEncode(value) {
 // ────────────────────────────── 标识与校验 ──────────────────────────────
 
 /**
- * 实例组标识校验。规则与 function/tool.php 的 cses_ci_valid_dir_id() 一致：
- * 由 user::getDir() 生成（10 位小写字母/数字），这里放宽到 4~64 位。
+ * 实例组标识校验。规则与旧实现保持一致（由用户目录标识生成，这里放宽到 4~64 位）：
  */
 function validDirId(id) {
   if (typeof id !== 'string') return false;
@@ -106,7 +112,7 @@ function validDirId(id) {
 }
 
 /**
- * 实例标识校验。规则与 function/tool.php 的 cses_ci_valid_instance_id() 一致：
+ * 实例标识校验。规则与旧实现 cses_ci_valid_instance_id() 一致：
  * 允许中文等宽字符，但禁止路径分隔符、`..` 与首字符为 `.` 的隐藏文件。
  */
 function validInstanceId(id) {
@@ -547,9 +553,9 @@ function defaultOrganizationName(dirId) {
  *
  * @param {string} dirId          实例组标识
  * @param {number} version        数据源版本（Unix 秒）
- * @param {string} baseUrl        数据源接口地址（如 https://host/classisland/file.php）
+ * @param {string} baseUrl        数据源接口地址（如 https://host/classisland/file）
  * @param {string|null} organizationName 组织名称，null 时使用 `CSES Cloud (<dirId>)`
- * @param {string} extraQuery     额外查询参数（`/control/file.php` 兼容地址使用 `format=ci`）
+ * @param {string} extraQuery     额外查询参数（预留）
  */
 function manifest(dirId, version, baseUrl, organizationName = null, extraQuery = '') {
   const orgName = organizationName === null || organizationName === undefined

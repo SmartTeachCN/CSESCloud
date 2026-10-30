@@ -9,7 +9,7 @@
           </div>
           <h1 class="hero-title">欢迎回来</h1>
           <p class="hero-subtitle">
-            用轻编辑器管理云文件与配置实例，一键分发静态集控配置，教学资源尽在掌握
+            用轻编辑器管理云文件与配置实例，ClassIsland / CSES / ExamAware 配置一键分发，教学资源尽在掌握
           </p>
           <div class="hero-actions">
             <button class="btn btn-primary" @click="navigate('/console/editor/light')">
@@ -205,7 +205,7 @@ const router = useRouter();
 // 默认导航项
 const defaultNavItems = [
   { path: '/console/editor/light', icon: 'ri-edit-2-line', title: '轻编辑器', desc: '文件与配置实例管理', bgColor: 'rgba(196, 43, 28, 0.1)', color: '#C42B1C' },
-  { path: '/console/editor/light', icon: 'ri-share-forward-line', title: '配置分发', desc: '右键云文件分发静态集控配置', bgColor: 'rgba(0, 103, 192, 0.1)', color: '#0067C0' },
+  { path: '/console/editor/light', icon: 'ri-share-forward-line', title: '配置分发', desc: 'ClassIsland 静态集控 / CSES / ExamAware 地址', bgColor: 'rgba(0, 103, 192, 0.1)', color: '#0067C0' },
   { path: '/console/dataspace', icon: 'ri-folder-3-line', title: '数据空间', desc: '云文件与网页空间管理', bgColor: 'rgba(202, 143, 4, 0.1)', color: '#CA8F04' },
   { path: '/console/ai', icon: 'ri-brain-line', title: 'AI 助理', desc: '智能问答与写作辅助', bgColor: 'rgba(136, 23, 152, 0.1)', color: '#881798' },
   { path: '/console/developer', icon: 'ri-key-2-line', title: '开发者中心', desc: '应用、插件与共享市场', bgColor: 'rgba(0, 103, 192, 0.1)', color: '#0067C0' },

@@ -117,7 +117,7 @@ module.exports = async (ctx) => {
       Response.error('文件保存失败');
     }
 
-    const avatarUrl = '/api/avatar.php?file=' + encodeURIComponent(filename);
+    const avatarUrl = '/api/avatar?file=' + encodeURIComponent(filename);
     if (user.type === 'sub') {
       DB.update('users', { avatar: avatarUrl }, 'id = ?', [user.user_id]);
     }

@@ -1,5 +1,5 @@
 /**
- * CSES Cloud - 服务器配置文件（1:1 复刻 lib/server-config.php）
+ * CSES Cloud - 服务器配置文件（移植自旧实现）
  */
 module.exports = {
   temp_admin: {
@@ -11,7 +11,7 @@ module.exports = {
     default_model: 'DeepSeek',
   },
   // 智教联盟 OAuth2 SSO（非 dev 模式的真实登录，对齐 CsesWebEditor 的实现）
-  // client_secret 不入库（同 CsesWebEditor 的 config.prod.php），部署时在此处或环境变量配置
+  // client_secret 不入库（同 CsesWebEditor 的配置文件），部署时在此处或环境变量配置
   alliance_oauth: {
     enabled: true,
     authorize_url: 'https://auth.smart-teach.cn/login/oauth/authorize',

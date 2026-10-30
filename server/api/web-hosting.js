@@ -1,5 +1,5 @@
 /**
- * CSES Cloud - 班级主页（网页托管）API（NodeJS 版，1:1 复刻 api/web-hosting.php）
+ * CSES Cloud - 班级主页（网页托管）API（NodeJS 版，移植自旧实现）
  */
 const { nowStr } = require('../lib/response');
 

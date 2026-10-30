@@ -1,5 +1,5 @@
 /**
- * CSES Cloud - 初始演示数据（NodeJS 版，1:1 复刻 lib/seed.php）
+ * CSES Cloud - 初始演示数据（NodeJS 版，移植自旧实现）
  * 首次启动数据库时自动执行
  */
 const bcrypt = require('bcryptjs');
@@ -283,9 +283,9 @@ module.exports = function seed() {
 
   const sampleInterfaceSchema = JSON.stringify({
     endpoints: [
-      { method: 'GET', path: '/api/instance-storage.php?action=list', description: '查询实例存储数据', params: ['instance_id', 'collection_key', 'keyword'] },
-      { method: 'POST', path: '/api/instance-storage.php?action=save', description: '保存/更新记录', params: ['instance_id', 'collection_key', 'record_id', 'data'] },
-      { method: 'POST', path: '/api/instance-storage.php?action=delete', description: '删除记录', params: ['instance_id', 'collection_key', 'record_id'] },
+      { method: 'GET', path: '/api/instance-storage?action=list', description: '查询实例存储数据', params: ['instance_id', 'collection_key', 'keyword'] },
+      { method: 'POST', path: '/api/instance-storage?action=save', description: '保存/更新记录', params: ['instance_id', 'collection_key', 'record_id', 'data'] },
+      { method: 'POST', path: '/api/instance-storage?action=delete', description: '删除记录', params: ['instance_id', 'collection_key', 'record_id'] },
     ],
   });
 
@@ -371,7 +371,7 @@ module.exports = function seed() {
     editor_html: '<div class="ai-recommend"><h3>AI 学习路径推荐</h3><div id="paths"></div><button onclick="window.AIRecommend.generate()">+ 生成新路径</button></div>',
     editor_js: '// AI 推荐编辑器 JS\nwindow.AIRecommend = {\n  async load() { const r = await window.CSES.listStorage("learning_paths"); console.log("paths:", r); },\n  async generate() { const sid = prompt("学生ID："); if(!sid) return; await window.CSES.saveStorage("learning_paths", { student_id: sid, subject: "数学", recommendations: [], confidence: 0.85, generated_at: new Date().toISOString() }); this.load(); }\n};\ndocument.addEventListener("DOMContentLoaded", () => window.AIRecommend.load());',
     storage_manifest: typeof sharedAiStorage === 'string' ? JSON.parse(sharedAiStorage) : sharedAiStorage,
-    interface_schema: { endpoints: [{ method: 'GET', path: '/api/instance-storage.php?action=list', description: '查询学习路径' }] },
+    interface_schema: { endpoints: [{ method: 'GET', path: '/api/instance-storage?action=list', description: '查询学习路径' }] },
     created_at: now,
   });
   AppFS.writeUser('dev_ai', 'ai_learning_path_v2', { status: 'published', is_shared: true, updated_at: now });
