@@ -122,15 +122,22 @@ server/api/distributions.js            # 分发管理 API
 server/lib/cloud-share.js              # 云文件分享占位符（标记/重定向/清理）
 ```
 
-### 5.1 云文件分享占位符
+### 5.1 云文件分享
 
+- 分享页作为文件属性窗口的「分享」Tab 展示；权限四档：
+  `view_file`（查看文件）/ `view_instance`（查看实例）/ `edit_file`（编辑文件）/
+  `edit_instance`（编辑实例），旧 `view` / `edit` 自动归一化为前两者；
 - 接受分享后，在接收者云空间 `/.cloud/` 创建同名占位文件，内容为
   `CSES_CLOUD_SHARE:<json>` 内部标记（share_id / owner_file_id / owner_username）；
 - `GET /api/cloud-files?action=list` 将占位文件展示为 `source: 'shared'`、`is_share_placeholder: 1`，
   并附带 `share_id` / `owner_file_id` / `shared_from` / `shared_permission`；
-- `get` 读取重定向到分享者源文件；`update`（保存/导入）在 edit 权限下写回分享者源文件，
-  占位符内容保持不变；`rename` / `delete` 对占位文件返回错误；
-- 删除分享 / 移除用户时清理接收者空间的占位文件；分享过期或被删除后占位文件不再展示。
+- `get` 读取重定向到分享者源文件；`update`（保存/导入）在 `edit_file` / `edit_instance`
+  权限下写回分享者源文件，占位符内容保持不变；`rename` 对占位文件返回错误；
+- 被分享者可 `delete` 自己的占位文件（符号链接）：仅移除链接并撤销自己的接收权限，
+  不删除分享者文件；删除分享 / 移除用户 / 加入黑名单时清理对应占位文件；
+- 文件黑名单按 `resource_type + resource_id` 维护（`share_blacklist` 表）；黑名单用户
+  无法通过预览链接查看/接受，也不会再收到新的分享邀请；
+- 分享详情页支持查看接收者、停止分享、预览链接开关与黑名单增删。
 
 ### 5.2 删除云文件与关联实例
 
@@ -175,8 +182,8 @@ server/lib/cloud-share.js              # 云文件分享占位符（标记/重�
 1. `pnpm --dir frontend build` 通过；
 2. `node server/index.js` 启动，日志出现 `[public-config]`，无 PHP 后缀路由；
 3. `_smoke_static_control.js` 覆盖三种格式分发、源文件更新、改名、云文件目录/重命名/用量、
-   删除文件同时删除实例与清理，全部通过；分享占位符由单独的分享流程验证（占位展示/读取重定向/
-   编辑重定向/不可重命名删除/删除分享后消失）；
+   删除文件同时删除实例与清理，全部通过；分享占位符流程由 `_smoke_share.js` 验证，
+   四档权限/黑名单/接收者删除链接由分享权限专项测试验证；
 4. 旧动态端点（`/api/campus-control`、`/api/rest-control`、`/api/control`、
    `/api/instance-php`、`/api/ws-control`）返回 404；
 5. 全仓库检索不再存在 PHP 后缀链接（历史快照分支除外）。

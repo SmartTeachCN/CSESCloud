@@ -1,7 +1,8 @@
 /**
  * AI 自定义模型管理 API（移植自旧实现）
  *
- *  GET  action=list              列出当前用户的模型
+ *  GET  action=list              列出当前用户的模型（每项附 capabilities）
+ *  GET  action=presets           内置模型预设（DeepSeek 优先，供前端模型选择框使用）
  *  POST action=create            创建模型
  *  POST action=update            更新模型
  *  POST action=delete            删除模型
@@ -19,6 +20,90 @@ function phpEmpty(v) {
   return v === undefined || v === null || v === '' || v === 0 || v === false
     || v === '0' || (Array.isArray(v) && v.length === 0);
 }
+
+// ────────────────────────────── 模型能力 / 推理等级 ──────────────────────────────
+
+/** 推理等级取值（与 spec §5、agent.js reasoningParams 一致） */
+const REASONING_LEVELS = ['auto', 'off', 'low', 'medium', 'high', 'max'];
+
+/** 推理等级中文标签（供预设给前端展示用） */
+const REASONING_LABELS = {
+  auto: '自动', off: '关闭', low: '低', medium: '中', high: '高', max: '最高',
+};
+
+/**
+ * 按 provider / model_id 推断模型能力。
+ * 与 agent.js#reasoningSupported 语义保持一致：能力为 true 时推理等级才真正生效。
+ * @returns {{thinking:boolean, reasoning_effort:boolean}}
+ */
+function inferCapabilities(provider, modelId) {
+  const p = String(provider || '').toLowerCase();
+  const mid = String(modelId || '');
+  const isDeepSeek = p === 'deepseek' || /deepseek/i.test(mid);
+  const isOpenAIReasoning = /^(o1|o3|o4|gpt-5)/i.test(mid);
+  const isAnthropic = p === 'anthropic';
+  const isGoogleThinking = p === 'google' && /gemini-(2\.5|3)/i.test(mid);
+  return {
+    // thinking = 模型具备思维链；reasoning_effort = 支持 reasoning_effort 档位参数
+    thinking: isDeepSeek || isOpenAIReasoning || isAnthropic || isGoogleThinking,
+    reasoning_effort: isDeepSeek || isOpenAIReasoning,
+  };
+}
+
+/** 能力 → 可选的推理等级列表（不支持推理能力时只给 auto） */
+function levelsOf(capabilities) {
+  if (capabilities && (capabilities.thinking || capabilities.reasoning_effort)) {
+    return REASONING_LEVELS.slice();
+  }
+  return ['auto'];
+}
+
+/** 规范化推理等级：合法值返回小写值，空值返回 ''，非法返回 null */
+function normalizeReasoning(value) {
+  const v = String(value === undefined || value === null ? '' : value).trim().toLowerCase();
+  if (v === '') return '';
+  return REASONING_LEVELS.indexOf(v) >= 0 ? v : null;
+}
+
+/** 给模型行补 capabilities（列表接口用） */
+function withCapabilities(model) {
+  const capabilities = inferCapabilities(model.provider, model.model_id || model.name);
+  return Object.assign({}, model, {
+    capabilities: capabilities,
+    levels: levelsOf(capabilities),
+    default_level: model.default_reasoning || model.reasoning || 'auto',
+  });
+}
+
+/**
+ * 内置模型预设（DeepSeek 优先）。
+ * 形如 spec §5：[{ key, label, provider, model_id, levels, default }]
+ */
+function builtinPresets() {
+  const items = [
+    { key: 'deepseek-chat', label: 'DeepSeek Chat', provider: 'deepseek', model_id: 'deepseek-chat' },
+    { key: 'deepseek-reasoner', label: 'DeepSeek Reasoner', provider: 'deepseek', model_id: 'deepseek-reasoner' },
+    { key: 'gpt-4o', label: 'GPT-4o', provider: 'openai', model_id: 'gpt-4o' },
+    { key: 'o3', label: 'OpenAI o3', provider: 'openai', model_id: 'o3' },
+    { key: 'claude-sonnet-4', label: 'Claude Sonnet 4', provider: 'anthropic', model_id: 'claude-sonnet-4-20250514' },
+    { key: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', provider: 'google', model_id: 'gemini-2.5-pro' },
+  ];
+  return items.map((item) => {
+    const capabilities = inferCapabilities(item.provider, item.model_id);
+    const levels = levelsOf(capabilities);
+    return {
+      key: item.key,
+      label: item.label,
+      provider: item.provider,
+      model_id: item.model_id,
+      levels: levels,
+      default: 'auto',
+      capabilities: capabilities,
+      level_labels: levels.map((lv) => ({ value: lv, label: REASONING_LABELS[lv] || lv })),
+    };
+  });
+}
+
 
 module.exports = async (ctx) => {
   const { req, res, DB, Auth, Response, Helpers, query, body, files } = ctx;
@@ -42,16 +127,31 @@ module.exports = async (ctx) => {
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 )`);
 
+  // v4：推理等级持久化字段（schema 由 Lead 维护，这里对旧库兜底补列）
+  DB.addMissingColumn('ai_models', 'reasoning', 'TEXT');
+  DB.addMissingColumn('ai_models', 'default_reasoning', 'TEXT');
+
+  // 内置模型预设（DeepSeek 优先；供前端模型选择框使用）
+  if (method === 'GET' && action === 'presets') {
+    Response.success(builtinPresets());
+  }
+
   // 列出模型
   if (method === 'GET' && action === 'list') {
     // 同时返回用户模型和系统模型
     const models = DB.all("SELECT * FROM ai_models WHERE owner_key = ? OR owner_key = 'system' ORDER BY owner_key DESC, id ASC", [ownerKey]);
-    // 隐藏 API Key 完整值
+    // 安全：不向前端返回明文 API Key（编辑表单 api_key 留空、仅在用户填写时提交），
+    // 只提供 masked 展示值与 has_api_key 状态；系统模型的明文 key 由 admin/manage 另一套接口管理。
     for (const m of models) {
-      if (!Helpers.empty(m.api_key)) {
-        const len = m.api_key.length;
-        m.api_key_masked = len > 8 ? m.api_key.slice(0, 4) + '****' + m.api_key.slice(-4) : '****';
+      const rawApiKey = String(m.api_key === undefined || m.api_key === null ? '' : m.api_key);
+      delete m.api_key;
+      m.has_api_key = rawApiKey !== '';
+      if (rawApiKey !== '') {
+        m.api_key_masked = rawApiKey.length > 8
+          ? rawApiKey.slice(0, 4) + '****' + rawApiKey.slice(-4)
+          : '****';
       }
+      Object.assign(m, withCapabilities(m));
     }
     Response.success(models);
   }
@@ -67,6 +167,15 @@ module.exports = async (ctx) => {
     if (Helpers.empty(name)) Response.error('模型名称不能为空');
     if (Helpers.empty(provider)) Response.error('模型提供商不能为空');
 
+    // v4：推理等级（可选）
+    const reasoning = normalizeReasoning(body.reasoning);
+    const defaultReasoning = body.default_reasoning !== undefined
+      ? normalizeReasoning(body.default_reasoning)
+      : reasoning;
+    if (reasoning === null || defaultReasoning === null) {
+      Response.error('推理等级不合法，可选值：' + REASONING_LEVELS.join(' / '));
+    }
+
     const now = nowStr();
     const id = DB.insert('ai_models', {
       owner_key: ownerKey,
@@ -76,6 +185,8 @@ module.exports = async (ctx) => {
       api_key: apiKey,
       model_id: modelId,
       is_enabled: 1,
+      reasoning: reasoning || null,
+      default_reasoning: defaultReasoning || reasoning || null,
       created_at: now,
       updated_at: now,
     });
@@ -97,6 +208,17 @@ module.exports = async (ctx) => {
     if ('api_key' in body) data.api_key = String(body.api_key).trim();
     if ('model_id' in body) data.model_id = String(body.model_id).trim();
     if ('is_enabled' in body) data.is_enabled = body.is_enabled ? 1 : 0; // PHP (int)bool 语义
+    // v4：推理等级（空串表示清空）
+    if ('reasoning' in body) {
+      const reasoning = normalizeReasoning(body.reasoning);
+      if (reasoning === null) Response.error('推理等级不合法，可选值：' + REASONING_LEVELS.join(' / '));
+      data.reasoning = reasoning || null;
+    }
+    if ('default_reasoning' in body) {
+      const defaultReasoning = normalizeReasoning(body.default_reasoning);
+      if (defaultReasoning === null) Response.error('推理等级不合法，可选值：' + REASONING_LEVELS.join(' / '));
+      data.default_reasoning = defaultReasoning || null;
+    }
     data.updated_at = nowStr();
 
     if (!Helpers.empty(data)) {

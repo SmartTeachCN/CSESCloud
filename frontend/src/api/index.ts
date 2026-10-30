@@ -25,21 +25,55 @@ export const aiApi = {
   listMessages: (sessionId: number) => api.get<any[]>(`/ai/chat?action=messages&session_id=${sessionId}`),
   send: (sessionId: number | null, content: string, scope: string, scopeRef?: number, model?: string) =>
     api.post('/ai/chat?action=send', { session_id: sessionId, content, scope, scope_ref: scopeRef, model }),
+  /** 删除会话 */
   deleteSession: (sessionId: number) => api.post('/ai/chat?action=delete', { session_id: sessionId }),
-  // 流式发送（通过 Vite 代理，避免跨域 cookie 问题）
+  /** 重命名会话（会同时把标题标记为人工编辑） */
+  renameSession: (sessionId: number, title: string) =>
+    api.post<any>('/ai/chat?action=rename', { session_id: sessionId, title }),
+  /** 置顶 / 取消置顶 */
+  pinSession: (sessionId: number, pinned: boolean) =>
+    api.post<any>('/ai/chat?action=pin', { session_id: sessionId, pinned }),
+  /** 让 AI 重新生成会话标题 */
+  generateTitle: (sessionId: number) =>
+    api.post<any>('/ai/chat?action=generate-title', { session_id: sessionId }),
+  /** 清空会话消息 */
+  clearSession: (sessionId: number) =>
+    api.post<any>('/ai/chat?action=clear', { session_id: sessionId }),
+  /** 上传编辑器截图（客户端工具结果），返回 { url } */
+  uploadShot: (dataUrl: string) =>
+    api.post<any>('/ai/chat?action=upload-shot', { data_url: dataUrl }),
+
+  /**
+   * 统一流式请求入口（供 useAiStream 使用）
+   * @param action 'stream' 新回合 | 'resume' 客户端工具/提问续跑
+   * @param signal 用于「停止生成」
+   */
+  aiRequest: (action: 'stream' | 'resume', body: any, signal?: AbortSignal): Promise<Response> =>
+    fetch('/api/ai/chat?action=' + (action === 'resume' ? 'resume' : 'stream'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify(body),
+      signal,
+    }),
+
+  /** 旧的流式入口（保留兼容） */
   sendStream: (sessionId: number | null, content: string, scope: string, scopeRef?: number, model?: string) =>
-    fetch('/api/ai/chat?action=send_stream', {
+    fetch('/api/ai/chat?action=stream', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionId, content, scope, scope_ref: scopeRef, model }),
     }),
+
   // 模型管理
   listModels: () => api.get<any[]>('/ai/models?action=list'),
   createModel: (data: any) => api.post('/ai/models?action=create', data),
   updateModel: (id: number, data: any) => api.post('/ai/models?action=update', { id, ...data }),
   deleteModel: (id: number) => api.post('/ai/models?action=delete', { id }),
   testModel: (id: number) => api.post('/ai/models?action=test', { id }),
+  /** 内置模型预设（DeepSeek 优先，用于模型选择框） */
+  presets: () => api.get<any[]>('/ai/models?action=presets'),
 };
 
 /** 将 FS 返回的 _id 映射为 id，保持前端兼容 */

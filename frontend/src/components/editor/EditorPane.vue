@@ -187,6 +187,39 @@ defineExpose({
   gotoLine: () => {
     monacoEditorRef.value?.gotoLine();
   },
+  // ===== AI 编辑器桥需要的扩展方法（插件编辑器场景下 fallback / 返回不支持） =====
+  /** 读取当前选区文本；无 Monaco / 插件模式下返回空字符串 */
+  getSelection: () => {
+    if (activePlugin.value && !props.showSource) return '';
+    return monacoEditorRef.value?.getSelection() || '';
+  },
+  /** 用文本替换当前选区；插件模式下返回 false */
+  replaceSelection: (text: string) => {
+    if (activePlugin.value && !props.showSource) return false;
+    return monacoEditorRef.value?.replaceSelection(text) || false;
+  },
+  /** 在光标处插入文本；插件模式下返回 false */
+  insertText: (text: string) => {
+    if (activePlugin.value && !props.showSource) return false;
+    return monacoEditorRef.value?.insertText(text) || false;
+  },
+  /** 跳转到指定行（1 起）；插件模式下返回 false */
+  gotoLineAt: (n: number) => {
+    if (activePlugin.value && !props.showSource) return false;
+    return monacoEditorRef.value?.gotoLineAt(n) || false;
+  },
+  getScrollTop: () => {
+    if (activePlugin.value && !props.showSource) return 0;
+    return monacoEditorRef.value?.getScrollTop() || 0;
+  },
+  setScrollTop: (v: number) => {
+    if (activePlugin.value && !props.showSource) return false;
+    return monacoEditorRef.value?.setScrollTop(v) || false;
+  },
+  revealLine: (n: number) => {
+    if (activePlugin.value && !props.showSource) return false;
+    return monacoEditorRef.value?.revealLine(n) || false;
+  },
 });
 
 const activeTab = computed(() => props.tabs.find(t => t.id === props.activeTabId) || null);

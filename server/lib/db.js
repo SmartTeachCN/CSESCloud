@@ -143,6 +143,17 @@ function ensureSchema() {
     db.exec("UPDATE web_hosting_files SET published_content = content, published_size = file_size WHERE published_content IS NULL AND is_directory = 0");
   } catch (_) {}
 
+  // V4：AI 助理 —— 会话置顶/自动标题/最近模型、消息结构化展示块、客户端工具续跑断点
+  addMissingColumn('ai_chat_sessions', 'pinned', 'INTEGER NOT NULL DEFAULT 0');
+  addMissingColumn('ai_chat_sessions', 'pinned_at', 'TEXT');
+  addMissingColumn('ai_chat_sessions', 'title_generated', 'INTEGER NOT NULL DEFAULT 0');
+  addMissingColumn('ai_chat_sessions', 'model', 'TEXT');
+  addMissingColumn('ai_chat_sessions', 'reasoning', 'TEXT');
+  addMissingColumn('ai_chat_messages', 'meta', 'TEXT');
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_ai_pending_runs_owner ON ai_pending_runs(owner_key)'); } catch (_) {}
+  // 过期断点清理（超过 2 小时）
+  try { db.exec("DELETE FROM ai_pending_runs WHERE updated_at < datetime('now', '-2 hours')"); } catch (_) {}
+
   // V3：动态集控（EA2 设备/命令、校园集控单元、集控侧套餐）已整体移除。
   // 旧版本升级时清理遗留表，避免继续保留无消费方的动态集控数据（新库不会创建这些表）。
   for (const obsolete of [

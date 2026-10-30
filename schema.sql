@@ -302,6 +302,12 @@ CREATE TABLE IF NOT EXISTS ai_chat_sessions (
     scope TEXT NOT NULL DEFAULT 'global',
     scope_ref INTEGER,
     title TEXT,
+    -- V4：会话置顶、自动标题标记、最近使用的模型/推理等级
+    pinned INTEGER NOT NULL DEFAULT 0,
+    pinned_at TEXT,
+    title_generated INTEGER NOT NULL DEFAULT 0,
+    model TEXT,
+    reasoning TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -313,10 +319,23 @@ CREATE TABLE IF NOT EXISTS ai_chat_messages (
     session_id INTEGER NOT NULL,
     role TEXT NOT NULL,
     content TEXT NOT NULL,
+    -- V4：结构化展示块（思考过程 / 工具调用 / 提问卡）JSON
+    meta TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (session_id) REFERENCES ai_chat_sessions(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_ai_messages_session ON ai_chat_messages(session_id);
+
+-- ===== AI 助理待续跑（客户端工具 / 用户提问的 ReAct 断点） =====
+CREATE TABLE IF NOT EXISTS ai_pending_runs (
+    id TEXT PRIMARY KEY,
+    owner_key TEXT NOT NULL,
+    session_id INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_pending_runs_owner ON ai_pending_runs(owner_key);
 
 -- ===== 编辑器插件注册表 =====
 -- 开发者注册文件后缀与自定义编辑器，轻编辑器根据后缀自动调用对应插件
@@ -426,6 +445,20 @@ CREATE TABLE IF NOT EXISTS share_preview_links (
 );
 CREATE INDEX IF NOT EXISTS idx_share_preview_links_token ON share_preview_links(token);
 CREATE INDEX IF NOT EXISTS idx_share_preview_links_share ON share_preview_links(share_id);
+
+-- ===== 文件分享黑名单（按文件维度，阻止被拉黑用户通过链接/直邀重新获得权限） =====
+CREATE TABLE IF NOT EXISTS share_blacklist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_type TEXT NOT NULL DEFAULT 'cloud_file',
+    resource_id INTEGER NOT NULL,
+    owner_key TEXT NOT NULL,
+    target_username TEXT NOT NULL,
+    target_user_id INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    UNIQUE (resource_type, resource_id, target_username)
+);
+CREATE INDEX IF NOT EXISTS idx_share_blacklist_resource ON share_blacklist(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_share_blacklist_username ON share_blacklist(target_username);
 
 -- 保留旧 share_links 表（兼容过渡）
 CREATE TABLE IF NOT EXISTS share_links (

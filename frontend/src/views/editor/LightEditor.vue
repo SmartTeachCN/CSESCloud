@@ -117,13 +117,20 @@
                   <span class="cloud-file-icon"><Icon :icon="item.is_directory ? 'ri-folder-3-line' : 'ri-file-2-line'" :size="16" /></span>
                   <div class="cloud-delete-body">
                     <div class="cloud-delete-line">
-                      <Icon icon="ri-error-warning-line" :size="12" />
+                      <Icon :icon="deleteConfirmMode === 'unlink' ? 'ri-link-unlink' : 'ri-error-warning-line'" :size="12" />
                       <span class="cloud-delete-title">{{ deleteConfirmTitle(item) }}</span>
                     </div>
-                    <div v-if="item.is_directory" class="cloud-delete-hint">
+                    <div v-if="deleteConfirmMode === 'unlink'" class="cloud-delete-hint">
+                      仅从你的云空间移除该链接，不会删除分享者的文件
+                    </div>
+                    <div v-else-if="item.is_directory" class="cloud-delete-hint">
                       目录内全部文件{{ deleteInstanceCount(item) > 0 ? '及关联配置实例' : '' }}将一并删除
                     </div>
-                    <label v-if="deleteInstanceCount(item) > 0" class="cloud-delete-instances" @click.stop>
+                    <label
+                      v-if="deleteConfirmMode === 'delete' && deleteInstanceCount(item) > 0"
+                      class="cloud-delete-instances"
+                      @click.stop
+                    >
                       <input type="checkbox" v-model="deleteConfirmDeleteInstances" :disabled="deletingId === item.id" />
                       <span>同时删除关联配置实例（{{ deleteInstanceCount(item) }}）</span>
                     </label>
@@ -136,7 +143,8 @@
                         @click.stop="confirmDeleteItem(item)"
                       >
                         <Icon v-if="deletingId === item.id" icon="ri-loader-4-line" :size="11" class="spin" />
-                        <span>{{ deletingId === item.id ? '删除中...' : '删除' }}</span>
+                        <span v-else>{{ deleteConfirmMode === 'unlink' ? '移除' : '删除' }}</span>
+                        <span v-if="deletingId === item.id">{{ deleteConfirmMode === 'unlink' ? '移除中...' : '删除中...' }}</span>
                       </button>
                       <button
                         type="button"
@@ -186,11 +194,12 @@
                       <span class="share-owner">{{ item.shared_from ? '来自 ' + item.shared_from : '来自分享' }}</span>
                     </span>
                     <span
-                      v-if="item.source === 'shared' && item.shared_permission === 'view'"
-                      class="cloud-file-lock-badge"
-                      title="只读分享"
+                      v-if="item.source === 'shared'"
+                      class="cloud-file-perm-badge"
+                      :class="{ readonly: isShareReadOnly(item.shared_permission) }"
+                      :title="sharePermissionText(item.shared_permission)"
                     >
-                      <Icon icon="ri-lock-line" :size="9" />
+                      <Icon :icon="isShareReadOnly(item.shared_permission) ? 'ri-lock-line' : 'ri-edit-line'" :size="9" />
                     </span>
                     <span class="cloud-file-size">{{ item.size }}</span>
                   </template>
@@ -315,10 +324,11 @@
           <span
             v-if="currentFile?.source === 'shared'"
             class="file-share-badge"
-            :title="currentFile.readOnly ? '来自分享（只读，无法保存）' : '来自分享（可编辑，保存会写回分享者文件）'"
+            :class="{ readonly: currentFile.readOnly }"
+            :title="`来自分享（${sharePermissionText(currentFile.sharedPermission)} · ${sharePermissionDetail(currentFile.sharedPermission)}）`"
           >
-            <Icon :icon="currentFile.readOnly ? 'ri-lock-line' : 'ri-share-forward-line'" :size="11" />
-            <span>分享{{ currentFile.readOnly ? ' · 只读' : '' }}</span>
+            <Icon :icon="currentFile.readOnly ? 'ri-lock-line' : 'ri-edit-line'" :size="11" />
+            <span>分享 · {{ currentFile.readOnly ? '只读' : '可编辑' }}</span>
           </span>
         </div>
       </header>
@@ -393,7 +403,7 @@
         :right-actions="diffTabs.length > 0 && !currentFile
           ? [{ id: 'export', label: '导出', icon: 'ri-upload-2-line', command: 'export', enabled: true }]
           : [
-          { id: 'share', label: '分享', icon: 'ri-share-forward-line', command: 'share', enabled: !!currentFile },
+          { id: 'share', label: '分享', icon: 'ri-share-forward-line', command: 'share', enabled: !!currentFile && currentFile?.source === 'cloud' },
           { id: 'history', label: '操作记录', icon: 'ri-history-line', command: 'history', enabled: !!currentFile },
           { id: 'version', label: '版本历史', icon: 'ri-git-branch-line', command: 'version', enabled: !!currentFile && currentFile?.source === 'cloud' },
           { id: 'import', label: '导入', icon: 'ri-download-line', command: 'import', enabled: !!currentFile },
@@ -464,7 +474,7 @@
                 <button class="ctx-item" @click="openPanel('find'); contextMenu.visible = false">
                   <Icon icon="ri-search-line" :size="14" /> 查找替换
                 </button>
-                <button class="ctx-item" @click="handleShare(); contextMenu.visible = false" v-if="currentFile">
+                <button class="ctx-item" @click="handleShare(); contextMenu.visible = false" v-if="currentFile && currentFile.source === 'cloud'">
                   <Icon icon="ri-share-forward-line" :size="14" /> 分享
                 </button>
               </div>
@@ -518,7 +528,7 @@
                   </button>
                   <button
                     class="ctx-item"
-                    v-if="cloudCtxMenu.file.source !== 'shared'"
+                    v-if="canShareCloudFile(cloudCtxMenu.file)"
                     @click="handleShareCloudFile(cloudCtxMenu.file!); closeCloudCtxMenu()"
                   >
                     <Icon icon="ri-share-forward-line" :size="14" /> 分享
@@ -527,6 +537,13 @@
                     <Icon icon="ri-download-line" :size="14" /> 下载
                   </button>
                   <div class="ctx-divider"></div>
+                  <button
+                    v-if="cloudCtxMenu.file.is_share_placeholder === 1"
+                    class="ctx-item danger"
+                    @click="requestRemoveShareLink(cloudCtxMenu.file!); closeCloudCtxMenu()"
+                  >
+                    <Icon icon="ri-link-unlink" :size="14" /> 移除分享链接
+                  </button>
                   <button
                     class="ctx-item"
                     v-if="cloudCtxMenu.file.source !== 'shared'"
@@ -604,6 +621,8 @@
                 scope="global"
                 :editor-context="aiEditorContext"
                 @apply-edit="onAiApplyEdit"
+                @refresh-cloud-files="onAiRefreshCloudFiles"
+                @refresh-instances="onAiRefreshInstances"
               />
               <div v-if="activePanel === 'outline'" class="outline-panel">
                 <div class="panel-placeholder" v-if="!currentFile">
@@ -726,29 +745,19 @@
     </div>
   </Teleport>
 
-  <!-- 分享对话框 -->
-  <ShareDialog
-    :visible="showShareDialog"
-    resource-type="cloud_file"
-    :resource-id="currentFile?.source === 'cloud' ? currentFile.id : ''"
-    :resource-name="currentFile?.name || ''"
-    resource-icon="ri-file-2-line"
-    resource-label="文件"
-    @close="onShareDialogClose"
-    @created="loadCloudFiles"
-    @updated="loadCloudFiles"
-  />
-
-  <!-- 文件属性对话框（属性 / 分发配置 Tab） -->
+  <!-- 文件属性对话框（属性 / 分发配置 / 分享 Tab） -->
   <FilePropertiesDialog
     :visible="showPropertiesDialog"
     :info="propertiesInfo"
     :initial-tab="propertiesTab"
     :distribution-file="propertiesDistributionFile"
+    :share-file="shareFile"
+    :can-share="!!shareFile"
     :overview="distributionOverview"
     :can-distribute="!!propertiesDistributionFile"
-    @close="showPropertiesDialog = false"
+    @close="onPropertiesDialogClose"
     @saved="onDistributionSaved"
+    @share-updated="onShareUpdated"
   />
 
   <!-- 配置实例编辑对话框（实例视图 → 编辑） -->
@@ -770,16 +779,17 @@ import EditorPane from '../../components/editor/EditorPane.vue';
 import type { TabInfo } from '../../components/editor/EditorPane.vue';
 import RibbonToolbar from '../../components/editor/RibbonToolbar.vue';
 import AiAssistantPanel from '../../components/editor/panels/AiAssistantPanel.vue';
-import ShareDialog from '../../components/editor/panels/ShareDialog.vue';
 import OperationHistoryPanel from '../../components/editor/panels/OperationHistoryPanel.vue';
 import VersionHistoryPanel from '../../components/editor/panels/VersionHistoryPanel.vue';
 import WorkspaceConfig from '../../components/editor/panels/WorkspaceConfig.vue';
 import StatusBarExtensions from '../../components/editor/panels/StatusBarExtensions.vue';
 import FilePropertiesDialog from '../../components/editor/FilePropertiesDialog.vue';
 import InstanceManagerDialog from '../../components/editor/InstanceManagerDialog.vue';
-import { pluginApi, distributionsApi } from '../../api';
+import { pluginApi, distributionsApi, aiApi } from '../../api';
 import { useAuth } from '../../composables/useAuth';
 import { useTabContextMenu } from '../../composables/useTabContextMenu';
+import { provideAiEditorBridge, createAiEditorBridgeImpl } from '../../composables/useAiEditorBridge';
+import { captureElementToDataUrl } from '../../utils/dom-screenshot';
 import { api } from '../../api/client';
 
 const router = useRouter();
@@ -814,6 +824,8 @@ interface EditorFile {
   createdAt?: string;
   updatedAt?: string;
   isShared?: number;
+  /** 分享文件的接收权限（view_file/view_instance/edit_file/edit_instance，兼容旧 view/edit） */
+  sharedPermission?: string;
 }
 
 interface CloudFile {
@@ -924,9 +936,18 @@ function onAiApplyEdit(payload: { content: string; replaceAll?: boolean }) {
   if (autoSave.value) saveCurrentFile();
 }
 
+/** AI 工具写操作后：刷新云文件列表（文件增删改） */
+function onAiRefreshCloudFiles() {
+  void loadCloudFiles();
+}
+
+/** AI 工具写操作后：重新拉 distributions overview（实例增删改） */
+function onAiRefreshInstances() {
+  void loadOverview(true);
+}
+
 // ===== 右侧面板 =====
 const rightPanelCollapsed = ref(false);
-const showShareDialog = ref(false);
 
 // 当 diff 标签激活时强制折叠右侧面板
 const effectiveRightPanelCollapsed = computed(() => {
@@ -1136,11 +1157,51 @@ function dirChildCount(dir: CloudFile): number {
   return cloudFiles.value.filter((f) => (f.parent_dir || '') === rel).length;
 }
 
+/** 分享权限四档（兼容旧 view/edit，后端也会归一化） */
+type SharePermission = 'view_file' | 'view_instance' | 'edit_file' | 'edit_instance';
+
+function normalizeSharePermission(permission?: string): SharePermission {
+  switch (permission) {
+    case 'view_instance': return 'view_instance';
+    case 'edit_file': return 'edit_file';
+    case 'edit_instance': return 'edit_instance';
+    case 'edit': return 'edit_file';
+    case 'view':
+    case 'view_file':
+    case '':
+    case undefined:
+      return 'view_file';
+    default:
+      return String(permission).startsWith('edit') ? 'edit_file' : 'view_file';
+  }
+}
+
+/** 只读判定：edit_*（或旧 edit）之外都按只读处理 */
+function isShareReadOnly(permission?: string): boolean {
+  const value = String(permission || '');
+  if (value === 'edit') return false;
+  return !value.startsWith('edit_');
+}
+
+/** 「只读分享 / 可编辑分享」标签文案 */
+function sharePermissionText(permission?: string): string {
+  return isShareReadOnly(permission) ? '只读分享' : '可编辑分享';
+}
+
+/** 四档权限的中文细分类别 */
+function sharePermissionDetail(permission?: string): string {
+  switch (normalizeSharePermission(permission)) {
+    case 'view_file': return '查看文件';
+    case 'view_instance': return '查看实例';
+    case 'edit_file': return '编辑文件';
+    case 'edit_instance': return '编辑实例';
+  }
+}
+
 /** 分享占位文件的悬停提示（来自谁 / 只读或可编辑） */
 function shareTooltip(item: CloudFile): string {
   const from = item.shared_from || '他人';
-  const permission = item.shared_permission === 'edit' ? '可编辑' : '只读';
-  return `来自 ${from} 的分享（${permission}）`;
+  return `来自 ${from} 的分享（${sharePermissionText(item.shared_permission)} · ${sharePermissionDetail(item.shared_permission)}）`;
 }
 
 function navigateDir(dir: string) {
@@ -1356,6 +1417,8 @@ function onRenameBlur(item: CloudFile) {
 }
 
 // ===== 行内删除确认 =====
+type DeleteConfirmMode = 'delete' | 'unlink';
+const deleteConfirmMode = ref<DeleteConfirmMode>('delete');
 const deleteConfirmId = ref<string | null>(null);
 const deleteConfirmDeleteInstances = ref(true);
 const deleteConfirmError = ref('');
@@ -1379,6 +1442,7 @@ function deleteInstanceCount(item: CloudFile): number {
 }
 
 function deleteConfirmTitle(item: CloudFile): string {
+  if (deleteConfirmMode.value === 'unlink') return `移除分享链接「${item.name}」？`;
   if (item.is_directory) return `删除文件夹「${item.name}」及全部内容？`;
   return `确认删除「${item.name}」？`;
 }
@@ -1387,6 +1451,7 @@ function cancelDeleteConfirm() {
   if (deletingId.value) return;
   deleteConfirmId.value = null;
   deleteConfirmError.value = '';
+  deleteConfirmMode.value = 'delete';
 }
 
 /** 右键删除：进入行内确认（不再使用 window.confirm） */
@@ -1395,17 +1460,30 @@ function requestDeleteItem(item: CloudFile) {
   cancelDraft();
   cancelInlineRename();
   closeCloudCtxMenu();
+  deleteConfirmMode.value = 'delete';
   deleteConfirmId.value = item.id;
   deleteConfirmDeleteInstances.value = true;
   deleteConfirmError.value = '';
 }
 
-/** 行内确认后执行删除；可选同时删除关联配置实例 */
+/** 被分享者右键「移除分享链接」：行内确认，仅解除占位链接，不影响分享者文件 */
+function requestRemoveShareLink(item: CloudFile) {
+  if (item.source !== 'shared' || item.is_share_placeholder !== 1 || deletingId.value) return;
+  cancelDraft();
+  cancelInlineRename();
+  closeCloudCtxMenu();
+  deleteConfirmMode.value = 'unlink';
+  deleteConfirmId.value = item.id;
+  deleteConfirmError.value = '';
+}
+
+/** 行内确认后执行删除；可选同时删除关联配置实例（分享占位链接仅解除链接） */
 async function confirmDeleteItem(item: CloudFile) {
   if (deletingId.value || deleteConfirmId.value !== item.id) return;
+  const isUnlink = deleteConfirmMode.value === 'unlink';
   const isDir = item.is_directory;
   const instanceCount = deleteInstanceCount(item);
-  const deleteInstances = instanceCount > 0 && deleteConfirmDeleteInstances.value;
+  const deleteInstances = !isUnlink && instanceCount > 0 && deleteConfirmDeleteInstances.value;
   deletingId.value = item.id;
   deleteConfirmError.value = '';
   try {
@@ -1413,24 +1491,25 @@ async function confirmDeleteItem(item: CloudFile) {
       Number(item.id),
       deleteInstances ? { delete_instances: true } : undefined
     );
-    if (isDir) {
+    if (currentFile.value?.id === item.id) {
+      closeTab(currentFile.value);
+    } else if (isDir) {
       // 关闭被删除目录下的已打开标签
       const dirPrefix = (item.file_path || '').replace(/\/+$/, '') + '/';
       if (dirPrefix !== '/') {
         const toClose = openTabs.value.filter((t) => t.path && t.path.startsWith(dirPrefix));
         toClose.forEach((t) => closeTab(t));
       }
-    } else if (currentFile.value?.id === item.id) {
-      closeTab(currentFile.value);
     }
     deleteConfirmId.value = null;
     deleteConfirmError.value = '';
+    deleteConfirmMode.value = 'delete';
     // 刷新列表（含用量）与实例总览
     await loadCloudFiles();
-    loadOverview(true);
+    if (!isUnlink) loadOverview(true);
   } catch (e: any) {
     // 失败保留确认条并显示错误，方便重试
-    deleteConfirmError.value = e?.message || '删除失败，请稍后重试';
+    deleteConfirmError.value = e?.message || (isUnlink ? '移除分享链接失败，请稍后重试' : '删除失败，请稍后重试');
   } finally {
     deletingId.value = null;
   }
@@ -1520,6 +1599,7 @@ async function loadCloudFiles() {
     if (deleteConfirmId.value && !cloudFiles.value.some((f) => f.id === deleteConfirmId.value)) {
       deleteConfirmId.value = null;
       deleteConfirmError.value = '';
+      deleteConfirmMode.value = 'delete';
     }
     void loadUsage();
   } catch {
@@ -1707,11 +1787,9 @@ function downloadCloudFile(file: CloudFile) {
   }
 }
 
+/** 云文件右键「分享」：打开属性窗口的分享 Tab（不再弹独立分享框） */
 function handleShareCloudFile(file: CloudFile) {
-  // Open the file first, then share
-  openCloudFile(file).then(() => {
-    showShareDialog.value = true;
-  });
+  openFileShare(file);
 }
 
 // ===== 配置实例（分发配置） =====
@@ -1720,11 +1798,13 @@ const distributionOverview = ref<DistributionOverview | null>(null);
 const distributionOverviewLoaded = ref(false);
 const overviewLoading = ref(false);
 const overviewError = ref('');
-// 文件属性 / 分发配置对话框
+// 文件属性 / 分发配置 / 分享对话框
 const showPropertiesDialog = ref(false);
-const propertiesTab = ref<'props' | 'distribution'>('props');
+const propertiesTab = ref<'props' | 'distribution' | 'share'>('props');
 const propertiesInfo = ref<FilePropertyInfo | null>(null);
 const propertiesDistributionFile = ref<CloudFile | null>(null);
+/** 属性窗口「分享」Tab 的资源（仅云端 own 非目录文件） */
+const shareFile = ref<CloudFile | null>(null);
 const showInstanceDialog = ref(false);
 const editingInstance = ref<DistributionInstance | null>(null);
 const copiedInstanceKey = ref('');
@@ -1881,12 +1961,17 @@ function isDistributable(file: CloudFile | null): boolean {
   return !!file && file.source === 'owned' && !file.is_directory;
 }
 
+/** 仅云端自己拥有的非目录文件可分享（分享占位/目录/本地文件不显示分享入口） */
+function canShareCloudFile(file: CloudFile | null): boolean {
+  return !!file && file.source === 'owned' && !file.is_directory;
+}
+
 function buildCloudFileInfo(file: CloudFile): FilePropertyInfo {
   const sourceLabel = file.source === 'shared'
     ? `来自分享${file.shared_from ? '（' + file.shared_from + '）' : ''}`
     : '云端文件';
   const sharedLabel = file.source === 'shared'
-    ? '来自分享'
+    ? `来自分享（${sharePermissionText(file.shared_permission)}）`
     : (file.is_shared ? '已分享' : '未分享');
   return {
     name: file.name,
@@ -1916,7 +2001,9 @@ function buildCurrentFileInfo(): FilePropertyInfo | null {
     path: file.path || file.name,
     createdAt: file.createdAt || '—',
     updatedAt: file.updatedAt || file.modified || '—',
-    sharedLabel: file.source === 'shared' ? '来自分享' : '未分享',
+    sharedLabel: file.source === 'shared'
+      ? `来自分享（${sharePermissionText(file.sharedPermission)}）`
+      : '未分享',
     distributedCount: 0,
   };
 }
@@ -1928,6 +2015,30 @@ function distributionFileForCurrent(): CloudFile | null {
   return cloud && isDistributable(cloud) ? cloud : null;
 }
 
+/** 当前文件对应的可分享云文件（仅云端 own） */
+function shareFileForCurrent(): CloudFile | null {
+  const file = currentFile.value;
+  if (!file || file.source !== 'cloud') return null;
+  const cloud = cloudFileById(file.id);
+  return cloud && canShareCloudFile(cloud) ? cloud : null;
+}
+
+/** 右键/Ribbon「分享」：打开属性窗口并定位到「分享」Tab（不再弹独立 ShareDialog） */
+function openFileShare(file: CloudFile) {
+  if (!canShareCloudFile(file)) {
+    alert('仅自己拥有的云端文件可以分享');
+    return;
+  }
+  propertiesInfo.value = buildCloudFileInfo(file);
+  propertiesDistributionFile.value = isDistributable(file) ? file : null;
+  shareFile.value = file;
+  propertiesTab.value = 'share';
+  showPropertiesDialog.value = true;
+  if (propertiesDistributionFile.value) {
+    void loadOverview(true);
+  }
+}
+
 /** 打开属性窗口（默认属性 Tab） */
 function openFileProperties(file?: CloudFile) {
   const info = file ? buildCloudFileInfo(file) : buildCurrentFileInfo();
@@ -1936,10 +2047,13 @@ function openFileProperties(file?: CloudFile) {
     return;
   }
   propertiesInfo.value = info;
-  // 分发配置 Tab 只对“正在查看的这个 own 文件”（或当前 own 文件）开放
+  // 分发配置 / 分享 Tab 只对“正在查看的这个 own 文件”（或当前 own 文件）开放
   propertiesDistributionFile.value = file
     ? (isDistributable(file) ? file : null)
     : distributionFileForCurrent();
+  shareFile.value = file
+    ? (canShareCloudFile(file) ? file : null)
+    : shareFileForCurrent();
   propertiesTab.value = 'props';
   showPropertiesDialog.value = true;
   // 有分发能力时不阻塞地刷新实例总览（供分发 Tab 的同名判断/组信息）
@@ -1956,6 +2070,7 @@ async function openFileDistribution(file: CloudFile) {
   }
   propertiesInfo.value = buildCloudFileInfo(file);
   propertiesDistributionFile.value = file;
+  shareFile.value = canShareCloudFile(file) ? file : null;
   propertiesTab.value = 'distribution';
   showPropertiesDialog.value = true;
   const hadOverview = !!distributionOverview.value;
@@ -1980,6 +2095,25 @@ async function onDistributionSaved() {
     const cloud = cloudFileById(propertiesDistributionFile.value.id);
     if (cloud) propertiesInfo.value = buildCloudFileInfo(cloud);
   }
+}
+
+/** 属性窗口内分享创建/更新后：刷新文件列表与属性页分享状态 */
+async function onShareUpdated() {
+  await loadCloudFiles();
+  if (shareFile.value) {
+    const cloud = cloudFileById(shareFile.value.id);
+    if (cloud) {
+      shareFile.value = cloud;
+      propertiesInfo.value = buildCloudFileInfo(cloud);
+    }
+  }
+}
+
+/** 关闭属性窗口：清理分享资源并静默刷新文件列表 */
+function onPropertiesDialogClose() {
+  showPropertiesDialog.value = false;
+  shareFile.value = null;
+  void loadCloudFiles();
 }
 
 async function openInstanceSourceFile(inst: DistributionInstance) {
@@ -2418,7 +2552,11 @@ async function openCloudFile(cloudFile: CloudFile) {
     const data = await cloudApi.get(Number(cloudFile.id));
     const ext = cloudFile.name.split('.').pop()?.toLowerCase() || '';
     const isFromShare = cloudFile.source === 'shared';
-    const isReadOnly = isFromShare && (data.permission || cloudFile.shared_permission) === 'view';
+    // 四档权限：edit_*（兼容旧 edit）可编辑，其余（view_* / 旧 view）只读
+    const sharedPermission = isFromShare
+      ? String(data.permission || cloudFile.shared_permission || 'view')
+      : '';
+    const isReadOnly = isFromShare && isShareReadOnly(sharedPermission);
     const editorFile: EditorFile = {
       id: cloudFile.id,
       name: cloudFile.name,
@@ -2435,6 +2573,7 @@ async function openCloudFile(cloudFile: CloudFile) {
       createdAt: cloudFile.created_at || '',
       updatedAt: data.updated_at || cloudFile.updated_at || '',
       isShared: cloudFile.is_shared || 0,
+      sharedPermission,
     };
     if (isReadOnly) {
       alert('此文件为只读分享，无法编辑。');
@@ -2697,10 +2836,6 @@ function onAutoSaveChange(v: boolean) {
   autoSave.value = v;
 }
 
-function onShareDialogClose() {
-  showShareDialog.value = false;
-}
-
 async function handleShare() {
   if (!currentFile.value) return;
   if (currentFile.value.source === 'shared') {
@@ -2721,14 +2856,24 @@ async function handleShare() {
       if (uploaded) {
         currentFile.value.source = 'cloud';
         currentFile.value.id = uploaded.id;
-        showShareDialog.value = true;
+        currentFile.value.owner = uploaded.owner;
+        currentFile.value.path = uploaded.file_path;
+        currentFile.value.createdAt = uploaded.created_at;
+        currentFile.value.updatedAt = uploaded.updated_at;
+        // 上传后直接打开属性窗口的分享 Tab
+        openFileShare(uploaded);
       }
     } catch (e: any) {
       alert('上传失败: ' + (e.message || '未知错误'));
     }
     return;
   }
-  showShareDialog.value = true;
+  const cloud = cloudFileById(currentFile.value.id);
+  if (!cloud) {
+    alert('文件信息尚未加载，请刷新云文件列表后重试');
+    return;
+  }
+  openFileShare(cloud);
 }
 
 function doFind() {
@@ -2773,6 +2918,449 @@ function startDrag(e: MouseEvent) {
 function goLogin() {
   router.push('/login');
 }
+
+// ===== AI 编辑器桥（AI 助理的客户端工具在这里落地，供 useAiEditorBridge 注入） =====
+type AiToolResult = { ok: boolean; result?: string; image?: string };
+
+/** 供 AI 读取的 Ribbon 工具组：插件自定义 Ribbon 优先，否则用内置默认分组；均附上视图/文件操作组 */
+const aiRibbonGroups = computed<Array<{ label: string; tools: Array<{ id?: string; label: string; command?: string }> }>>(() => {
+  const pluginGroups = (dynamicPluginRibbon.value || []) as Array<{ label?: string; tools?: any[] }>;
+  const groups: Array<{ label: string; tools: Array<{ id?: string; label: string; command?: string }> }> =
+    pluginGroups.length > 0
+      ? pluginGroups.map((g) => ({ label: String(g?.label || '插件'), tools: Array.isArray(g?.tools) ? g.tools : [] }))
+      : [
+          {
+            label: '编辑',
+            tools: [
+              { id: 'find', label: '查找', command: 'find' },
+              { id: 'replace', label: '替换', command: 'replace' },
+              { id: 'goto', label: '跳转行', command: 'goto' },
+              { id: 'fontsize', label: '字号', command: 'fontsize' },
+              { id: 'refresh', label: '刷新', command: 'refresh' },
+            ],
+          },
+          {
+            label: '工具',
+            tools: [
+              { id: 'settings', label: '设置', command: 'settings' },
+              { id: 'shortcuts', label: '快捷键', command: 'shortcuts' },
+            ],
+          },
+        ];
+  groups.push({
+    label: '视图',
+    tools: [
+      { id: 'fullscreen', label: '全屏', command: 'fullscreen' },
+      { id: 'immersive', label: '沉浸模式', command: 'immersive' },
+    ],
+  });
+  groups.push({
+    label: '文件操作',
+    tools: [
+      { id: 'share', label: '分享', command: 'share' },
+      { id: 'history', label: '操作记录', command: 'history' },
+      { id: 'version', label: '版本历史', command: 'version' },
+      { id: 'import', label: '导入', command: 'import' },
+      { id: 'export', label: '导出', command: 'export' },
+    ],
+  });
+  return groups;
+});
+
+/** 从参数里取第一个非空字符串字段 */
+function aiArgString(args: any, keys: string[]): string {
+  for (const key of keys) {
+    const value = args?.[key];
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return '';
+}
+
+/** 取原始字符串字段（不 trim，用于要插入/替换的文本） */
+function aiArgRaw(args: any, keys: string[]): string {
+  for (const key of keys) {
+    const value = args?.[key];
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return '';
+}
+
+/** 归一化 operate_editor 参数（兼容服务端传入 JSON 字符串的情况） */
+function normalizeToolArgs(raw: any): any {
+  if (typeof raw === 'string' && raw.trim().startsWith('{')) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  return raw && typeof raw === 'object' ? raw : {};
+}
+
+/** 读取编辑器状态的快照（get_editor_state） */
+async function aiGetEditorState(): Promise<AiToolResult> {
+  const cur = currentFile.value;
+  const selection = editorPaneRef.value?.getSelection?.() || '';
+  const state = {
+    editor: 'light-editor',
+    open_tabs: openTabs.value.map((t) => ({
+      name: t.name,
+      ext: t.ext || '',
+      dirty: !!t.dirty,
+      source: t.source,
+      active: cur?.id === t.id,
+    })),
+    current_file: cur
+      ? {
+          id: cur.id,
+          name: cur.name,
+          ext: cur.ext || '',
+          dirty: !!cur.dirty,
+          source: cur.source,
+          read_only: !!cur.readOnly,
+          path: cur.path || '',
+        }
+      : null,
+    language: cur?.ext || '',
+    selection_text: selection.slice(0, 2000),
+    selection_length: selection.length,
+    active_panel: activePanel.value,
+    active_panel_label: allAvailablePanels.find((p) => p.id === activePanel.value)?.label || activePanel.value,
+    panels: visiblePanels.value.map((p) => ({ id: p.id, label: p.label, active: p.id === activePanel.value })),
+    sidebar_view: sidebarView.value,
+    current_directory: currentDir.value || '/',
+    storage: { used: storageUsed.value, total: storageTotal.value },
+    plugin_editor: !!activePlugin.value && !isSourceView.value,
+    unsaved_tabs: openTabs.value.filter((t) => t.dirty).map((t) => t.name),
+  };
+  return { ok: true, result: JSON.stringify(state) };
+}
+
+/** 读取界面元素（read_editor_elements）：文件树可见项 / Ribbon / 右侧面板 */
+async function aiReadEditorElements(): Promise<AiToolResult> {
+  const elements = {
+    sidebar_view: sidebarView.value,
+    current_directory: currentDir.value || '/',
+    file_tree: visibleCloudFiles.value.map((f) => ({
+      name: f.name,
+      kind: f.is_directory ? 'directory' : 'file',
+      type: f.file_type || '',
+      size: f.is_directory ? '' : f.size,
+      shared: f.source === 'shared',
+      distributed: !f.is_directory && distributedCount(f) > 0,
+      open: openTabs.value.some((t) => t.id === f.id),
+    })),
+    total_cloud_files: cloudFiles.value.length,
+    ribbon_groups: aiRibbonGroups.value.map((g) => ({
+      title: g.label,
+      tools: (g.tools || []).map((t: any) => ({ name: t.label || t.id || '', command: t.command || t.id || '' })),
+    })),
+    system_right_tools: (systemRightTools.value || []).map((t: any) => ({ name: t.label || t.id || '', command: t.command || '' })),
+    right_panels: visiblePanels.value.map((p) => ({ id: p.id, title: p.label, active: p.id === activePanel.value })),
+    instances_count: instances.value.length,
+    storage: `${storageUsed.value} / ${storageTotal.value}`,
+  };
+  return { ok: true, result: JSON.stringify(elements) };
+}
+
+/** 截图编辑器区域并上传（screenshot_editor） */
+async function aiScreenshotEditor(): Promise<AiToolResult> {
+  try {
+    // 优先 EditorPane 根节点（对应模板里的 <EditorPane ref="editorPaneRef"> → .editor-pane），
+    // 再退到 .editor-pane / 整个编辑区 .editor-main，保证任一布局下都有兜底目标。
+    const target =
+      ((editorPaneRef.value as any)?.$el as HTMLElement | undefined) ||
+      (document.querySelector('.editor-pane') as HTMLElement | null) ||
+      (document.querySelector('.editor-main') as HTMLElement | null);
+    if (!target || !target.isConnected) {
+      return { ok: false, result: '当前页面没有可截图的编辑器区域（编辑器未挂载）' };
+    }
+
+    const rect = target.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) {
+      return {
+        ok: false,
+        result: `编辑器区域当前不可见或尺寸为 0（${Math.round(rect.width)}×${Math.round(rect.height)}），请先展开编辑器/打开一个文件后再截图`,
+      };
+    }
+
+    let dataUrl = '';
+    try {
+      dataUrl = await captureElementToDataUrl(target, { maxWidth: 1600 });
+    } catch (e: any) {
+      return { ok: false, result: e?.message || String(e) };
+    }
+
+    try {
+      // aiApi.uploadShot：POST /ai/chat?action=upload-shot { data_url } → { url }
+      const res: any = await aiApi.uploadShot(dataUrl);
+      const url = (res && (res.url || res.data?.url)) || '';
+      if (!url) {
+        return { ok: false, result: '截图已生成但上传失败：服务端未返回图片地址' };
+      }
+      return {
+        ok: true,
+        result: `已截取编辑器区域（${Math.round(rect.width)}×${Math.round(rect.height)}）`,
+        image: url,
+      };
+    } catch (e: any) {
+      return { ok: false, result: '截图上传失败：' + (e?.message || String(e)) };
+    }
+  } catch (e: any) {
+    return { ok: false, result: '截图失败：' + (e?.message || String(e)) };
+  }
+}
+
+/** 按名称/路径/id 找云文件（open_file 用） */
+function aiFindCloudFile(rawName: string, directory?: string): CloudFile | null {
+  const name = String(rawName || '').trim();
+  if (!name) return null;
+  const cleanPath = name.replace(/^\/+/, '');
+  const files = cloudFiles.value;
+  const byPath = files.find((f) => (f.file_path || '').replace(/^\/+/, '') === cleanPath);
+  if (byPath) return byPath;
+  const dir = directory === undefined
+    ? currentDir.value
+    : String(directory || '').replace(/^\/+|\/+$/g, '');
+  const byDir = files.find((f) => f.name === name && (f.parent_dir || '') === dir);
+  if (byDir) return byDir;
+  const sameName = files.filter((f) => f.name === name);
+  if (sameName.length === 1) return sameName[0];
+  const lower = name.toLowerCase();
+  const sameNameCi = files.filter((f) => f.name.toLowerCase() === lower);
+  if (sameNameCi.length === 1) return sameNameCi[0];
+  return null;
+}
+
+/** 操作编辑器（operate_editor）：所有写操作在这里分发 */
+async function aiOperateEditor(rawArgs: any): Promise<AiToolResult> {
+  const args = normalizeToolArgs(rawArgs);
+  const action = aiArgString(args, ['action', 'op', 'name']);
+  if (!action) {
+    return { ok: false, result: 'operate_editor 缺少 action 参数' };
+  }
+
+  switch (action) {
+    case 'open_file': {
+      const byId = args.file_id ?? args.fileId;
+      let file: CloudFile | null = null;
+      if (byId !== undefined && byId !== null && String(byId) !== '') {
+        file = cloudFiles.value.find((f) => String(f.id) === String(byId)) || null;
+        if (!file && isLoggedIn.value) {
+          await loadCloudFiles();
+          file = cloudFiles.value.find((f) => String(f.id) === String(byId)) || null;
+        }
+        if (!file) return { ok: false, result: `未找到 id 为 ${byId} 的云文件` };
+      } else {
+        const nameOrPath = aiArgString(args, ['name', 'file_name', 'fileName', 'path', 'file', 'target']);
+        if (!nameOrPath) return { ok: false, result: 'open_file 需要 name / path / file_id' };
+        if (!isLoggedIn.value) return { ok: false, result: '未登录，无法打开云文件（请先登录云服务）' };
+        file = aiFindCloudFile(nameOrPath, typeof args.directory === 'string' ? args.directory : undefined);
+        if (!file && cloudFiles.value.length === 0) {
+          await loadCloudFiles();
+          file = aiFindCloudFile(nameOrPath, typeof args.directory === 'string' ? args.directory : undefined);
+        }
+        if (!file) {
+          const candidates = cloudFiles.value
+            .filter((f) => !f.is_directory)
+            .slice(0, 20)
+            .map((f) => f.name)
+            .join('、');
+          return {
+            ok: false,
+            result: `未找到云文件「${nameOrPath}」。当前目录：${currentDir.value || '/'}；可用文件：${candidates || '（无）'}`,
+          };
+        }
+      }
+      if (file.is_directory) {
+        return { ok: false, result: `「${file.name}」是文件夹，不能直接打开；请用 path 指定其中的文件` };
+      }
+      await openCloudFile(file);
+      return { ok: true, result: `已打开文件「${file.name}」` };
+    }
+
+    case 'switch_tab': {
+      const key = aiArgString(args, ['id', 'name', 'tab', 'file', 'target']);
+      if (!key) return { ok: false, result: 'switch_tab 需要 id 或 name' };
+      const tab =
+        openTabs.value.find((t) => t.id === key) ||
+        openTabs.value.find((t) => t.name === key) ||
+        openTabs.value.find((t) => t.name.toLowerCase() === key.toLowerCase());
+      if (!tab) {
+        return {
+          ok: false,
+          result: `没有已打开的标签「${key}」。当前标签：${openTabs.value.map((t) => t.name).join('、') || '（无）'}`,
+        };
+      }
+      selectTab(tab);
+      return { ok: true, result: `已切换到标签「${tab.name}」` };
+    }
+
+    case 'close_tab': {
+      const key = aiArgString(args, ['id', 'name', 'tab', 'file', 'target']);
+      if (!key) {
+        const cur = currentFile.value;
+        if (!cur) return { ok: false, result: '当前没有打开的文件标签' };
+        closeTab(cur);
+        return { ok: true, result: `已关闭标签「${cur.name}」` };
+      }
+      const tab =
+        openTabs.value.find((t) => t.id === key) ||
+        openTabs.value.find((t) => t.name === key) ||
+        openTabs.value.find((t) => t.name.toLowerCase() === key.toLowerCase());
+      if (!tab) return { ok: false, result: `没有已打开的标签「${key}」` };
+      closeTab(tab);
+      return { ok: true, result: `已关闭标签「${tab.name}」` };
+    }
+
+    case 'insert_text': {
+      const text = aiArgRaw(args, ['text', 'content', 'value']);
+      if (text === '') return { ok: false, result: 'insert_text 需要 text 参数' };
+      const ok = editorPaneRef.value?.insertText(text);
+      if (!ok) {
+        return {
+          ok: false,
+          result: activePlugin.value && !isSourceView.value
+            ? '当前文件由插件编辑器接管，无法直接插入文本（可先切换到「查看源文件」）'
+            : '当前没有可写入的文本编辑器（未打开文本文件？）',
+        };
+      }
+      return { ok: true, result: `已在光标处插入 ${text.length} 个字符` };
+    }
+
+    case 'replace_selection': {
+      const text = aiArgRaw(args, ['text', 'content', 'value']);
+      if (text === '') return { ok: false, result: 'replace_selection 需要 text 参数' };
+      const selection = editorPaneRef.value?.getSelection?.() || '';
+      if (!selection) return { ok: false, result: '当前没有选中文本，无法替换（可改用 insert_text 或 set_content）' };
+      const ok = editorPaneRef.value?.replaceSelection(text);
+      if (!ok) {
+        return { ok: false, result: '当前编辑器不支持替换选区（可能是插件编辑器）' };
+      }
+      return { ok: true, result: `已用 ${text.length} 个字符替换选中的 ${selection.length} 个字符` };
+    }
+
+    case 'set_content': {
+      const hasContent = typeof args.content === 'string' || typeof args.text === 'string';
+      const content = typeof args.content === 'string' ? args.content : (typeof args.text === 'string' ? args.text : '');
+      if (!hasContent) return { ok: false, result: 'set_content 需要 content 参数' };
+      const cur = currentFile.value;
+      if (!cur) return { ok: false, result: '当前没有打开的文件，无法设置内容' };
+      if (cur.readOnly) return { ok: false, result: '当前文件为只读（来自分享），无法修改' };
+      cur.content = content;
+      cur.dirty = true;
+      dirty.value = true;
+      const pluginMode = !!activePlugin.value && !isSourceView.value;
+      if (pluginMode) {
+        // 插件编辑器内容来源是标签 content：重载 iframe 让其重新读取
+        editorPaneRef.value?.reloadPlugin?.();
+      } else {
+        editorPaneRef.value?.setValue(content);
+      }
+      const wantSave = args.save === true || args.save === 'true' || args.auto_save === true;
+      if (wantSave) {
+        if (pluginMode) await doSaveFile();
+        else await saveFile();
+      }
+      return {
+        ok: true,
+        result: `已更新文件「${cur.name}」内容（${content.length} 字符）${wantSave ? '，并已保存' : '，尚未保存'}`,
+      };
+    }
+
+    case 'save': {
+      const cur = currentFile.value;
+      if (!cur) return { ok: false, result: '当前没有打开的文件，无法保存' };
+      if (cur.readOnly) return { ok: false, result: '当前文件为只读（来自分享），无法保存' };
+      await saveFile();
+      const stillDirty = !!currentFile.value?.dirty;
+      return {
+        ok: true,
+        result: stillDirty
+          ? `已请求保存「${cur.name}」，插件编辑器正在回写内容，请稍后确认`
+          : `已保存文件「${cur.name}」`,
+      };
+    }
+
+    case 'set_panel': {
+      const key = aiArgString(args, ['panel', 'panel_id', 'panelId', 'id', 'name', 'target']);
+      if (!key) {
+        return {
+          ok: false,
+          result: `set_panel 需要 panel 参数（可选：${allAvailablePanels.map((p) => `${p.id}=${p.label}`).join('、')}）`,
+        };
+      }
+      const panel =
+        allAvailablePanels.find((p) => p.id === key) ||
+        allAvailablePanels.find((p) => p.label === key);
+      if (!panel) {
+        return {
+          ok: false,
+          result: `未知面板「${key}」（可选：${allAvailablePanels.map((p) => `${p.id}=${p.label}`).join('、')}）`,
+        };
+      }
+      openPanel(panel.id);
+      return { ok: true, result: `已切换到「${panel.label}」面板` };
+    }
+
+    case 'goto_line': {
+      const rawLine = args.line ?? args.lineNumber ?? args.line_number ?? args.n ?? args.target;
+      const line = Math.floor(Number(rawLine));
+      if (!Number.isFinite(line) || line < 1) {
+        return { ok: false, result: 'goto_line 需要 line 参数（从 1 开始的行号）' };
+      }
+      const ok = editorPaneRef.value?.gotoLineAt(line);
+      if (!ok) {
+        return {
+          ok: false,
+          result: activePlugin.value && !isSourceView.value
+            ? '当前文件由插件编辑器接管，无法跳转到指定行'
+            : '当前没有可跳转的文本编辑器',
+        };
+      }
+      return { ok: true, result: `已跳转到第 ${line} 行` };
+    }
+
+    case 'run_ribbon': {
+      const command = aiArgString(args, ['command', 'tool', 'tool_id', 'id', 'name', 'target']);
+      if (!command) return { ok: false, result: 'run_ribbon 需要 command 参数（Ribbon 工具命令，如 find / refresh / share）' };
+      const internalOnly = ['settings', 'shortcuts', 'fontsize'];
+      if (internalOnly.includes(command)) {
+        return {
+          ok: false,
+          result: `Ribbon 命令「${command}」由工具栏内部组件处理（弹窗/字号调节），暂不支持由 AI 触发`,
+        };
+      }
+      const known = ['find', 'replace', 'goto', 'history', 'version', 'share', 'import', 'export', 'fullscreen', 'immersive', 'refresh', 'reload', 'toggle-view'];
+      if (!known.includes(command) && !editorPlugin.value) {
+        return {
+          ok: false,
+          result: `未知 Ribbon 命令「${command}」（可用：${known.join('、')}）`,
+        };
+      }
+      onRibbonTool({ id: command, label: command, icon: '', command });
+      return { ok: true, result: `已执行 Ribbon 命令「${command}」${['share', 'import', 'export'].includes(command) ? '（可能弹出对话框/文件选择，需用户确认）' : ''}` };
+    }
+
+    default:
+      return {
+        ok: false,
+        result: `不支持的 operate_editor action：「${action}」（支持：open_file、switch_tab、close_tab、insert_text、replace_selection、set_content、save、set_panel、goto_line、run_ribbon）`,
+      };
+  }
+}
+
+/** 注册编辑器桥：AiAssistantPanel 通过 useAiEditorBridge() 取到这里 */
+provideAiEditorBridge(
+  createAiEditorBridgeImpl({
+    get_editor_state: () => aiGetEditorState(),
+    read_editor_elements: () => aiReadEditorElements(),
+    screenshot_editor: () => aiScreenshotEditor(),
+    operate_editor: (args: any) => aiOperateEditor(args),
+  }),
+);
 
 onMounted(() => {
   loadPlugins();
@@ -3037,7 +3625,8 @@ onMounted(() => {
 }
 .cloud-file-shared-from-badge { display: inline-flex; align-items: center; gap: 2px; font-size: 9px; color: var(--accent-base); background: var(--accent-bg); padding: 0 4px; border-radius: var(--radius-xs); flex-shrink: 0; }
 .cloud-file-shared-from-badge .share-owner { max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cloud-file-lock-badge { display: inline-flex; align-items: center; color: var(--text-tertiary); flex-shrink: 0; }
+.cloud-file-perm-badge { display: inline-flex; align-items: center; flex-shrink: 0; color: var(--accent-base); }
+.cloud-file-perm-badge.readonly { color: var(--text-tertiary); }
 
 /* 分享占位文件（来自分享）视觉区分 */
 .cloud-file-item.share-placeholder {
@@ -3092,6 +3681,10 @@ onMounted(() => {
   font-size: var(--font-size-xs);
   color: var(--accent-base);
   background: var(--accent-bg);
+}
+.file-share-badge.readonly {
+  color: var(--text-tertiary);
+  background: var(--subtle-secondary);
 }
 .cloud-empty {
   display: flex;

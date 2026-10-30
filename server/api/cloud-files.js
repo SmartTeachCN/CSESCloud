@@ -14,6 +14,7 @@ const { nowStr } = require('../lib/response');
 const DB = require('../lib/db');
 const cloudShare = require('../lib/cloud-share');
 const formats = require('../lib/distribution-formats');
+const sharePermissions = require('../lib/share-permissions');
 
 // 隐藏目录前缀
 const CLOUD_PREFIX = '/.cloud/';
@@ -68,7 +69,7 @@ module.exports = async (ctx) => {
           is_shared: 0,
           source: 'shared',
           shared_from: resolved.shared_from,
-          shared_permission: resolved.permission,
+          shared_permission: sharePermissions.normalizePermission(resolved.permission),
           share_id: marker.share_id,
           owner_file_id: marker.owner_file_id,
           is_share_placeholder: 1,
@@ -145,7 +146,7 @@ module.exports = async (ctx) => {
         created_at: row.created_at,
         updated_at: ownerFile.updated_at || row.updated_at,
         source: 'shared',
-        permission: resolved.permission,
+        permission: sharePermissions.normalizePermission(resolved.permission),
         share_id: marker.share_id,
         owner_file_id: marker.owner_file_id,
         is_share_placeholder: 1,
@@ -235,7 +236,7 @@ module.exports = async (ctx) => {
     if (marker) {
       const resolved = cloudShare.resolvePlaceholder(DB, row, Auth);
       if (!resolved) Response.error('分享已过期、被取消或无权访问', 403, 403);
-      if (resolved.permission !== 'edit') Response.error('没有编辑该分享文件的权限', 403, 403);
+      if (!sharePermissions.allows(resolved.permission, 'write_file')) Response.error('没有编辑该分享文件的权限', 403, 403);
       if (body.content === undefined && body.content === null) {
         Response.error('分享占位文件没有可保存的内容');
       }
@@ -383,7 +384,34 @@ module.exports = async (ctx) => {
       [id, spaceId, CLOUD_PREFIX + '%']
     );
     if (!row) Response.error('云文件不存在');
-    if (cloudShare.isPlaceholder(row)) Response.error('分享文件不支持删除');
+
+    // 分享占位文件（符号链接）：允许接收者删除链接；同时撤销自己的接收权限，避免下次列表重建
+    const placeholderMarker = cloudShare.parseMarker(row.content);
+    if (placeholderMarker) {
+      DB.delete('web_hosting_files', 'id = ?', [id]);
+      try {
+        const ctx = cloudShare.shareTargetContext(DB, Auth);
+        const clauses = ['share_id = ?'];
+        const params = [placeholderMarker.share_id];
+        const targetClauses = [];
+        if (ctx.username) {
+          targetClauses.push('target_username = ?');
+          params.push(ctx.username);
+        }
+        if (ctx.ids.length) {
+          targetClauses.push('target_user_id IN (' + ctx.ids.map(() => '?').join(',') + ')');
+          params.push(...ctx.ids);
+        }
+        if (targetClauses.length) {
+          clauses.push('(' + targetClauses.join(' OR ') + ')');
+          DB.delete('share_user_permissions', clauses.join(' AND '), params);
+        }
+      } catch (e) {
+        console.warn('[cloud-files] 移除分享链接权限失败:', e.message);
+      }
+      Auth.logAudit(schoolId, 0, 'cloud_file_unlink_share', `移除分享链接: ${username} -> ${row.file_path}`);
+      Response.success({ unlinked: true }, '已移除分享链接');
+    }
 
     const isDirectory = parseInt(row.is_directory, 10) === 1;
     // 收集将被删除的文件 ID（目录包含全部子孙文件）

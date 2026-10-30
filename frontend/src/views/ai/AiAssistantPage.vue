@@ -1,7 +1,7 @@
 <template>
   <div class="ai-fullpage">
     <!-- 左侧：会话列表管理区 -->
-    <aside class="ai-sidebar" :class="{ collapsed: !sidebarOpen }">
+    <aside class="ai-sidebar" :class="{ collapsed: !sidebarOpen }" @contextmenu.prevent>
       <div class="sidebar-header">
         <div class="sidebar-title" v-if="sidebarOpen">
           <Icon icon="ri-brain-line" :size="20" />
@@ -11,7 +11,7 @@
           <Icon icon="ri-add-line" :size="18" />
           <span v-if="sidebarOpen">新建对话</span>
         </button>
-        <button class="sidebar-toggle" @click="sidebarOpen = !sidebarOpen" :title="sidebarOpen ? '收起侧栏' : '展开侧栏'">
+        <button class="sidebar-toggle" @click="toggleSidebar" :title="sidebarOpen ? '收起侧栏' : '展开侧栏'">
           <Icon :icon="sidebarOpen ? 'ri-layout-left-line' : 'ri-layout-left-2-line'" :size="16" />
         </button>
       </div>
@@ -19,6 +19,7 @@
       <div v-if="sidebarOpen" class="sidebar-search">
         <Icon icon="ri-search-line" class="search-icon" :size="14" />
         <input
+          ref="searchInputEl"
           v-model="searchQuery"
           type="text"
           class="search-input"
@@ -26,29 +27,67 @@
         />
       </div>
 
-      <div class="session-list" ref="sessionListEl">
-        <div
-          v-for="session in filteredSessions"
-          :key="session.id"
-          class="session-item"
-          :class="{ active: currentSessionId === session.id }"
-          @click="switchSession(session.id)"
-        >
-          <div class="session-icon">
-            <Icon :icon="getSessionIcon(session.scope)" :size="sidebarOpen ? 16 : 18" />
+      <!-- 会话列表：右键会话 → 置顶/重命名/重新生成标题/复制 ID/删除；右键空白 → 新建/搜索/刷新/折叠 -->
+      <div class="session-list" ref="sessionListEl" @contextmenu.prevent="onBlankContextMenu">
+        <template v-for="row in sessionRows" :key="row.key">
+          <div v-if="row.type === 'group'" class="session-group-title">
+            <Icon :icon="row.label === '置顶' ? 'ri-pushpin-2-line' : 'ri-time-line'" :size="11" />
+            <span>{{ row.label }}</span>
           </div>
-          <div v-if="sidebarOpen" class="session-info">
-            <div class="session-title">{{ session.title }}</div>
-            <div class="session-meta">{{ formatDate(session.updated_at) }}</div>
-          </div>
-          <button
-            v-if="sidebarOpen"
-            class="delete-btn"
-            @click.stop="deleteSession(session.id)"
-            title="删除对话"
+          <div
+            v-else
+            class="session-item"
+            :class="{ active: currentSessionId === row.session.id, pinned: !!row.session.pinned }"
+            @click="switchSession(row.session.id)"
+            @contextmenu.prevent.stop="onSessionContextMenu($event, row.session)"
           >
-            <Icon icon="ri-delete-bin-line" :size="14" />
-          </button>
+            <div class="session-icon">
+              <Icon
+                :icon="row.session.pinned ? 'ri-pushpin-2-fill' : getSessionIcon(row.session.scope)"
+                :size="sidebarOpen ? 16 : 18"
+              />
+            </div>
+            <template v-if="sidebarOpen">
+              <div class="session-info">
+                <template v-if="renamingId === row.session.id">
+                  <input
+                    :ref="setRenameInputRef"
+                    v-model="renameValue"
+                    type="text"
+                    class="rename-input"
+                    @click.stop
+                    @keydown.enter.prevent="commitRename(row.session)"
+                    @keydown.esc.prevent="cancelRename"
+                    @blur="commitRename(row.session)"
+                  />
+                </template>
+                <template v-else>
+                  <div class="session-title">
+                    <span class="session-title-text">{{ row.session.title || '新对话' }}</span>
+                    <Icon
+                      v-if="titleLoadingId === row.session.id"
+                      icon="ri-loader-4-line"
+                      :size="12"
+                      class="spin session-title-spin"
+                    />
+                  </div>
+                  <div class="session-meta">{{ formatDate(row.session.updated_at) }}</div>
+                </template>
+              </div>
+              <button
+                v-if="renamingId !== row.session.id"
+                class="delete-btn"
+                @click.stop="deleteSession(row.session.id)"
+                title="删除对话"
+              >
+                <Icon icon="ri-delete-bin-line" :size="14" />
+              </button>
+            </template>
+          </div>
+        </template>
+        <div v-if="!loadingSessions && sessionRows.length === 0" class="session-empty">
+          <Icon :icon="searchQuery.trim() ? 'ri-search-line' : 'ri-chat-3-line'" :size="22" />
+          <span>{{ searchQuery.trim() ? '没有匹配的对话' : '暂无对话，右键可新建' }}</span>
         </div>
       </div>
     </aside>
@@ -58,20 +97,21 @@
       <!-- 对话头部 -->
       <header class="chat-header">
         <div class="header-left">
-          <div v-if="currentSession" class="current-session-info">
-            <div class="session-title">{{ currentSession.title || '新对话' }}</div>
-            <div class="session-breadcrumb">
-              <span class="scope-badge">{{ getScopeLabel(currentSession.scope) }}</span>
+          <div class="current-session-info">
+            <div class="session-title">
+              <Icon v-if="currentSession?.pinned" icon="ri-pushpin-2-fill" :size="14" class="header-pin" />
+              <span>{{ currentSession?.title || '新对话' }}</span>
             </div>
-          </div>
-          <div v-else class="current-session-info">
-            <div class="session-title">新对话</div>
             <div class="session-breadcrumb">
-              <span class="scope-badge">全局</span>
+              <span class="scope-badge">{{ getScopeLabel(currentSession?.scope) }}</span>
             </div>
           </div>
         </div>
         <div class="header-right">
+          <button class="tool-btn" @click="loadSessions" title="刷新会话列表">
+            <Icon icon="ri-refresh-line" :size="16" />
+            <span>刷新</span>
+          </button>
           <button class="tool-btn" @click="showModelSettings = true" title="模型设置">
             <Icon icon="ri-settings-3-line" :size="16" />
             <span>模型</span>
@@ -83,9 +123,9 @@
         </div>
       </header>
 
-      <!-- 对话消息区 -->
+      <!-- 对话消息区：历史 + 当前流式轮次 -->
       <div class="chat-messages" ref="messagesEl">
-        <div v-if="messages.length === 0" class="chat-empty">
+        <div v-if="entries.length === 0 && !liveTurn" class="chat-empty">
           <div class="empty-icon">
             <Icon icon="ri-brain-line" :size="64" />
           </div>
@@ -98,29 +138,39 @@
             <button class="chip" @click="sendSuggestion('数据空间怎么管理云文件？')">数据空间管理</button>
           </div>
         </div>
-        <div
-          v-for="msg in messages"
-          :key="msg.id"
-          class="chat-message"
-          :class="msg.role"
-        >
-          <div class="message-avatar">
-            <Icon :icon="msg.role === 'user' ? 'ri-user-line' : 'ri-robot-line'" :size="msg.role === 'user' ? 18 : 20" />
-          </div>
-          <div class="message-content">
-            <div class="message-bubble" v-html="renderMarkdown(msg.content)"></div>
-          </div>
-        </div>
-        <div v-if="sending && !streamingActive" class="chat-message assistant">
-          <div class="message-avatar">
-            <Icon icon="ri-robot-line" :size="20" />
-          </div>
-          <div class="message-content">
-            <div class="message-bubble typing">
-              <span></span><span></span><span></span>
+
+        <template v-for="entry in entries" :key="entry.key">
+          <div v-if="entry.kind === 'user'" class="chat-message user">
+            <div class="message-avatar">
+              <Icon icon="ri-user-line" :size="18" />
+            </div>
+            <div class="message-content">
+              <div class="message-bubble user-text">{{ entry.content }}</div>
             </div>
           </div>
+          <div v-else class="chat-turn">
+            <div class="message-avatar turn-avatar">
+              <Icon icon="ri-robot-line" :size="20" />
+            </div>
+            <div class="turn-body">
+              <AiTurnView :turn="entry.turn" :live="isTurnLive(entry.turn)" @answer-ask="onAnswerAsk" />
+            </div>
+          </div>
+        </template>
+
+        <div v-if="liveTurn" class="chat-turn">
+          <div class="message-avatar turn-avatar">
+            <Icon icon="ri-robot-line" :size="20" />
+          </div>
+          <div class="turn-body">
+            <AiTurnView :turn="liveTurn" :live="isTurnLive(liveTurn)" @answer-ask="onAnswerAsk" />
+          </div>
         </div>
+      </div>
+
+      <div v-if="streamError" class="stream-error-bar">
+        <Icon icon="ri-error-warning-line" :size="14" />
+        <span>{{ streamError }}</span>
       </div>
 
       <!-- 输入区 -->
@@ -131,7 +181,7 @@
             ref="editorEl"
             class="chat-editor"
             contenteditable="true"
-            :data-placeholder="'输入问题（Enter 发送，Shift+Enter 换行）'"
+            data-placeholder="输入问题（Enter 发送，Shift+Enter 换行）"
             @keydown.enter.exact.prevent="onEditorEnter"
             @input="onEditorInput"
             @paste="onEditorPaste"
@@ -156,17 +206,17 @@
                 multiple
               />
             </div>
-            
+
             <!-- 中间：空白填充 -->
             <div class="input-actions-middle"></div>
 
-            <!-- 右侧：模型选择 + 语音 + 发送 -->
+            <!-- 右侧：模型 + 推理等级 / 语音 / 发送（生成中变为停止） -->
             <div class="input-actions-right">
-              <CustomSelect
-                v-model="selectedModel"
-                :options="modelOptions"
-                class="model-select-custom"
-                height="32px"
+              <ModelPicker
+                v-model:model="selectedModel"
+                v-model:reasoning="reasoningLevel"
+                :models="customModels"
+                :disabled="isBusy"
               />
 
               <button
@@ -178,13 +228,13 @@
                 <Icon :icon="isVoiceRecording ? 'ri-stop-circle-line' : 'ri-mic-line'" :size="20" />
               </button>
 
-              <button
-                class="send-btn"
-                :disabled="sending || !editorText.trim()"
-                @click="sendMessage"
-              >
-                <Icon :icon="sending ? 'ri-loader-4-line' : 'ri-send-plane-line'" :size="16" :class="{ spin: sending }" />
-                <span>{{ sending ? '发送中' : '发送' }}</span>
+              <button v-if="isBusy" class="send-btn stop-btn" @click="stopGenerating" title="停止生成">
+                <Icon icon="ri-stop-circle-line" :size="16" />
+                <span>停止</span>
+              </button>
+              <button v-else class="send-btn" :disabled="!editorText.trim()" @click="sendMessage">
+                <Icon icon="ri-send-plane-line" :size="16" />
+                <span>发送</span>
               </button>
             </div>
           </div>
@@ -301,59 +351,72 @@
         </div>
       </Teleport>
     </main>
+
+    <!-- 右键菜单（会话项 / 列表空白共用） -->
+    <SessionContextMenu
+      :show="menu.show"
+      :x="menu.x"
+      :y="menu.y"
+      :items="menuItems"
+      :title="menu.title"
+      @close="closeMenu"
+      @select="onMenuSelect"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { marked } from 'marked';
-import CustomSelect from '../../components/CustomSelect.vue';
+import AiTurnView from '../../components/ai/AiTurnView.vue';
+import ModelPicker, { loadModelPrefs } from '../../components/ai/ModelPicker.vue';
+import SessionContextMenu, { type ContextMenuItem } from '../../components/ai/SessionContextMenu.vue';
 import { aiApi } from '../../api';
-import { useAuth } from '../../composables/useAuth';
+import { useAiStream, parseStoredMessage } from '../../composables/useAiStream';
 
-// 配置 marked
-marked.use({ breaks: true, gfm: true });
-
-function renderMarkdown(text: string): string {
-  if (!text) return '';
-  try {
-    return marked.parse(text, { breaks: true, gfm: true }) as string;
-  } catch {
-    return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-}
-
-const { user } = useAuth();
 const route = useRoute();
 
 // ===== 左侧会话列表 =====
 const sidebarOpen = ref(true);
 const searchQuery = ref('');
+const searchInputEl = ref<HTMLInputElement | null>(null);
 const sessions = ref<any[]>([]);
 const currentSessionId = ref<number | null>(null);
 const loadingSessions = ref(false);
 const sessionListEl = ref<HTMLElement | null>(null);
 
+// 行内重命名
+const renamingId = ref<number | null>(null);
+const renameValue = ref('');
+const renameInputEl = ref<HTMLInputElement | null>(null);
+const titleLoadingId = ref<number | null>(null);
+
 // ===== 右侧聊天 =====
-const currentSession = computed(() => {
-  return sessions.value.find(s => s.id === currentSessionId.value);
-});
-const messages = ref<any[]>([]);
-const sending = ref(false);
-const streamingActive = ref(false);
+interface UserEntry {
+  kind: 'user';
+  key: string;
+  content: string;
+}
+interface TurnEntry {
+  kind: 'turn';
+  key: string;
+  turn: any;
+}
+type ChatEntry = UserEntry | TurnEntry;
+
+const entries = ref<ChatEntry[]>([]);
 const messagesEl = ref<HTMLElement | null>(null);
 const editorEl = ref<HTMLDivElement | null>(null);
+const editorText = ref('');
 
 // ===== 控制栏选项 =====
-const selectedModel = ref('default');
+const modelPrefs = loadModelPrefs();
+const selectedModel = ref(modelPrefs.model);
+const reasoningLevel = ref(modelPrefs.reasoning);
 const showResourceSelector = ref(false);
 const resourcePopoverEl = ref<HTMLElement | null>(null);
 const currentScope = ref('global');
 const currentScopeRef = ref<number | null>(null);
-
-// 编辑器文本（用于响应式禁用发送按钮）
-const editorText = ref('');
 
 // ===== 附件标签（文件上下文）=====
 interface AttachedTag {
@@ -374,47 +437,198 @@ const showModelSettings = ref(false);
 const showModelForm = ref(false);
 const editingModelId = ref<number | null>(null);
 const customModels = ref<any[]>([]);
-
-const modelOptions = computed(() => {
-  const opts = [{ value: 'default', label: '默认规则引擎', icon: 'ri-brain-line' }];
-  for (const m of customModels.value) {
-    opts.push({ value: m.name, label: `${m.name} (${m.provider})`, icon: 'ri-cpu-line' });
-  }
-  return opts;
-});
-
 const userModels = computed(() => customModels.value.filter(m => m.owner_key !== 'system'));
 const modelForm = ref({
   name: '',
   provider: '',
   model_id: '',
   endpoint: '',
-  api_key: ''
+  api_key: '',
 });
 
-// ===== 过滤后的会话列表 =====
+const currentSession = computed(() => sessions.value.find(s => s.id === currentSessionId.value) || null);
+
+// ===== 过滤 / 分组后的会话列表 =====
 const filteredSessions = computed(() => {
-  if (!searchQuery.value.trim()) return sessions.value;
-  const q = searchQuery.value.toLowerCase();
-  return sessions.value.filter(s =>
-    (s.title || '').toLowerCase().includes(q)
-  );
+  const q = searchQuery.value.trim().toLowerCase();
+  if (!q) return sessions.value;
+  return sessions.value.filter(s => (s.title || '').toLowerCase().includes(q) || String(s.id).includes(q));
 });
 
-// ===== 获取会话图标 =====
+function byUpdatedDesc(a: any, b: any): number {
+  return String(b.updated_at || '').localeCompare(String(a.updated_at || ''));
+}
+
+const pinnedSessions = computed(() =>
+  filteredSessions.value.filter(s => !!s.pinned).sort((a, b) => {
+    const pa = String(b.pinned_at || b.updated_at || '');
+    const pb = String(a.pinned_at || a.updated_at || '');
+    return pa.localeCompare(pb);
+  }),
+);
+const recentSessions = computed(() => filteredSessions.value.filter(s => !s.pinned).sort(byUpdatedDesc));
+
+interface SessionRow {
+  type: 'group' | 'session';
+  key: string;
+  label?: string;
+  session?: any;
+}
+
+const sessionRows = computed<SessionRow[]>(() => {
+  const rows: SessionRow[] = [];
+  if (pinnedSessions.value.length) {
+    rows.push({ type: 'group', key: 'group-pinned', label: '置顶' });
+    for (const session of pinnedSessions.value) rows.push({ type: 'session', key: `session-${session.id}`, session });
+  }
+  if (recentSessions.value.length) {
+    if (pinnedSessions.value.length) rows.push({ type: 'group', key: 'group-recent', label: '最近' });
+    for (const session of recentSessions.value) rows.push({ type: 'session', key: `session-${session.id}`, session });
+  }
+  return rows;
+});
+
+// ===== 右键菜单 =====
+type MenuMode = 'none' | 'session' | 'blank';
+const menu = ref<{ show: boolean; mode: MenuMode; x: number; y: number; targetId: number | null; title: string }>({
+  show: false,
+  mode: 'none',
+  x: 0,
+  y: 0,
+  targetId: null,
+  title: '',
+});
+const menuTargetSession = computed(() =>
+  menu.value.targetId != null ? sessions.value.find(s => s.id === menu.value.targetId) || null : null,
+);
+
+const sessionMenuItems = computed<ContextMenuItem[]>(() => {
+  const session = menuTargetSession.value;
+  const pinned = !!session?.pinned;
+  return [
+    { key: 'pin', label: pinned ? '取消置顶' : '置顶', icon: pinned ? 'ri-unpin-line' : 'ri-pushpin-2-line' },
+    { key: 'rename', label: '重命名', icon: 'ri-edit-line' },
+    {
+      key: 'regen-title',
+      label: '重新生成标题',
+      icon: 'ri-magic-line',
+      disabled: !!session && titleLoadingId.value === session.id,
+    },
+    { key: 'copy-id', label: '复制会话 ID', icon: 'ri-file-copy-line', shortcut: session ? String(session.id) : '' },
+    { type: 'separator', key: 'sep-session', label: '' },
+    { key: 'delete', label: '删除对话', icon: 'ri-delete-bin-line', danger: true },
+  ];
+});
+
+const blankMenuItems = computed<ContextMenuItem[]>(() => [
+  { key: 'new-chat', label: '新建对话', icon: 'ri-add-line' },
+  { key: 'focus-search', label: '搜索对话', icon: 'ri-search-line', disabled: !sidebarOpen.value },
+  { key: 'refresh', label: '刷新列表', icon: 'ri-refresh-line' },
+  { type: 'separator', key: 'sep-blank', label: '' },
+  {
+    key: 'toggle-sidebar',
+    label: sidebarOpen.value ? '收起侧栏' : '展开侧栏',
+    icon: sidebarOpen.value ? 'ri-layout-left-line' : 'ri-layout-left-2-line',
+  },
+]);
+
+const menuItems = computed<ContextMenuItem[]>(() => {
+  if (menu.value.mode === 'session') return sessionMenuItems.value;
+  if (menu.value.mode === 'blank') return blankMenuItems.value;
+  return [];
+});
+
+function onSessionContextMenu(event: MouseEvent, session: any) {
+  menu.value = {
+    show: true,
+    mode: 'session',
+    x: event.clientX,
+    y: event.clientY,
+    targetId: session?.id ?? null,
+    title: session?.title || '新对话',
+  };
+}
+
+function onBlankContextMenu(event: MouseEvent) {
+  const target = event.target as HTMLElement | null;
+  // 会话项与分组标题有自己的处理，这里只处理真正的空白区域
+  if (target?.closest('.session-item')) return;
+  menu.value = {
+    show: true,
+    mode: 'blank',
+    x: event.clientX,
+    y: event.clientY,
+    targetId: null,
+    title: '',
+  };
+}
+
+function closeMenu() {
+  menu.value.show = false;
+}
+
+async function onMenuSelect(key: string) {
+  const mode = menu.value.mode;
+  const target = menuTargetSession.value;
+  closeMenu();
+  if (mode === 'session' && target) {
+    switch (key) {
+      case 'pin':
+        await togglePin(target);
+        break;
+      case 'rename':
+        startRename(target);
+        break;
+      case 'regen-title':
+        await regenerateTitle(target);
+        break;
+      case 'copy-id':
+        await copySessionId(target);
+        break;
+      case 'delete':
+        await deleteSession(target.id);
+        break;
+    }
+    return;
+  }
+  switch (key) {
+    case 'new-chat':
+      createNewChat();
+      break;
+    case 'focus-search':
+      focusSearch();
+      break;
+    case 'refresh':
+      await loadSessions();
+      break;
+    case 'toggle-sidebar':
+      toggleSidebar();
+      break;
+  }
+}
+
+function toggleSidebar() {
+  sidebarOpen.value = !sidebarOpen.value;
+}
+
+function focusSearch() {
+  sidebarOpen.value = true;
+  nextTick(() => searchInputEl.value?.focus());
+}
+
+// ===== 获取会话图标 / 范围标签 / 日期 =====
 function getSessionIcon(_scope: string): string {
   return 'ri-chat-3-line';
 }
 
-// ===== 获取范围标签（V3 仅保留全局 scope）=====
-function getScopeLabel(_scope: string): string {
+function getScopeLabel(_scope?: string): string {
   return '全局';
 }
 
-// ===== 格式化日期 =====
 function formatDate(dateStr: string): string {
   if (!dateStr) return '';
   const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return '';
   const now = new Date();
   const diff = now.getTime() - date.getTime();
   const day = Math.floor(diff / (1000 * 60 * 60 * 24));
@@ -428,12 +642,12 @@ function formatDate(dateStr: string): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-// ===== 加载会话列表 =====
+// ===== 会话 CRUD =====
 async function loadSessions() {
   loadingSessions.value = true;
   try {
     const list = await aiApi.listSessions();
-    sessions.value = list || [];
+    sessions.value = Array.isArray(list) ? list : [];
   } catch {
     sessions.value = [];
   } finally {
@@ -441,56 +655,318 @@ async function loadSessions() {
   }
 }
 
-// ===== 加载消息 =====
 async function loadMessages() {
   if (!currentSessionId.value) {
-    messages.value = [];
+    entries.value = [];
     return;
   }
   try {
     const list = await aiApi.listMessages(currentSessionId.value);
-    messages.value = list || [];
+    const next: ChatEntry[] = [];
+    for (const row of list || []) {
+      if (!row) continue;
+      if (row.role === 'user') {
+        next.push({ kind: 'user', key: `user-${row.id}`, content: row.content || '' });
+      } else {
+        next.push({ kind: 'turn', key: `turn-${row.id}`, turn: parseStoredMessage(row) });
+      }
+    }
+    entries.value = next;
     scrollToBottom();
   } catch {
-    messages.value = [];
+    entries.value = [];
   }
 }
 
-// ===== 切换会话 =====
+function stopActiveStream() {
+  const current: any = streamTurn.value;
+  if (current?.id && !suppressedIds.value.includes(current.id)) {
+    suppressedIds.value = [...suppressedIds.value, current.id];
+  }
+  if (isBusy.value) stream.stop();
+}
+
 async function switchSession(id: number) {
+  if (id === currentSessionId.value) return;
+  stopActiveStream();
   currentSessionId.value = id;
-  if (currentSession.value) {
-    currentScope.value = currentSession.value.scope || 'global';
-    currentScopeRef.value = currentSession.value.scope_ref || null;
+  committedIds.value = [];
+  const session = sessions.value.find(s => s.id === id);
+  if (session) {
+    currentScope.value = session.scope || 'global';
+    currentScopeRef.value = session.scope_ref || null;
   }
   await loadMessages();
 }
 
-// ===== 创建新对话 =====
 function createNewChat() {
+  stopActiveStream();
   currentSessionId.value = null;
-  messages.value = [];
+  committedIds.value = [];
+  entries.value = [];
   attachedTags.value = [];
   currentScope.value = 'global';
   currentScopeRef.value = null;
   clearEditor();
-  if (editorEl.value) {
-    editorEl.value.focus();
-  }
+  nextTick(() => editorEl.value?.focus());
 }
 
-// ===== 删除会话 =====
 async function deleteSession(id: number) {
   if (!confirm('确认删除此对话？删除后无法恢复。')) return;
   try {
     await aiApi.deleteSession(id);
   } catch (e: any) {
-    alert(e.message || '删除失败');
+    alert(e?.message || '删除失败');
   }
   sessions.value = sessions.value.filter(s => s.id !== id);
-  if (currentSessionId.value === id) {
-    createNewChat();
+  if (currentSessionId.value === id) createNewChat();
+}
+
+async function togglePin(session: any) {
+  if (!session) return;
+  const nextPinned = !session.pinned;
+  try {
+    await aiApi.pinSession(session.id, nextPinned);
+    session.pinned = nextPinned ? 1 : 0;
+    session.pinned_at = nextPinned ? new Date().toISOString() : null;
+  } catch (e: any) {
+    alert(`${nextPinned ? '置顶' : '取消置顶'}失败：${e?.message || '网络错误'}`);
   }
+}
+
+function setRenameInputRef(el: any) {
+  if (el) renameInputEl.value = el as HTMLInputElement;
+}
+
+function startRename(session: any) {
+  if (!session) return;
+  renamingId.value = session.id;
+  renameValue.value = session.title || '';
+  nextTick(() => {
+    renameInputEl.value?.focus();
+    renameInputEl.value?.select();
+  });
+}
+
+function cancelRename() {
+  renamingId.value = null;
+  renameValue.value = '';
+}
+
+async function commitRename(session: any) {
+  if (!session || renamingId.value !== session.id) return;
+  const title = renameValue.value.trim();
+  renamingId.value = null;
+  renameValue.value = '';
+  if (!title || title === (session.title || '')) return;
+  try {
+    const res: any = await aiApi.renameSession(session.id, title);
+    session.title = (res && (res.title || res.session?.title)) || title;
+    session.title_generated = 0;
+  } catch (e: any) {
+    alert('重命名失败：' + (e?.message || '网络错误'));
+  }
+}
+
+async function regenerateTitle(session: any) {
+  if (!session || titleLoadingId.value != null) return;
+  titleLoadingId.value = session.id;
+  try {
+    const res: any = await aiApi.generateTitle(session.id);
+    const title = res && (res.title || res.session?.title);
+    if (title) {
+      session.title = title;
+      session.title_generated = 1;
+    } else {
+      await loadSessions();
+    }
+  } catch (e: any) {
+    alert('生成标题失败：' + (e?.message || '网络错误'));
+  } finally {
+    if (titleLoadingId.value === session.id) titleLoadingId.value = null;
+  }
+}
+
+async function copySessionId(session: any) {
+  const text = String(session?.id ?? '');
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    /* 回退到 execCommand */
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    textarea.remove();
+  } catch {
+    alert('复制失败');
+  }
+}
+
+// ===== 会话列表本地更新（自动标题 / 新会话 / 活跃时间）=====
+function applyTitle(sessionId: number, title: string) {
+  if (!sessionId || !title) return;
+  const session = sessions.value.find(s => s.id === sessionId);
+  if (session) {
+    session.title = title;
+    session.title_generated = 1;
+    return;
+  }
+  sessions.value = [
+    {
+      id: sessionId,
+      title,
+      title_generated: 1,
+      pinned: 0,
+      pinned_at: null,
+      scope: 'global',
+      updated_at: new Date().toISOString(),
+    },
+    ...sessions.value,
+  ];
+}
+
+function adoptSession(sessionId: number) {
+  if (!sessionId) return;
+  currentSessionId.value = sessionId;
+  if (sessions.value.some(s => s.id === sessionId)) return;
+  sessions.value = [
+    {
+      id: sessionId,
+      title: '新对话',
+      title_generated: 0,
+      pinned: 0,
+      pinned_at: null,
+      scope: currentScope.value || 'global',
+      updated_at: new Date().toISOString(),
+    },
+    ...sessions.value,
+  ];
+}
+
+function touchSession(sessionId: number | null) {
+  if (!sessionId) return;
+  const session = sessions.value.find(s => s.id === sessionId);
+  if (session) session.updated_at = new Date().toISOString();
+}
+
+// ===== 流式桥接 =====
+const committedIds = ref<string[]>([]);
+const suppressedIds = ref<string[]>([]);
+
+const stream = useAiStream({
+  request: aiApi.aiRequest,
+  onSessionId: (sessionId: number) => {
+    adoptSession(sessionId);
+  },
+  onTitle: (title: string, sessionId: number) => {
+    applyTitle(sessionId || currentSessionId.value || 0, title);
+  },
+  onDone: (turn: any, ev: any) => {
+    commitTurn(turn, ev);
+  },
+  onPatch: () => {
+    // 本页没有云文件/实例列表，工具 patch 无需刷新
+  },
+  executeClientTool: async () => ({ ok: false, result: '当前页面没有可操作的编辑器' }),
+});
+
+const streamTurn = stream.turn;
+const streamIsStreaming = stream.isStreaming;
+const streamError = stream.error;
+
+// 直接用 composable 的 isStreaming 驱动「发送/停止」，避免 run() 未 resolve（例如等待提问时点了停止）把按钮卡死
+const isBusy = computed(() => streamIsStreaming.value);
+
+const effectiveModel = computed(() => selectedModel.value || 'default');
+const effectiveReasoning = computed(() =>
+  effectiveModel.value === 'default' ? undefined : reasoningLevel.value || undefined,
+);
+
+const liveTurn = computed<any>(() => {
+  const turn: any = streamTurn.value;
+  if (!turn) return null;
+  if (committedIds.value.includes(turn.id)) return null;
+  if (suppressedIds.value.includes(turn.id)) return null;
+  return turn;
+});
+
+function isTurnLive(turn: any): boolean {
+  const current: any = streamTurn.value;
+  return !!turn && !!current && current.id === turn.id;
+}
+
+function onAnswerAsk(id: string, answers: string[]) {
+  stream.answerAsk(id, answers);
+}
+
+function commitTurn(turn: any, ev: any) {
+  if (!turn) return;
+  const rawSessionId = Number((ev as any)?.session_id ?? 0);
+  const eventSessionId: number | null =
+    Number.isFinite(rawSessionId) && rawSessionId > 0 ? rawSessionId : currentSessionId.value;
+  // 切换会话后旧流的迟到回调不再写入当前消息区
+  const belongsToCurrent =
+    !eventSessionId || !currentSessionId.value || eventSessionId === currentSessionId.value;
+  if (belongsToCurrent && turn.id && !committedIds.value.includes(turn.id)) {
+    committedIds.value = [...committedIds.value, turn.id];
+    entries.value.push({
+      kind: 'turn',
+      key: `turn-${turn.id}`,
+      turn: {
+        ...turn,
+        blocks: Array.isArray(turn.blocks) ? turn.blocks.map((block: any) => ({ ...block })) : [],
+      },
+    });
+  }
+  if (eventSessionId) {
+    const doneTitle = (ev as any)?.title;
+    if (doneTitle) applyTitle(eventSessionId, doneTitle);
+    touchSession(eventSessionId);
+  }
+  scrollToBottom();
+}
+
+// ===== 发送 / 停止 =====
+async function sendMessage() {
+  const content = getEditorText().trim();
+  if (!content || isBusy.value) return;
+
+  // 「停止生成」中断的轮次不会有 done 事件；先落进历史，避免下一次 start() 覆盖后消失
+  const pending: any = streamTurn.value;
+  if (pending?.id && !committedIds.value.includes(pending.id) && !suppressedIds.value.includes(pending.id)) {
+    commitTurn(pending, null);
+  }
+
+  const sessionId = currentSessionId.value;
+  entries.value.push({ kind: 'user', key: `user-${Date.now()}`, content });
+  clearEditor();
+  scrollToBottom();
+
+  try {
+    await stream.run({
+      content,
+      model: effectiveModel.value,
+      reasoning: effectiveReasoning.value,
+      session_id: sessionId,
+    });
+  } catch (e: any) {
+    // 流内错误已落到 turn.error / stream.error，这里只兜底日志
+    console.warn('[ai-assistant] stream failed:', e?.message || e);
+  } finally {
+    nextTick(() => editorEl.value?.focus());
+  }
+}
+
+function stopGenerating() {
+  stream.stop();
 }
 
 // ===== 滚动到底部 =====
@@ -502,6 +978,9 @@ function scrollToBottom() {
   });
 }
 
+watch(liveTurn, () => scrollToBottom(), { deep: true });
+watch(() => entries.value.length, () => scrollToBottom());
+
 // ===== 快速建议点击 =====
 function sendSuggestion(text: string) {
   setEditorText(text);
@@ -509,20 +988,21 @@ function sendSuggestion(text: string) {
 }
 
 // ===== 文件上下文 =====
-function updateScopeFromTags() {
-  // V3 仅保留全局 scope，文件作为编辑器上下文附加在消息中
-  currentScope.value = 'global';
-  currentScopeRef.value = null;
-}
-
 function removeTag(idx: number) {
   attachedTags.value.splice(idx, 1);
-  updateScopeFromTags();
   renderResourceChips();
 }
 
 function toggleResourceSelector() {
   showResourceSelector.value = !showResourceSelector.value;
+}
+
+function clearCurrentChat() {
+  if (entries.value.length === 0 && !liveTurn.value) return;
+  if (!confirm('确认清空当前对话所有消息？')) return;
+  stopActiveStream();
+  entries.value = [];
+  committedIds.value = [];
 }
 
 // ===== 文件上传 =====
@@ -545,22 +1025,15 @@ function handleFileUpload(event: Event) {
     else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) icon = 'ri-file-zip-line';
     else if (['doc', 'docx'].includes(ext)) icon = 'ri-file-word-2-line';
     else if (['xls', 'xlsx', 'csv'].includes(ext)) icon = 'ri-file-excel-2-line';
-    else if (['js', 'ts', 'jsx', 'tsx', 'vue', 'py', 'java', 'cpp', 'c', 'h', 'html', 'css', 'json', 'xml', 'yml', 'yaml', 'toml', 'php'].includes(ext)) icon = 'ri-code-line';
-    attachedTags.value.push({
-      type: 'file',
-      icon,
-      name: file.name,
-      file
-    });
+    else if (
+      ['js', 'ts', 'jsx', 'tsx', 'vue', 'py', 'java', 'cpp', 'c', 'h', 'html', 'css', 'json', 'xml', 'yml', 'yaml', 'toml', 'php'].includes(ext)
+    )
+      icon = 'ri-code-line';
+    attachedTags.value.push({ type: 'file', icon, name: file.name, file });
   }
   // 重置 input 以便可以重复选择同一文件
   target.value = '';
   renderResourceChips();
-}
-function clearCurrentChat() {
-  if (messages.value.length === 0) return;
-  if (!confirm('确认清空当前对话所有消息？')) return;
-  messages.value = [];
 }
 
 // ===== 语音输入切换 =====
@@ -570,13 +1043,11 @@ function toggleVoiceInput() {
     return;
   }
   if (isVoiceRecording.value) {
-    if (recognition) {
-      recognition.stop();
-    }
+    if (recognition) recognition.stop();
     isVoiceRecording.value = false;
     return;
   }
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
   recognition = new SpeechRecognition();
   recognition.lang = 'zh-CN';
   recognition.continuous = false;
@@ -586,9 +1057,7 @@ function toggleVoiceInput() {
     const current = getEditorText();
     setEditorText(current + (current ? '\n' : '') + transcript);
     isVoiceRecording.value = false;
-    if (editorEl.value) {
-      editorEl.value.focus();
-    }
+    editorEl.value?.focus();
   };
   recognition.onerror = () => {
     isVoiceRecording.value = false;
@@ -603,7 +1072,6 @@ function toggleVoiceInput() {
 // ===== 富文本编辑器辅助函数 =====
 function getEditorText(): string {
   if (!editorEl.value) return '';
-  // 提取纯文本，忽略资源卡片
   const el = editorEl.value;
   let text = '';
   el.childNodes.forEach(node => {
@@ -625,6 +1093,7 @@ function getEditorText(): string {
 function setEditorText(text: string) {
   if (!editorEl.value) return;
   editorEl.value.textContent = text;
+  editorText.value = text;
   renderResourceChips();
 }
 
@@ -636,11 +1105,7 @@ function clearEditor() {
 }
 
 function onEditorEnter(e: KeyboardEvent) {
-  if (e.shiftKey) {
-    // Shift+Enter 换行，由浏览器默认行为处理
-    return;
-  }
-  // Enter 发送
+  if (e.shiftKey) return;
   e.preventDefault();
   sendMessage();
 }
@@ -652,16 +1117,15 @@ function onEditorInput() {
 function onEditorPaste(e: ClipboardEvent) {
   e.preventDefault();
   const text = e.clipboardData?.getData('text/plain') || '';
-  if (text) {
-    // 插入纯文本
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) {
-      const range = sel.getRangeAt(0);
-      range.deleteContents();
-      range.insertNode(document.createTextNode(text));
-      range.collapse(false);
-    }
+  if (!text) return;
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0) {
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(document.createTextNode(text));
+    range.collapse(false);
   }
+  editorText.value = getEditorText();
 }
 
 function renderResourceChips() {
@@ -689,14 +1153,10 @@ function renderResourceChips() {
       chip.className = `resource-chip ${tag.type}`;
       chip.contentEditable = 'false';
       chip.setAttribute('data-idx', String(idx));
-      chip.innerHTML = `<span class="chip-icon"><svg>...</svg></span><span class="chip-name">${escapeHtml(tag.name)}</span><span class="chip-remove" data-idx="${idx}">&times;</span>`;
-      // 用实际 icon 文本替代 SVG 占位符
+      chip.innerHTML = `<span class="chip-icon"></span><span class="chip-name">${escapeHtml(tag.name)}</span><span class="chip-remove" data-idx="${idx}">&times;</span>`;
       const iconSpan = chip.querySelector('.chip-icon');
-      if (iconSpan) {
-        iconSpan.textContent = '📎';
-      }
+      if (iconSpan) iconSpan.textContent = '📎';
       frag.appendChild(chip);
-      // 添加空格分隔
       frag.appendChild(document.createTextNode(' '));
     });
     el.insertBefore(frag, el.firstChild);
@@ -720,14 +1180,13 @@ function renderResourceChips() {
         sel?.addRange(newRange);
       }
     } catch {
-      // 如果恢复失败，将光标放到末尾
       el.focus();
     }
   }
 
   // 绑定删除事件
   el.querySelectorAll('.chip-remove').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', e => {
       e.preventDefault();
       e.stopPropagation();
       const idx = parseInt((btn as HTMLElement).getAttribute('data-idx') || '0');
@@ -741,129 +1200,15 @@ function escapeHtml(text: string): string {
   div.textContent = text;
   return div.innerHTML;
 }
-async function sendMessage() {
-  const content = getEditorText().trim();
-  if (!content || sending.value) return;
-
-  sending.value = true;
-  // 本地预览
-  const previewId = Date.now();
-  messages.value.push({
-    id: previewId,
-    role: 'user',
-    content
-  });
-  clearEditor();
-  scrollToBottom();
-
-  // 统一走流式输出（服务端对规则引擎与真实模型均为 token 级流式）
-  await sendStreaming(content);
-}
-
-// ===== 流式发送 =====
-async function sendStreaming(content: string) {
-  streamingActive.value = true;
-  const streamingMsgId = Date.now() + 1;
-  // 创建占位消息
-  messages.value.push({
-    id: streamingMsgId,
-    role: 'assistant',
-    content: ''
-  });
-  scrollToBottom();
-
-  try {
-    const response = await aiApi.sendStream(
-      currentSessionId.value,
-      content,
-      currentScope.value,
-      currentScopeRef.value,
-      selectedModel.value
-    );
-
-    if (!response.ok) {
-      throw new Error('HTTP ' + response.status);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('不支持流式读取');
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6).trim();
-        if (!data) continue;
-
-        try {
-          const parsed = JSON.parse(data);
-          if (parsed.session_id) {
-            currentSessionId.value = parsed.session_id;
-            await loadSessions();
-          } else if (parsed.tool_call) {
-            const toolNames: Record<string, string> = {
-              get_editor_content: '读取编辑器内容',
-              set_editor_content: '修改编辑器内容',
-              search_in_content: '搜索文件内容',
-            };
-            const toolName = toolNames[parsed.tool_call] || parsed.tool_call;
-            const msg = messages.value.find(m => m.id === streamingMsgId);
-            if (msg) msg.content = `🔧 ${toolName}...`;
-            scrollToBottom();
-          } else if (parsed.apply_edit) {
-            const msg = messages.value.find(m => m.id === streamingMsgId);
-            if (msg) msg.content = `✅ 已应用修改（${parsed.apply_edit.length} 字符）`;
-            scrollToBottom();
-          } else if (parsed.token) {
-            // 追加到流式消息
-            const msg = messages.value.find(m => m.id === streamingMsgId);
-            if (msg) {
-              if (msg.content.startsWith('🔧') || msg.content.startsWith('✅')) msg.content = '';
-              msg.content += parsed.token;
-            }
-            scrollToBottom();
-          }
-          // done 信号忽略
-        } catch { /* 忽略解析错误 */ }
-      }
-    }
-  } catch (e: any) {
-    const msg = messages.value.find(m => m.id === streamingMsgId);
-    if (msg && !msg.content) {
-      msg.content = '出错：' + (e.message || '请求失败');
-    }
-  } finally {
-    sending.value = false;
-    streamingActive.value = false;
-    if (editorEl.value) {
-      editorEl.value.focus();
-    }
-  }
-}
 
 // ===== 模型管理 =====
 async function loadCustomModels() {
   try {
     const list = await aiApi.listModels();
-    customModels.value = list || [];
-    // 动态添加自定义模型到模型选择下拉
-    updateModelOptions();
+    customModels.value = Array.isArray(list) ? list : [];
   } catch {
     customModels.value = [];
   }
-}
-
-function updateModelOptions() {
-  // 自定义模型已通过 v-for 绑定，无需额外处理
 }
 
 function openNewModelForm() {
@@ -879,7 +1224,7 @@ function editModel(m: any) {
     provider: m.provider,
     model_id: m.model_id || '',
     endpoint: m.endpoint || '',
-    api_key: ''
+    api_key: '',
   };
   showModelForm.value = true;
 }
@@ -891,8 +1236,14 @@ function cancelModelForm() {
 
 async function saveModel() {
   const { name, provider, model_id, endpoint, api_key } = modelForm.value;
-  if (!name.trim()) { alert('请输入模型名称'); return; }
-  if (!provider) { alert('请选择提供商'); return; }
+  if (!name.trim()) {
+    alert('请输入模型名称');
+    return;
+  }
+  if (!provider) {
+    alert('请选择提供商');
+    return;
+  }
   try {
     if (editingModelId.value) {
       const data: any = { name: name.trim(), provider, model_id: model_id.trim(), endpoint: endpoint.trim() };
@@ -904,7 +1255,7 @@ async function saveModel() {
         provider,
         model_id: model_id.trim(),
         endpoint: endpoint.trim(),
-        api_key: api_key.trim()
+        api_key: api_key.trim(),
       });
     }
     showModelForm.value = false;
@@ -927,12 +1278,9 @@ async function deleteModelConfirm(m: any) {
 
 async function testModel(id: number) {
   try {
-    const res = await aiApi.testModel(id);
-    if (res.ok) {
-      alert('连接测试成功！');
-    } else {
-      alert('连接失败：' + (res.error || '未知错误'));
-    }
+    const res: any = await aiApi.testModel(id);
+    if (res?.ok) alert('连接测试成功！');
+    else alert('连接失败：' + (res?.error || '未知错误'));
   } catch (e: any) {
     alert('测试失败：' + (e.message || '网络错误'));
   }
@@ -952,15 +1300,17 @@ onMounted(async () => {
   if (sessionId) {
     switchSession(Number(sessionId));
   }
-  if (editorEl.value) {
-    editorEl.value.focus();
-  }
+  nextTick(() => editorEl.value?.focus());
 });
 
 // 监听 attachedTags 变化，自动渲染资源卡片
-watch(attachedTags, () => {
-  nextTick(() => renderResourceChips());
-}, { deep: true });
+watch(
+  attachedTags,
+  () => {
+    nextTick(() => renderResourceChips());
+  },
+  { deep: true },
+);
 </script>
 
 <style scoped>
@@ -2040,5 +2390,129 @@ watch(attachedTags, () => {
   margin-top: var(--spacer-2);
 }
 
+/* ===== v4：会话分组 / 置顶徽标 / 行内重命名 ===== */
+.session-group-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: var(--spacer-2) var(--spacer-2) 4px;
+  margin-top: var(--spacer-1);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+  user-select: none;
+}
 
+.session-item.pinned .session-icon {
+  color: var(--accent-base);
+}
+
+.session-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.session-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.current-session-info .session-title {
+  min-width: 0;
+}
+
+.current-session-info .session-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-pin {
+  flex-shrink: 0;
+  color: var(--accent-base);
+}
+
+.session-title-spin {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.rename-input {
+  width: 100%;
+  height: 22px;
+  padding: 0 6px;
+  background: var(--ctrl-fill-input-active);
+  border: 1px solid var(--accent-base);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.session-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: var(--spacer-6) var(--spacer-2);
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+  text-align: center;
+}
+
+/* ===== v4：消息轮次（AiTurnView 外壳）===== */
+.chat-turn {
+  display: flex;
+  gap: var(--spacer-3);
+  margin-bottom: var(--spacer-4);
+}
+
+.turn-avatar {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+}
+
+.turn-body {
+  flex: 1;
+  min-width: 0;
+  max-width: calc(100% - 48px);
+}
+
+/* 历史用户消息：纯文本渲染，保留换行 */
+.message-bubble.user-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ===== v4：流式错误条 / 停止按钮 ===== */
+.stream-error-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 4px var(--spacer-4) 0;
+  box-sizing: border-box;
+  color: var(--status-error);
+  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+}
+
+.send-btn.stop-btn {
+  background: var(--status-error);
+}
+
+.send-btn.stop-btn:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
 </style>

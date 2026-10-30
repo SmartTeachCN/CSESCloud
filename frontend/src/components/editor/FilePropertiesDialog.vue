@@ -30,9 +30,21 @@
             <Icon icon="ri-git-branch-line" :size="13" />
             <span>分发配置</span>
           </button>
+          <button
+            v-if="canShowShareTab"
+            class="fp-tab"
+            :class="{ active: activeTab === 'share' }"
+            @click="activeTab = 'share'"
+          >
+            <Icon icon="ri-share-forward-line" :size="13" />
+            <span>分享</span>
+          </button>
         </div>
 
-        <div class="fp-body" :class="{ distribution: activeTab === 'distribution' }">
+        <div
+          class="fp-body"
+          :class="{ distribution: activeTab === 'distribution', share: activeTab === 'share' }"
+        >
           <div v-if="activeTab === 'props'" class="fp-props">
             <div v-for="row in rows" :key="row.label" class="fp-prop">
               <span class="fp-prop-label">{{ row.label }}</span>
@@ -44,7 +56,23 @@
             </div>
           </div>
 
-          <template v-else-if="canDistribute && distributionFile">
+          <template v-else-if="activeTab === 'share' && canShowShareTab && shareFile">
+            <div class="fp-share">
+              <ShareDialog
+                :visible="visible"
+                :resource-type="'cloud_file'"
+                :resource-id="shareFile.id"
+                :resource-name="shareFile.name"
+                :resource-icon="shareFile.icon || 'ri-file-line'"
+                embedded
+                @created="onShareChanged"
+                @updated="onShareChanged"
+                @close="emit('close')"
+              />
+            </div>
+          </template>
+
+          <template v-else-if="activeTab === 'distribution' && canDistribute && distributionFile">
             <DistributionDialog
               :visible="visible"
               :file="distributionFile"
@@ -68,6 +96,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import DistributionDialog from './DistributionDialog.vue';
+import ShareDialog from './panels/ShareDialog.vue';
 
 interface FilePropertyInfo {
   name: string;
@@ -82,7 +111,14 @@ interface FilePropertyInfo {
   distributedCount: number;
 }
 
-type PropertyTab = 'props' | 'distribution';
+/** 分享页嵌入用的文件引用（仅云端自己拥有的非目录文件） */
+interface ShareFileRef {
+  id: number | string;
+  name: string;
+  icon?: string;
+}
+
+type PropertyTab = 'props' | 'distribution' | 'share';
 
 const props = defineProps<{
   visible: boolean;
@@ -91,18 +127,35 @@ const props = defineProps<{
   distributionFile: { id: string; name: string; icon?: string } | null;
   overview: any;
   canDistribute?: boolean;
+  /** 可分享的文件（云端 own 非目录文件）；为 null 时不显示分享 Tab */
+  shareFile?: ShareFileRef | null;
+  /** 是否允许分享（需同时提供 shareFile） */
+  canShare?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'saved', instance?: any): void;
+  /** 分享创建/更新/删除后通知父级刷新（文件列表/分发徽标等） */
+  (e: 'share-updated'): void;
+  (e: 'updated'): void;
 }>();
+
+const canShowShareTab = computed(() => !!props.canShare && !!props.shareFile);
 
 const activeTab = ref<PropertyTab>('props');
 
 function resetTab() {
   const canDistribute = !!props.canDistribute && !!props.distributionFile;
-  activeTab.value = canDistribute && props.initialTab === 'distribution' ? 'distribution' : 'props';
+  if (props.initialTab === 'share' && canShowShareTab.value) {
+    activeTab.value = 'share';
+    return;
+  }
+  if (props.initialTab === 'distribution' && canDistribute) {
+    activeTab.value = 'distribution';
+    return;
+  }
+  activeTab.value = 'props';
 }
 
 watch(
@@ -128,6 +181,11 @@ watch(
   }
 );
 
+// 分享能力缺失时回退到属性页
+watch(canShowShareTab, (canShare) => {
+  if (!canShare && activeTab.value === 'share') activeTab.value = 'props';
+});
+
 const rows = computed<Array<{ label: string; value: string; mono?: boolean }>>(() => {
   const info = props.info;
   if (!info) return [];
@@ -147,6 +205,12 @@ const rows = computed<Array<{ label: string; value: string; mono?: boolean }>>((
 
 function onDistributionSaved(instance?: any) {
   emit('saved', instance);
+}
+
+/** 分享创建/更新/删除后：通知属性页刷新分享状态，并让父级刷新文件列表/徽标 */
+function onShareChanged() {
+  emit('share-updated');
+  emit('updated');
 }
 </script>
 
@@ -262,6 +326,23 @@ function onDistributionSaved(instance?: any) {
   display: flex;
   flex-direction: column;
   min-height: 360px;
+}
+
+/* 分享 Tab：由内嵌 ShareDialog 自己管理滚动，避免双重滚动条 */
+.fp-body.share {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.fp-share {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .fp-props {

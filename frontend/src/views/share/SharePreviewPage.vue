@@ -48,7 +48,11 @@
             </div>
             <div class="info-row">
               <span class="info-label">分享权限</span>
-              <span class="info-value">{{ shareData.permission === 'edit' ? '可查看和编辑' : '仅查看' }}</span>
+              <span class="info-value">{{ permissionLabel }}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">可执行操作</span>
+              <span class="info-value">{{ canEdit ? '查看 + 编辑' : '仅查看' }}</span>
             </div>
           </div>
 
@@ -59,17 +63,17 @@
             </template>
             <template v-else-if="isOwner">
               <p class="action-hint">这是你自己的分享</p>
-              <button class="btn btn-primary" @click="goToResource">查看资源</button>
+              <button class="btn btn-primary" @click="goToResource">{{ canEdit ? '打开并编辑' : '查看资源' }}</button>
             </template>
             <template v-else-if="alreadyAccepted">
               <div class="accepted-badge">
                 <Icon icon="ri-check-line" :size="16" />
                 <span>已接受此分享</span>
               </div>
-              <button class="btn btn-primary" @click="goToResource">查看资源</button>
+              <button class="btn btn-primary" @click="goToResource">{{ canEdit ? '打开并编辑' : '查看资源' }}</button>
             </template>
             <template v-else>
-              <p class="action-hint">{{ shareData.owner_username }} 邀请你查看{{ resourceTypeLabel }}</p>
+              <p class="action-hint">{{ shareData.owner_username }} 邀请你{{ canEdit ? '编辑' : '查看' }}{{ resourceTypeLabel }}</p>
               <div class="action-buttons">
                 <button class="btn btn-primary" @click="acceptShare" :disabled="accepting">
                   <Icon :icon="accepting ? 'ri-loader-4-line' : 'ri-check-line'" :size="14" :class="{ spin: accepting }" />
@@ -116,6 +120,26 @@ const resourceIcon = computed(() => {
 const resourceTypeLabel = computed(() => {
   return '文件';
 });
+
+/** 四档权限中文标签（兼容旧值 view/edit） */
+const PERMISSION_LABELS: Record<string, string> = {
+  view_file: '查看文件',
+  view_instance: '查看实例',
+  edit_file: '可查看和编辑',
+  edit_instance: '可查看编辑并管理实例',
+};
+
+const normalizedPermission = computed(() => {
+  const raw = String(shareData.value?.permission ?? '').trim();
+  if (raw === 'view') return 'view_file';
+  if (raw === 'edit') return 'edit_file';
+  return raw && raw in PERMISSION_LABELS ? raw : 'view_file';
+});
+
+const permissionLabel = computed(() => PERMISSION_LABELS[normalizedPermission.value] || '查看文件');
+
+/** 是否具备编辑能力（edit_file / edit_instance） */
+const canEdit = computed(() => normalizedPermission.value.startsWith('edit_'));
 
 const isOwner = computed(() => {
   if (!user.value || !shareData.value) return false;

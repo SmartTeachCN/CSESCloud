@@ -41,6 +41,96 @@ defineExpose({
     editor.focus();
     editor.trigger('keyboard', 'editor.action.gotoLine', '');
   },
+  /** 读取当前选区文本（无编辑器 / 无选区时返回空字符串） */
+  getSelection: (): string => {
+    if (!editor) return '';
+    const model = editor.getModel();
+    const selection = editor.getSelection();
+    if (!model || !selection) return '';
+    try {
+      return model.getValueInRange(selection) || '';
+    } catch {
+      return '';
+    }
+  },
+  /** 用文本替换当前选区；无选区时等价于在光标处插入。返回是否生效 */
+  replaceSelection: (text: string): boolean => {
+    if (!editor) return false;
+    const selection = editor.getSelection();
+    if (!selection) return false;
+    try {
+      editor.executeEdits('ai-assistant', [
+        { range: selection, text: String(text ?? ''), forceMoveMarkers: true },
+      ]);
+      editor.pushUndoStop();
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  /** 在光标处插入文本。返回是否生效 */
+  insertText: (text: string): boolean => {
+    if (!editor || !monaco) return false;
+    const position = editor.getPosition();
+    if (!position) return false;
+    try {
+      const range = new monaco.Range(
+        position.lineNumber,
+        position.column,
+        position.lineNumber,
+        position.column,
+      );
+      editor.executeEdits('ai-assistant', [
+        { range, text: String(text ?? ''), forceMoveMarkers: true },
+      ]);
+      editor.pushUndoStop();
+      editor.focus();
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  /** 跳转到指定行（1 起，超出范围会夹紧）。返回是否生效 */
+  gotoLineAt: (n: number): boolean => {
+    if (!editor) return false;
+    const model = editor.getModel();
+    const total = model?.getLineCount?.() || 1;
+    const line = Math.min(Math.max(1, Math.floor(Number(n) || 1)), Math.max(1, total));
+    try {
+      editor.revealLineInCenter(line);
+      editor.setPosition({ lineNumber: line, column: 1 });
+      editor.focus();
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  getScrollTop: (): number => {
+    try {
+      return editor?.getScrollTop?.() ?? 0;
+    } catch {
+      return 0;
+    }
+  },
+  setScrollTop: (v: number): boolean => {
+    if (!editor) return false;
+    try {
+      editor.setScrollTop(Math.max(0, Number(v) || 0));
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  /** 把某一行滚动到可视区中间 */
+  revealLine: (n: number): boolean => {
+    if (!editor) return false;
+    try {
+      editor.revealLineInCenter(Math.max(1, Math.floor(Number(n) || 1)));
+      return true;
+    } catch {
+      return false;
+    }
+  },
 });
 
 // 语言映射

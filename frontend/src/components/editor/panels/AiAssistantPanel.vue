@@ -4,6 +4,7 @@
       <div class="ai-title">
         <Icon icon="ri-brain-line" :size="14" />
         <span>AI 助理</span>
+        <span v-if="isStreaming" class="live-dot" title="正在生成"></span>
       </div>
       <div class="ai-header-actions">
         <button class="header-btn" @click="startNewSession" title="新会话">
@@ -16,27 +17,34 @@
     </div>
 
     <div class="ai-messages" ref="messagesEl">
-      <div v-if="messages.length === 0" class="ai-empty">
+      <div v-if="items.length === 0 && !shownLive" class="ai-empty">
         <Icon icon="ri-chat-3-line" :size="32" />
         <p>{{ emptyHint }}</p>
       </div>
-      <div
-        v-for="msg in messages"
-        :key="msg.id"
-        class="ai-msg"
-        :class="msg.role"
-      >
-        <div class="msg-avatar">
-          <Icon :icon="msg.role === 'user' ? 'ri-user-line' : 'ri-robot-line'" :size="14" />
+
+      <template v-for="item in items" :key="item.key">
+        <div v-if="item.role === 'user'" class="ai-msg user">
+          <div class="msg-avatar">
+            <Icon icon="ri-user-line" :size="14" />
+          </div>
+          <div class="msg-content user-md" v-html="renderUserMarkdown(item.content || '')"></div>
         </div>
-        <div class="msg-content" v-html="renderMarkdown(msg.content)"></div>
-      </div>
-      <div v-if="sending && !streamingActive" class="ai-msg assistant">
+        <div v-else-if="item.turn" class="ai-msg assistant">
+          <div class="msg-avatar">
+            <Icon icon="ri-robot-line" :size="14" />
+          </div>
+          <div class="turn-body">
+            <AiTurnView :turn="item.turn" :live="false" @answer-ask="onAnswerAsk" />
+          </div>
+        </div>
+      </template>
+
+      <div v-if="shownLive" class="ai-msg assistant">
         <div class="msg-avatar">
           <Icon icon="ri-robot-line" :size="14" />
         </div>
-        <div class="msg-content typing">
-          <span></span><span></span><span></span>
+        <div class="turn-body">
+          <AiTurnView :turn="shownLive" live @answer-ask="onAnswerAsk" />
         </div>
       </div>
     </div>
@@ -63,33 +71,45 @@
       <textarea
         v-model="input"
         class="ai-input"
-        placeholder="输入问题（Enter 发送）"
+        :placeholder="isStreaming ? '正在生成回复…' : '输入问题（Enter 发送，Shift+Enter 换行）'"
         @keydown.enter.exact.prevent="send"
       ></textarea>
-      <button class="ai-send" :disabled="sending || !input.trim()" @click="send">
-        <Icon :icon="sending ? 'ri-loader-4-line' : 'ri-send-plane-line'" :size="14" :class="{ spin: sending }" />
+      <button
+        v-if="isStreaming"
+        class="ai-send stop"
+        title="停止生成"
+        @click="stopStream"
+      >
+        <Icon icon="ri-stop-fill" :size="14" />
+      </button>
+      <button
+        v-else
+        class="ai-send"
+        :disabled="sending || !input.trim()"
+        :title="sending ? '正在收尾上一轮…' : '发送'"
+        @click="send"
+      >
+        <Icon icon="ri-send-plane-line" :size="14" />
       </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { marked } from 'marked';
 import CustomSelect from '../../CustomSelect.vue';
+import AiTurnView from '../../ai/AiTurnView.vue';
 import { aiApi } from '../../../api';
+import {
+  useAiStream,
+  parseStoredMessage,
+  type AiTurn,
+} from '../../../composables/useAiStream';
+import { useAiEditorBridge } from '../../../composables/useAiEditorBridge';
 
 marked.use({ breaks: true, gfm: true });
-
-function renderMarkdown(text: string): string {
-  if (!text) return '';
-  try {
-    return marked.parse(text, { breaks: true, gfm: true }) as string;
-  } catch {
-    return text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-}
 
 const props = defineProps<{
   scope: string;
@@ -104,21 +124,34 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'applyEdit', payload: { content: string; replaceAll?: boolean }): void;
+  (e: 'refresh-cloud-files'): void;
+  (e: 'refresh-instances'): void;
 }>();
 
 const router = useRouter();
 
+/** 已提交到列表的消息（用户消息 + 已结束/历史 AI 回合） */
+interface PanelItem {
+  key: string;
+  role: 'user' | 'assistant';
+  content?: string;
+  turn?: AiTurn;
+}
+
 const input = ref('');
-const messages = ref<any[]>([]);
+const items = ref<PanelItem[]>([]);
 const sessionId = ref<number | null>(null);
-const sending = ref(false);
-const streamingActive = ref(false);
 const messagesEl = ref<HTMLElement | null>(null);
+/** 一轮 send() 是否还在执行（stop() 之后仍可能短暂为 true，用于防止旧 run 未收尾时开新 run） */
+const sending = ref(false);
 
 // 控件
 const selectedModel = ref('default');
 const isVoiceRecording = ref(false);
 const customModels = ref<any[]>([]);
+let recognition: any = null;
+
+const emptyHint = computed(() => '向 AI 助理提问（可结合当前文件上下文）');
 
 const panelModelOptions = computed(() => {
   const opts = [{ value: 'default', label: '默认', icon: 'ri-brain-line' }];
@@ -127,34 +160,135 @@ const panelModelOptions = computed(() => {
   }
   return opts;
 });
-let recognition: any = null;
 
-const emptyHint = computed(() => {
-  return '向 AI 助理提问（可结合当前文件上下文）';
+// ===== 编辑器桥（客户端工具执行通道） =====
+const editorBridge = useAiEditorBridge();
+
+const NO_EDITOR = '当前页面没有可操作的编辑器';
+
+// ===== 流式桥接 =====
+const stream = useAiStream({
+  request: (action, body, signal) => aiApi.aiRequest(action, body, signal),
+  onSessionId: (id) => {
+    sessionId.value = id;
+  },
+  onPatch: (patch) => {
+    const refresh = typeof patch === 'string' ? patch : patch && typeof patch === 'object' ? patch.refresh : null;
+    if (refresh === 'cloud-files') emit('refresh-cloud-files');
+    else if (refresh === 'instances') emit('refresh-instances');
+  },
+  executeClientTool: async (block) => {
+    if (!editorBridge.available.value) return { ok: false, result: NO_EDITOR };
+    try {
+      return await editorBridge.executeClientTool(block.name, block.args);
+    } catch (e: any) {
+      return { ok: false, result: '编辑器操作失败：' + (e?.message || e) };
+    }
+  },
+  hasEditor: () => editorBridge.available.value,
 });
 
+const isStreaming = computed(() => stream.isStreaming.value);
+
+/** 已从列表移除、不应再展示的回合 id（useAiStream 结束后 turn 仍保留在 ref 上） */
+const suppressedTurnIds = ref<string[]>([]);
+
+/** 直播中的回合：还没提交到 items 的当前 turn */
+const shownLive = computed<AiTurn | null>(() => {
+  const turn = stream.turn.value;
+  if (!turn) return null;
+  if (suppressedTurnIds.value.includes(turn.id)) return null;
+  if (items.value.some((it) => it.turn && it.turn.id === turn.id)) return null;
+  return turn;
+});
+
+/** 提交回合快照到消息列表（深拷贝，避免后续流式/复用修改历史） */
+function commitTurn(turn: AiTurn | null) {
+  if (!turn || !Array.isArray(turn.blocks)) return;
+  let snapshot: AiTurn;
+  try {
+    snapshot = JSON.parse(JSON.stringify(turn));
+  } catch {
+    snapshot = { ...turn };
+  }
+  snapshot.startedAt = snapshot.startedAt || Date.now();
+  const idx = items.value.findIndex((it) => it.turn && it.turn.id === snapshot.id);
+  if (idx >= 0) {
+    items.value[idx] = { ...items.value[idx], turn: snapshot };
+  } else {
+    items.value.push({ key: 'turn_' + snapshot.id, role: 'assistant', turn: snapshot });
+  }
+}
+
 // ===== 会话加载 =====
+function rowToItem(row: any, index: number): PanelItem | null {
+  if (!row) return null;
+  const id = row.id ?? row._id ?? `h${index}`;
+  const role = row.role === 'user' ? 'user' : 'assistant';
+  if (role === 'user') {
+    return { key: `user_${id}_${index}`, role: 'user', content: String(row.content ?? '') };
+  }
+  let turn: AiTurn;
+  try {
+    turn = parseStoredMessage(row);
+  } catch {
+    turn = {
+      id: String(id),
+      role: 'assistant',
+      blocks: [{ type: 'text', text: String(row.content ?? '') }],
+      status: 'done',
+      startedAt: 0,
+    };
+  }
+  return { key: `turn_${id}_${index}`, role: 'assistant', turn };
+}
+
 async function loadSession() {
   try {
     const sessions = await aiApi.listSessions(props.scope);
     if (sessions && sessions.length > 0) {
       sessionId.value = sessions[0].id;
-      messages.value = await aiApi.listMessages(sessionId.value);
-      scrollToBottom();
+      const rows = await aiApi.listMessages(sessionId.value);
+      items.value = (rows || [])
+        .map((row: any, i: number) => rowToItem(row, i))
+        .filter((it: PanelItem | null): it is PanelItem => !!it);
+      scrollToBottom(true);
     }
   } catch {
-    // 静默忽略
+    // 静默忽略：无历史 / 接口不可用时保持空列表
   }
 }
 
+// 会话代际：点「新会话」后，之前尚未结束的 run 不允许再把结果提交回列表
+let runGeneration = 0;
+
 function startNewSession() {
+  runGeneration += 1;
+  const current = stream.turn.value;
+  if (current) {
+    suppressedTurnIds.value = [...suppressedTurnIds.value, current.id];
+    releasePendingAsk(current);
+  }
+  stream.stop();
   sessionId.value = null;
-  messages.value = [];
+  items.value = [];
+  input.value = '';
+}
+
+/**
+ * 若当前回合停在提问卡上，先把挂起的 run 解开。
+ * useAiStream 的 waitForAsk() 只有 answerAsk() 会 resolve；不清掉的话，
+ * 被 stop()/新会话打断的 run 会永远挂在 await 上（Promise 泄漏）。
+ * answerAsk 之后 stop() 置 stoppedByUser，续跑循环会在检查处直接退出，不会发 resume 请求。
+ */
+function releasePendingAsk(turn: AiTurn) {
+  const blocks = Array.isArray(turn.blocks) ? turn.blocks : [];
+  const pending = blocks.find((b) => b.type === 'ask' && b.status === 'pending');
+  if (pending && pending.type === 'ask') stream.answerAsk(pending.id, []);
 }
 
 // ===== 全屏切换 =====
 function openFullScreen() {
-  // 存储当前会话ID到 sessionStorage，全屏页面会读取
   if (sessionId.value) {
     sessionStorage.setItem('ai_active_session', String(sessionId.value));
   }
@@ -171,7 +305,7 @@ function toggleVoice() {
     isVoiceRecording.value = false;
     return;
   }
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
   recognition = new SpeechRecognition();
   recognition.lang = 'zh-CN';
   recognition.continuous = false;
@@ -187,107 +321,121 @@ function toggleVoice() {
   isVoiceRecording.value = true;
 }
 
-// ===== 发送消息 =====
+// ===== 构造带编辑器上下文的消息 =====
+function buildFullContent(content: string): string {
+  if (!props.editorContext) return content;
+  const ctx = props.editorContext;
+  const ctxParts: string[] = [];
+  if (ctx.fileName) ctxParts.push(`当前文件: ${ctx.fileName}`);
+  if (ctx.language) ctxParts.push(`语言: ${ctx.language}`);
+  if (ctx.selection) ctxParts.push(`选中内容:\n\`\`\`\n${ctx.selection}\n\`\`\``);
+  else if (ctx.fileContent) ctxParts.push(`文件内容:\n\`\`\`\n${ctx.fileContent}\n\`\`\``);
+  if (ctxParts.length === 0) return content;
+  return `[编辑器上下文]\n${ctxParts.join('\n')}\n\n[用户问题]\n${content}`;
+}
+
+// ===== 发送 / 停止 =====
 async function send() {
   const content = input.value.trim();
-  if (!content || sending.value) return;
-  sending.value = true;
-  const previewId = Date.now();
-  messages.value.push({ id: previewId, role: 'user', content });
+  if (!content || sending.value || stream.isStreaming.value) return;
   input.value = '';
-  scrollToBottom();
+  sending.value = true;
 
-  // 构建包含编辑器上下文的消息
-  let fullContent = content;
-  if (props.editorContext) {
-    const ctx = props.editorContext;
-    const ctxParts: string[] = [];
-    if (ctx.fileName) ctxParts.push(`当前文件: ${ctx.fileName}`);
-    if (ctx.language) ctxParts.push(`语言: ${ctx.language}`);
-    if (ctx.selection) ctxParts.push(`选中内容:\n\`\`\`\n${ctx.selection}\n\`\`\``);
-    else if (ctx.fileContent) ctxParts.push(`文件内容:\n\`\`\`\n${ctx.fileContent}\n\`\`\``);
-    if (ctxParts.length > 0) {
-      fullContent = `[编辑器上下文]\n${ctxParts.join('\n')}\n\n[用户问题]\n${content}`;
-    }
-  }
+  items.value.push({
+    key: `user_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    role: 'user',
+    content,
+  });
+  scrollToBottom(true);
 
-  // 统一走流式输出（服务端对规则引擎与真实模型均为 token 级流式）
-  await sendStreaming(fullContent);
-}
-
-async function sendStreaming(content: string) {
-  streamingActive.value = true;
-  const streamingMsgId = Date.now() + 1;
-  messages.value.push({ id: streamingMsgId, role: 'assistant', content: '' });
-  scrollToBottom();
-
+  const gen = ++runGeneration;
   try {
-    const response = await aiApi.sendStream(sessionId.value, content, props.scope, props.scopeRef, selectedModel.value);
-    if (!response.ok) throw new Error('HTTP ' + response.status);
-
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('不支持流式读取');
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const data = line.slice(6).trim();
-        if (!data) continue;
-        try {
-          const parsed = JSON.parse(data);
-          if (parsed.session_id) sessionId.value = parsed.session_id;
-          else if (parsed.tool_call) {
-            // AI 正在调用工具
-            const toolNames: Record<string, string> = {
-              get_editor_content: '读取编辑器内容',
-              set_editor_content: '修改编辑器内容',
-              search_in_content: '搜索文件内容',
-            };
-            const toolName = toolNames[parsed.tool_call] || parsed.tool_call;
-            const msg = messages.value.find(m => m.id === streamingMsgId);
-            if (msg) msg.content = `🔧 ${toolName}...`;
-            scrollToBottom();
-          }
-          else if (parsed.apply_edit) {
-            // AI 修改了编辑器，通知父组件
-            emit('applyEdit', { content: parsed.apply_edit, replaceAll: true });
-            const msg = messages.value.find(m => m.id === streamingMsgId);
-            if (msg) msg.content = `✅ 已应用修改（${parsed.apply_edit.length} 字符）`;
-            scrollToBottom();
-          }
-          else if (parsed.token) {
-            const msg = messages.value.find(m => m.id === streamingMsgId);
-            if (msg) {
-              // 清除工具状态消息，开始显示实际回复
-              if (msg.content.startsWith('🔧') || msg.content.startsWith('✅')) msg.content = '';
-              msg.content += parsed.token;
-            }
-            scrollToBottom();
-          }
-        } catch { /* ignore */ }
-      }
-    }
-  } catch (e: any) {
-    const msg = messages.value.find(m => m.id === streamingMsgId);
-    if (msg && !msg.content) msg.content = '出错：' + (e.message || '请求失败');
+    const turn = await stream.run({
+      content: buildFullContent(content),
+      model: selectedModel.value === 'default' ? undefined : selectedModel.value,
+      session_id: sessionId.value,
+      scope: props.scope,
+      scope_ref: props.scopeRef ?? null,
+    });
+    // 期间点了「新会话」：丢弃这一轮，避免旧回合被提交进新会话列表
+    if (gen !== runGeneration) return;
+    commitTurn(turn);
+  } catch {
+    if (gen !== runGeneration) return;
+    // useAiStream 内部会落 turn.error；这里只兜底极端情况
+    commitTurn(stream.turn.value);
   } finally {
     sending.value = false;
-    streamingActive.value = false;
+    scrollToBottom();
   }
 }
 
-function scrollToBottom() {
+function stopStream() {
+  const turn = stream.turn.value;
+  if (turn) releasePendingAsk(turn);
+  stream.stop();
+}
+
+// ===== 提问卡 =====
+function onAnswerAsk(id: string, answers: string[]) {
+  const turn = stream.turn.value;
+  if (!turn) return;
+  const blocks = Array.isArray(turn.blocks) ? turn.blocks : [];
+  const liveAsk = blocks.some(
+    (b) => b.type === 'ask' && b.id === id && b.status === 'pending'
+  );
+  if (!liveAsk) return;
+  stream.answerAsk(id, answers);
+  scrollToBottom();
+}
+
+// ===== 滚动 =====
+function scrollToBottom(force = false) {
   nextTick(() => {
-    if (messagesEl.value) messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
+    const el = messagesEl.value;
+    if (!el) return;
+    if (!force) {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distance > 120) return;
+    }
+    el.scrollTop = el.scrollHeight;
   });
+}
+
+/** 流式增量信号：长度/状态变化时自动贴底 */
+const scrollSignal = computed(() => {
+  const turn = shownLive.value;
+  const blocks = turn && Array.isArray(turn.blocks) ? turn.blocks : [];
+  const size = blocks.reduce(
+    (n, b: any) => n + (b.text?.length || 0) + (b.result?.length || 0) + (b.summary?.length || 0),
+    0
+  );
+  return `${items.value.length}|${size}|${turn?.status || ''}`;
+});
+watch(scrollSignal, () => scrollToBottom(), { flush: 'post' });
+
+// ===== 用户消息 markdown（基础 XSS 防护） =====
+function renderUserMarkdown(text: string): string {
+  if (!text) return '';
+  let html: string;
+  try {
+    html = marked.parse(text, { breaks: true, gfm: true }) as string;
+  } catch {
+    html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  return sanitizeHtml(html);
+}
+
+function sanitizeHtml(html: string): string {
+  return String(html)
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '')
+    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '')
+    .replace(/(href|src)\s*=\s*(["'])\s*javascript:[^"']*\2/gi, '$1="#"')
+    .replace(/(href|src)\s*=\s*javascript:[^\s>]*/gi, '$1="#"');
 }
 
 // ===== 加载自定义模型 =====
@@ -295,7 +443,9 @@ async function loadCustomModels() {
   try {
     const list = await aiApi.listModels();
     customModels.value = list || [];
-  } catch { customModels.value = []; }
+  } catch {
+    customModels.value = [];
+  }
 }
 
 onMounted(() => {
@@ -328,6 +478,15 @@ onMounted(() => {
   font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-radius: var(--radius-full);
+  background: var(--accent-base);
+  animation: ai-live-pulse 1.4s ease-in-out infinite;
 }
 
 .ai-header-actions {
@@ -363,24 +522,6 @@ onMounted(() => {
   border-bottom: 1px solid var(--divider-stroke);
   background: var(--subtle-secondary);
   flex-shrink: 0;
-}
-
-.ctrl-select {
-  margin-left: auto;
-  height: 26px;
-  padding: 0 20px 0 8px;
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border-rest);
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  color: var(--text-secondary);
-  outline: none;
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='12' height='12'%3E%3Cpath d='M12 16L6 10h12z' fill='%23888'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 4px center;
 }
 
 /* CustomSelect 面板版 */
@@ -433,12 +574,7 @@ onMounted(() => {
   background: var(--status-error);
   border-color: var(--status-error);
   color: white;
-  animation: pulse-recording 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse-recording {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
+  animation: ai-live-pulse 1.5s ease-in-out infinite;
 }
 
 /* 消息区域 */
@@ -446,6 +582,7 @@ onMounted(() => {
   flex: 1;
   overflow-y: auto;
   padding: var(--spacer-2);
+  scrollbar-width: thin;
 }
 
 .ai-empty {
@@ -465,12 +602,13 @@ onMounted(() => {
 .ai-msg {
   display: flex;
   gap: var(--spacer-2);
-  margin-bottom: var(--spacer-2);
+  margin-bottom: var(--spacer-3);
 }
 
 .msg-avatar {
   width: 24px;
   height: 24px;
+  margin-top: 1px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -480,62 +618,66 @@ onMounted(() => {
 
 .ai-msg.user .msg-avatar {
   background: var(--accent-base);
-  color: white;
+  color: var(--accent-text);
 }
 
 .ai-msg.assistant .msg-avatar {
   background: var(--subtle-pressed);
   color: var(--text-primary);
+  border: 1px solid var(--divider-stroke);
+}
+
+.turn-body {
+  min-width: 0;
+  flex: 1;
+  padding-top: 1px;
 }
 
 .msg-content {
-  background: var(--subtle-secondary);
+  max-width: calc(100% - 32px);
   padding: var(--spacer-1) var(--spacer-2);
   border-radius: var(--radius-md);
   font-size: var(--font-size-xs);
-  color: var(--text-primary);
   line-height: 1.5;
   word-break: break-word;
 }
 
 .ai-msg.user .msg-content {
   background: var(--accent-base);
-  color: white;
+  color: var(--accent-text);
 }
 
-/* Markdown 渲染 */
-.msg-content :deep(p) { margin: 0 0 0.3em; }
-.msg-content :deep(p:last-child) { margin-bottom: 0; }
-.msg-content :deep(code) {
-  background: rgba(0,0,0,0.08); padding: 1px 4px; border-radius: 2px;
-  font-family: monospace; font-size: 0.9em;
+/* 用户消息里的 Markdown */
+.user-md :deep(p) { margin: 0 0 0.3em; }
+.user-md :deep(p:last-child) { margin-bottom: 0; }
+.user-md :deep(code) {
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
 }
-.ai-msg.user .msg-content :deep(code) { background: rgba(255,255,255,0.2); }
-.msg-content :deep(pre) {
-  background: rgba(0,0,0,0.06); padding: 8px; border-radius: 4px;
-  overflow-x: auto; margin: 0.3em 0;
+.user-md :deep(pre) {
+  margin: 0.3em 0;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-xs);
+  overflow-x: auto;
 }
-.msg-content :deep(pre code) { background: transparent; padding: 0; }
-.ai-msg.user .msg-content :deep(pre) { background: rgba(255,255,255,0.15); }
-.msg-content :deep(ul), .msg-content :deep(ol) { padding-left: 1.2em; margin: 0.2em 0; }
-.msg-content :deep(blockquote) {
-  border-left: 2px solid var(--accent-base); margin: 0.3em 0;
-  padding: 0.1em 0.5em; opacity: 0.85;
+.user-md :deep(pre code) { padding: 0; background: transparent; }
+.user-md :deep(ul), .user-md :deep(ol) { margin: 0.2em 0; padding-left: 1.2em; }
+.user-md :deep(blockquote) {
+  margin: 0.3em 0;
+  padding: 0.1em 0.5em;
+  border-left: 2px solid rgba(255, 255, 255, 0.5);
 }
-.msg-content :deep(table) { border-collapse: collapse; margin: 0.3em 0; }
-.msg-content :deep(th), .msg-content :deep(td) {
-  border: 1px solid var(--divider-stroke); padding: 3px 6px;
+.user-md :deep(a) { color: inherit; text-decoration: underline; }
+.user-md :deep(img) { max-width: 100%; border-radius: var(--radius-xs); }
+.user-md :deep(table) { border-collapse: collapse; }
+.user-md :deep(th), .user-md :deep(td) {
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
 }
-.msg-content :deep(th) { background: rgba(0,0,0,0.04); font-weight: 600; }
-.msg-content :deep(a) { color: inherit; text-decoration: underline; }
-.msg-content :deep(h1), .msg-content :deep(h2), .msg-content :deep(h3) {
-  margin: 0.5em 0 0.15em; font-weight: 600;
-}
-.msg-content :deep(h1) { font-size: 1.1em; }
-.msg-content :deep(h2) { font-size: 1.05em; }
-.msg-content :deep(h3) { font-size: 1em; }
-.msg-content :deep(strong) { font-weight: 600; }
-.msg-content :deep(img) { max-width: 100%; border-radius: 2px; }
 
 /* 输入区 */
 .ai-input-area {
@@ -558,6 +700,10 @@ onMounted(() => {
   font-family: inherit;
 }
 
+.ai-input::placeholder {
+  color: var(--text-tertiary);
+}
+
 .ai-send {
   width: 40px;
   display: flex;
@@ -565,8 +711,9 @@ onMounted(() => {
   justify-content: center;
   background: var(--accent-base);
   border: none;
-  color: white;
+  color: var(--accent-text);
   cursor: pointer;
+  transition: background var(--fast-duration);
 }
 
 .ai-send:hover {
@@ -578,27 +725,17 @@ onMounted(() => {
   cursor: not-allowed;
 }
 
-/* 打字动画 */
-.typing {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 0;
+.ai-send.stop {
+  background: var(--status-error);
+  color: #fff;
 }
 
-.typing span {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--text-tertiary);
-  animation: typing 1.4s infinite ease-in-out both;
+.ai-send.stop:hover {
+  opacity: 0.88;
 }
 
-.typing span:nth-child(1) { animation-delay: -0.32s; }
-.typing span:nth-child(2) { animation-delay: -0.16s; }
-
-@keyframes typing {
-  0%, 80%, 100% { transform: scale(0); }
-  40% { transform: scale(1); }
+@keyframes ai-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 </style>

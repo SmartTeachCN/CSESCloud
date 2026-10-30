@@ -19,6 +19,17 @@ const crypto = require('crypto');
 const { nowStr, dateStr } = require('../lib/response');
 const DB = require('../lib/db');
 const cloudShare = require('../lib/cloud-share');
+const sharePermissions = require('../lib/share-permissions');
+
+/** 文件黑名单检查（按资源 + 用户名）。 */
+function isBlacklisted(DB, resourceType, resourceId, targetUsername) {
+  const name = String(targetUsername || '').trim();
+  if (!name) return false;
+  return !!DB.one(
+    `SELECT id FROM share_blacklist WHERE resource_type = ? AND resource_id = ? AND target_username = ?`,
+    [resourceType, resourceId, name]
+  );
+}
 
 /** 当前用户的分享目标上下文：自身 user_id + 联盟账户绑定的子用户 ID + 联盟用户名。 */
 function shareTargetContext(DB, Auth) {
@@ -90,6 +101,9 @@ module.exports = async (ctx) => {
 
     const now = nowStr();
     if (link.expires_at < now) Response.error('分享已过期');
+    if (isBlacklisted(DB, link.resource_type, link.resource_id, user?.username)) {
+      Response.error('你已被该文件加入黑名单，无法查看此分享', 403, 403);
+    }
 
     // 返回资源内容
     const resourceData = getShareResourceData(link.resource_type, link.resource_id);
@@ -99,7 +113,7 @@ module.exports = async (ctx) => {
       share_id: link.share_id,
       resource_type: link.resource_type,
       resource_name: link.resource_name,
-      permission: link.permission,
+      permission: sharePermissions.normalizePermission(link.permission),
       owner_username: link.owner_username,
       resource: resourceData,
     });
@@ -123,6 +137,9 @@ module.exports = async (ctx) => {
 
     // 不能接受自己的分享
     if (link.owner_key === ownerKey) Response.error('不能接受自己的分享');
+    if (isBlacklisted(DB, link.resource_type, link.resource_id, user?.username)) {
+      Response.error('你已被该文件加入黑名单，无法接受此分享', 403, 403);
+    }
 
     // 检查是否已经接受过（联盟账户也可能通过子用户绑定收到分享）
     const existing = DB.one(
@@ -149,7 +166,7 @@ module.exports = async (ctx) => {
         share_id: link.share_id,
         target_user_id: user.user_id ?? 0,
         target_username: user.username ?? '',
-        permission: link.permission,
+        permission: sharePermissions.normalizePermission(link.permission),
         status: 'accepted',
         accepted_at: now,
         created_at: now,
@@ -181,7 +198,7 @@ module.exports = async (ctx) => {
     const resourceId = parseInt(body.resource_id ?? 0, 10) || 0;
     const resourceName = String(body.resource_name ?? '').trim();
     const shareType = String(body.share_type ?? 'user').trim(); // 'user' or 'link'
-    const permission = String(body.permission ?? 'view').trim();
+    const permission = sharePermissions.normalizePermission(body.permission ?? 'view_file');
     const expiryDays = parseInt(body.expiry_days ?? 7, 10) || 0;
     const targetUsers = body.target_users ?? []; // 用户名数组
     const enablePreviewLink = !Helpers.empty(body.enable_preview_link);
@@ -189,7 +206,7 @@ module.exports = async (ctx) => {
     if (resourceName === '') Response.error('资源名称不能为空');
     if (expiryDays < 1 || expiryDays > 90) Response.error('有效期必须在 1-90 天之间');
     if (resourceType !== 'cloud_file') Response.error('无效的资源类型');
-    if (!['view', 'edit'].includes(permission)) Response.error('无效的权限设置');
+    if (!sharePermissions.isValidPermission(body.permission ?? 'view_file')) Response.error('无效的权限设置');
 
     // 验证资源是否存在且属于当前用户
     const resource = getShareResourceData(resourceType, resourceId);
@@ -251,8 +268,11 @@ module.exports = async (ctx) => {
     if (shareType === 'user' && Array.isArray(targetUsers) && targetUsers.length > 0) {
       for (const targetUser of targetUsers) {
         const targetUsername = typeof targetUser === 'string' ? targetUser.trim() : String((targetUser ?? {}).username ?? '').trim();
-        const targetPermission = typeof targetUser === 'string' ? permission : String((targetUser ?? {}).permission ?? permission).trim();
+        const targetPermission = targetUser && typeof targetUser === 'object' && targetUser.permission
+          ? sharePermissions.normalizePermission(targetUser.permission)
+          : permission;
         if (targetUsername === '' || targetUsername === username) continue;
+        if (isBlacklisted(DB, resourceType, resourceId, targetUsername)) continue; // 黑名单用户不再发放权限
 
         // 查找目标用户
         let targetUserRow = DB.one(`SELECT id, username FROM users WHERE username = ?`, [targetUsername]);
@@ -369,9 +389,10 @@ module.exports = async (ctx) => {
   // ===== 更新单个用户权限 =====
   if (method === 'POST' && action === 'update-permission') {
     const permId = parseInt(body.permission_id ?? 0, 10) || 0;
-    const newPermission = String(body.permission ?? '').trim();
+    const newPermissionRaw = String(body.permission ?? '').trim();
     if (permId <= 0) Response.error('缺少权限记录 ID');
-    if (!['view', 'edit'].includes(newPermission)) Response.error('无效的权限');
+    if (!sharePermissions.isValidPermission(newPermissionRaw)) Response.error('无效的权限');
+    const newPermission = sharePermissions.normalizePermission(newPermissionRaw);
 
     const perm = DB.one(`SELECT sup.*, si.owner_key FROM share_user_permissions sup JOIN share_items si ON si.id = sup.share_id WHERE sup.id = ?`, [permId]);
     if (!perm) Response.error('权限记录不存在');
@@ -419,6 +440,12 @@ module.exports = async (ctx) => {
     );
     if (!perm) Response.error('没有待处理的分享邀请');
 
+    const share = DB.one(`SELECT * FROM share_items WHERE id = ?`, [shareId]);
+    if (!share) Response.error('分享不存在或已删除');
+    if (isBlacklisted(DB, share.resource_type, share.resource_id, username)) {
+      Response.error('你已被该文件加入黑名单，无法接受此分享', 403, 403);
+    }
+
     const now = nowStr();
     DB.update('share_user_permissions', {
       status: 'accepted',
@@ -428,7 +455,6 @@ module.exports = async (ctx) => {
     }, 'id = ?', [perm.id]);
 
     // 通知分享者
-    const share = DB.one(`SELECT * FROM share_items WHERE id = ?`, [shareId]);
     if (share) {
     // 在接收者云空间创建同名分享占位文件
     const cloudUsername = recipientCloudUsername(DB, Auth, perm);
@@ -553,7 +579,7 @@ module.exports = async (ctx) => {
         resource_id: share.resource_id,
         resource_name: share.resource_name,
         share_type: share.share_type,
-        permission: share.permission,
+        permission: sharePermissions.normalizePermission(share.permission),
         expires_at: share.expires_at,
         created_at: share.created_at,
         preview_token: share.preview_token,
@@ -563,7 +589,7 @@ module.exports = async (ctx) => {
             id: u.id,
             target_user_id: u.target_user_id,
             target_username: u.target_username,
-            permission: u.permission,
+            permission: sharePermissions.normalizePermission(u.permission),
             status: u.status,
             accepted_at: u.accepted_at,
           };
@@ -605,7 +631,7 @@ module.exports = async (ctx) => {
         resource_id: p.resource_id,
         resource_name: p.resource_name,
         owner_username: p.owner_username,
-        permission: p.permission,
+        permission: sharePermissions.normalizePermission(p.permission),
         expires_at: p.expires_at,
         accepted_at: p.accepted_at,
       };
@@ -642,7 +668,7 @@ module.exports = async (ctx) => {
       resource_id: share.resource_id,
       resource_name: share.resource_name,
       share_type: share.share_type,
-      permission: share.permission,
+      permission: sharePermissions.normalizePermission(share.permission),
       expires_at: share.expires_at,
       created_at: share.created_at,
       preview_token: share.preview_token,
@@ -653,7 +679,7 @@ module.exports = async (ctx) => {
           id: u.id,
           target_user_id: u.target_user_id,
           target_username: u.target_username,
-          permission: u.permission,
+          permission: sharePermissions.normalizePermission(u.permission),
           status: u.status,
           accepted_at: u.accepted_at,
         };
@@ -687,6 +713,79 @@ module.exports = async (ctx) => {
     }
 
     Response.success(null, '分享已删除');
+  }
+
+  // ===== 分享黑名单（按文件维度） =====
+  if (method === 'GET' && action === 'get-blacklist') {
+    const shareId = parseInt(query.share_id ?? 0, 10) || 0;
+    if (shareId <= 0) Response.error('缺少分享 ID');
+    const share = DB.one(`SELECT * FROM share_items WHERE id = ? AND owner_key = ?`, [shareId, ownerKey]);
+    if (!share) Response.error('分享不存在或无权操作');
+    const rows = DB.all(
+      'SELECT id, target_username AS username, created_at FROM share_blacklist WHERE resource_type = ? AND resource_id = ? ORDER BY id DESC',
+      [share.resource_type, share.resource_id]
+    );
+    Response.success(rows);
+  }
+
+  if (method === 'POST' && action === 'add-blacklist') {
+    const shareId = parseInt(body.share_id ?? 0, 10) || 0;
+    const targetUsername = String(body.username ?? '').trim();
+    if (shareId <= 0) Response.error('缺少分享 ID');
+    if (!targetUsername) Response.error('请输入要拉黑的用户名');
+    const share = DB.one(`SELECT * FROM share_items WHERE id = ? AND owner_key = ?`, [shareId, ownerKey]);
+    if (!share) Response.error('分享不存在或无权操作');
+
+    const now = nowStr();
+    const targetUser = DB.one('SELECT id FROM users WHERE username = ?', [targetUsername]);
+    const existing = DB.one(
+      'SELECT id FROM share_blacklist WHERE resource_type = ? AND resource_id = ? AND target_username = ?',
+      [share.resource_type, share.resource_id, targetUsername]
+    );
+    if (!existing) {
+      DB.insert('share_blacklist', {
+        resource_type: share.resource_type,
+        resource_id: share.resource_id,
+        owner_key: ownerKey,
+        target_username: targetUsername,
+        target_user_id: targetUser ? (parseInt(targetUser.id, 10) || 0) : 0,
+        created_at: now,
+      });
+    }
+    // 立即撤销该用户的已有权限与占位文件
+    const perms = DB.all(
+      'SELECT * FROM share_user_permissions WHERE share_id = ? AND target_username = ?',
+      [shareId, targetUsername]
+    );
+    for (const perm of perms) {
+      DB.delete('share_user_permissions', 'id = ?', [perm.id]);
+    }
+    // 清理接收者云空间中的占位文件（联盟账户可能是子用户绑定的账户）
+    let placeholderUser = targetUsername;
+    if (targetUser) {
+      const binding = DB.one(
+        'SELECT alliance_username FROM alliance_account_bindings WHERE sub_user_id = ? ORDER BY id ASC LIMIT 1',
+        [targetUser.id]
+      );
+      if (binding && binding.alliance_username) placeholderUser = binding.alliance_username;
+    }
+    cloudShare.removePlaceholdersForShare(DB, shareId, placeholderUser);
+    Response.success({ username: targetUsername }, '已加入文件黑名单');
+  }
+
+  if (method === 'POST' && action === 'remove-blacklist') {
+    const shareId = parseInt(body.share_id ?? 0, 10) || 0;
+    const targetUsername = String(body.username ?? '').trim();
+    if (shareId <= 0) Response.error('缺少分享 ID');
+    if (!targetUsername) Response.error('缺少用户名');
+    const share = DB.one(`SELECT * FROM share_items WHERE id = ? AND owner_key = ?`, [shareId, ownerKey]);
+    if (!share) Response.error('分享不存在或无权操作');
+    DB.delete(
+      'share_blacklist',
+      'resource_type = ? AND resource_id = ? AND target_username = ?',
+      [share.resource_type, share.resource_id, targetUsername]
+    );
+    Response.success(null, '已移出黑名单');
   }
 
   // ===== 搜索用户（用于分享时选择用户） =====
@@ -751,7 +850,7 @@ module.exports = async (ctx) => {
         resource_type: p.resource_type,
         resource_name: p.resource_name,
         owner_username: p.owner_username,
-        permission: p.permission,
+        permission: sharePermissions.normalizePermission(p.permission),
         expires_at: p.expires_at,
         created_at: p.created_at,
       };
