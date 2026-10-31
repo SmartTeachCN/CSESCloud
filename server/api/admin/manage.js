@@ -22,23 +22,25 @@
  *  - POST action=update-kb                更新知识库条目
  *  - POST action=delete-kb                删除知识库条目
  */
-const fs = require('fs');
-const path = require('path');
 const bcrypt = require('bcryptjs');
 const { nowStr } = require('../../lib/response');
+const serverConfig = require('../../lib/server-config');
 
 /**
- * 等价 PHP file_put_contents + var_export：将配置写回 server/lib/server-config.js
- * （Auth.serverConfig() 返回的是模块导出对象，写回后重启依然生效）
+ * 运行时配置写回（等价旧版的 var_export 导出，但只写非敏感项）。
+ *
+ * 安全约定：server-config.js 里已不含任何凭据（密码哈希 / OAuth client_secret 全部来自
+ * 环境变量）。管理后台可改的项写入 server/lib/server-config.local.js（已 gitignore），
+ * 绝不把 process.env 里的真实值序列化回仓库文件。
+ * Auth.serverConfig() 返回的是模块导出对象，就地修改后本次运行立即生效。
  */
-function writeServerConfig(config) {
-  const configPath = path.join(__dirname, '..', '..', 'lib', 'server-config.js');
-  const exportStr = `/**
- * CSES Cloud - 服务器配置文件（由管理后台自动写回，等价旧版的 var_export 导出）
- */
-module.exports = ${JSON.stringify(config, null, 2)};
-`;
-  fs.writeFileSync(configPath, exportStr);
+function persistRuntime(patch) {
+  try {
+    return serverConfig.persistRuntime(patch);
+  } catch (e) {
+    console.warn('[admin] 运行时配置写回失败：' + e.message);
+    return null;
+  }
 }
 
 module.exports = async (ctx) => {
@@ -106,7 +108,7 @@ module.exports = async (ctx) => {
     const enabled = !Helpers.empty(body.enabled);
     const config = Auth.serverConfig();
     config.temp_admin.enabled = enabled;
-    writeServerConfig(config);
+    persistRuntime({ temp_admin: { enabled: enabled } });
     Auth.logAudit(0, 0, 'toggle_temp_admin',
       (enabled ? '启用' : '禁用') + '临时管理员模式',
       'success');
@@ -188,7 +190,7 @@ module.exports = async (ctx) => {
     const defaultModel = String(body.default_model ?? 'default').trim();
     const config = Auth.serverConfig();
     config.ai = { default_model: defaultModel };
-    writeServerConfig(config);
+    persistRuntime({ ai: { default_model: defaultModel } });
     Auth.logAudit(0, 0, 'save_ai_config', `设置默认 AI 模型: ${defaultModel}`, 'success');
     Response.success({ ok: true });
   }

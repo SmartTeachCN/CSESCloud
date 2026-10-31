@@ -1,28 +1,63 @@
-# Built frontend output
+# ── 构建产物 ──────────────────────────────────────────────
+# 前端构建输出（pnpm build → 仓库根 dist/）
 dist/
+# CI 生成的构建信息（含 commit / 构建时间，由流水线写入，不入库）
+build-info.json
 
-# Dev-mode marker（存在时联盟登录走本地模拟登录，见 server/lib/alliance-oauth.js）
+# ── 环境与凭据（绝不入库） ────────────────────────────────
+# 本地/生产环境变量（示例见 .env.example）
+.env
+.env.*
+!.env.example
+# 管理后台写回的运行时本地配置（临时管理员开关、默认 AI 模型）
+server/lib/server-config.local.js
+# 旧版平台遗留的生产配置
+config.prod.php
+sync.config.json
+deploy.config.json
+
+# ── 运行时数据 ────────────────────────────────────────────
+# 会话文件（含登录态，绝不能入库）
+data/sessions/
+data/*.db
+data/*.db-*
+data/*.bak*
+data/*.bak-*
+# 用户/开发者私有空间
+data/dev-users/
+# AI 助手运行期产物
+data/ai-shots/
+data/ai-uploads/
+# 生产端同步的备份/日志/锁
+data/update/
+.last_sync_timestamp
+sync-error.log
+
+# ── 开发模式标记 ─────────────────────────────────────────
+# 存在时联盟登录走本地模拟登录（见 server/lib/alliance-oauth.js）
+# 生产环境绝不能提交该文件
 debug.flag
 
-# Data
-data/cses.db*
-data/dev-users/
-data/sessions/
-
-# Dependencies
+# ── 依赖 ─────────────────────────────────────────────────
 node_modules/
 frontend/node_modules/
 
-# IDE
+# ── 临时调试 / 冒烟脚本与本地验证产物 ────────────────────
+_smoke_*.js
+_smoke_*.mjs
+_check_*.js
+_test_*.js
+_test_*.mjs
+_e2e_*.mjs
+_acl-recovery/
+_verify_shots/
+*.log
+npminstall-debug.log
+
+# ── IDE / OS ─────────────────────────────────────────────
 .idea/
 .vscode/
 *.swp
 *.swo
-
-# OS
 .DS_Store
 Thumbs.db
-# AI assistant editor screenshots (runtime)
-data/ai-shots/
-# AI assistant uploaded attachments (runtime)
-data/ai-uploads/

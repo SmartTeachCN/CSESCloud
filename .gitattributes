@@ -1,0 +1,31 @@
+# 统一换行：仓库内一律 LF（Windows 检出不再出现 CRLF 噪音，CI 构建与生产端同步更可控）
+* text=auto eol=lf
+
+# 二进制文件不做文本处理
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.pdf binary
+*.zip binary
+*.gz binary
+
+# 前端构建产物按二进制/原样处理
+dist/** -text
+
+# GitHub Actions 与脚本保持 LF
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.vue text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.sql text eol=lf
