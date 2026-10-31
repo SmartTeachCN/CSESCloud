@@ -267,10 +267,14 @@ function reasoningSupported(model) {
 /**
  * 组装系统提示词：平台身份 + 用户信息 + 编辑器上下文 + 工具使用规范
  */
-function buildSystemPrompt({ user, ownerKey, editorContext, toolsEnabled, clientToolsEnabled }) {
+function buildSystemPrompt({ user, ownerKey, editorContext, toolsEnabled, clientToolsEnabled, sessionTitle }) {
   const lines = [];
   lines.push('你是 CSES Cloud 智教云平台的 AI 助理，一个可以直接操作平台的智能体。');
   lines.push('平台功能：轻编辑器（云文件与配置实例管理）、配置分发 / 静态集控、数据空间、开发者中心、联盟账户。');
+  lines.push('');
+  lines.push('## 当前对话');
+  lines.push(`- 当前标题：${phpEmpty(sessionTitle) ? '（新对话，暂无标题）' : sessionTitle}`);
+  if (toolsEnabled) lines.push('- 需要给对话改名时调用工具 set_session_title（不要只在回复里说「帮你改好了」）');
   lines.push('');
   lines.push('## 当前用户');
   lines.push(`- 显示名：${(user && (user.display_name || user.username)) || '未知'}`);
@@ -281,6 +285,10 @@ function buildSystemPrompt({ user, ownerKey, editorContext, toolsEnabled, client
     lines.push('');
     lines.push('## 当前编辑器上下文');
     lines.push(`- 当前文件：${editorContext.fileName}`);
+    // 完整路径 + 文件 ID 是「一次命中」的关键：只给文件名时，同名文件会迫使模型反复 list。
+    if (!phpEmpty(editorContext.path)) lines.push(`- 云文件路径：${editorContext.path}（调用云文件工具时优先用这个完整路径）`);
+    if (!phpEmpty(editorContext.fileId)) lines.push(`- 云文件 ID：${editorContext.fileId}`);
+    if (!phpEmpty(editorContext.source)) lines.push(`- 文件来源：${editorContext.source}`);
     if (editorContext.language) lines.push(`- 语言：${editorContext.language}`);
     if (!phpEmpty(editorContext.fileContent)) {
       lines.push('- 文件内容（截断）：');
@@ -304,6 +312,20 @@ function buildSystemPrompt({ user, ownerKey, editorContext, toolsEnabled, client
   } else {
     lines.push('7. 当前页面没有可操作的编辑器，不要调用 get_editor_state / read_editor_elements / screenshot_editor / operate_editor。');
   }
+  // 对话标题：允许 AI 主动维护（用户可感知，不需要额外确认）
+  lines.push('8. 对话标题由你维护：当用户明确要求「改个标题 / 重命名对话」，'
+    + '或者对话主题已经明显切换（例如从「看课表」转到「把页面发布到网页空间」）时，'
+    + '主动调用 set_session_title 把标题改成 16 字以内的短标题（抓住主题关键词，不要带引号）。'
+    + '同一主题下的普通追问不要频繁改标题，也不要向用户解释「我调用了工具」。');
+  if (toolsEnabled) {
+    lines.push('9. 调用工具必须给全定义里的必填参数，一次只做一件事。需要 id / 路径 / 空间时，'
+      + '先调用对应的 list_* / get_* 工具拿真实值，不要凭记忆或猜测填（例如不要自己编 slug、file_id）。'
+      + '工具返回「参数不完整」时，按提示补齐后重试同一个工具，不要换成别的工具绕开。');
+    lines.push('10. 单个工具调用写入的内容不要太长（建议 ≤4000 字符）。大页面/大文件请拆成多个文件，'
+      + '或先写一个精简版再用 update_cloud_file / write_web_space_file 分次覆盖，避免输出被截断导致参数不完整。');
+    lines.push('11. 网页空间：要发布到**新的**站点时，先调用 create_web_space 创建空间，'
+      + '拿到 slug 后再用 write_web_space_file 写入页面；已存在的空间用 list_web_spaces 查真实 slug。');
+  }
   return lines.join('\n');
 }
 
@@ -318,9 +340,15 @@ function extractUserQuestion(content) {
 function parseEditorContext(content) {
   const text = String(content ?? '');
   if (!text.includes('[编辑器上下文]')) return null;
-  const ctx = { fileName: '', fileContent: '', language: '' };
+  const ctx = { fileName: '', fileContent: '', language: '', path: '', fileId: '', source: '' };
   let m = /当前文件:\s*(.+)/.exec(text);
   if (m) ctx.fileName = m[1].trim();
+  m = /云文件路径:\s*(.+)/.exec(text);
+  if (m) ctx.path = m[1].trim();
+  m = /云文件ID:\s*(.+)/.exec(text);
+  if (m) ctx.fileId = m[1].trim();
+  m = /来源:\s*(.+)/.exec(text);
+  if (m) ctx.source = m[1].trim();
   m = /语言:\s*(.+)/.exec(text);
   if (m) ctx.language = m[1].trim();
   m = /选中内容:\s*\n```[^\n]*\n([\s\S]*?)\n```/.exec(text);
@@ -658,12 +686,20 @@ async function startTurn(opts) {
   // 初始化消息
   const toolsEnabled = supportsTools(model);
   const clientToolsEnabled = toolsEnabled && !!opts.hasEditor;
+  // 当前对话标题（让模型判断该不该主动改名；读不到时为空）
+  let sessionTitle = '';
+  try {
+    const row = DB.one('SELECT title FROM ai_chat_sessions WHERE id = ?', [opts.sessionId]);
+    sessionTitle = (row && row.title) ? String(row.title) : '';
+  } catch (_) { sessionTitle = ''; }
+  state.sessionTitle = sessionTitle;
   const systemPrompt = buildSystemPrompt({
     user: opts.user,
     ownerKey: opts.ownerKey,
     editorContext,
     toolsEnabled,
     clientToolsEnabled,
+    sessionTitle,
   });
   state.messages = [{ role: 'system', content: systemPrompt }]
     .concat(buildHistoryMessages(opts.history, toolsEnabled))
@@ -762,6 +798,26 @@ function argsOf(call) {
   return jsonParseSafe(call.function.arguments || '{}', {}) || {};
 }
 
+/**
+ * 严格解析模型给的工具参数。
+ * - 空字符串 / "{}" → 合法的「无参数」
+ * - 非法 JSON（大多因为本轮输出被 max_tokens 截断）→ ok:false，交给上层报明确错误
+ * - 双重编码（字符串里再包一层 JSON）→ 自动解一层
+ * @returns {{ok:boolean, args:object, raw?:string}}
+ */
+function parseToolArgs(raw) {
+  let text = String(raw === undefined || raw === null ? '' : raw).trim();
+  if (text === '' || text === '{}') return { ok: true, args: {} };
+  let parsed = jsonParseSafe(text, undefined);
+  if (typeof parsed === 'string') {
+    // 模型偶尔把参数再 JSON 编码一次
+    const inner = jsonParseSafe(parsed, undefined);
+    if (inner !== undefined) { parsed = inner; text = parsed; }
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return { ok: true, args: parsed };
+  return { ok: false, args: {}, raw: String(raw ?? '') };
+}
+
 function truncateSummary(s) {
   const str = String(s ?? '').replace(/\s+/g, ' ').trim();
   return str.length > 200 ? str.slice(0, 197) + '…' : str;
@@ -840,7 +896,9 @@ async function continueLoop(state, { model, sse, clientToolsEnabled }) {
       model: model.model_id,
       messages: state.messages,
       stream: true,
-      max_tokens: rParams.max_tokens || 4000,
+      // 带工具时给足输出预算：大文件内容/多工具参数很容易超过 4000 tokens 被截断，
+      // 截断后参数 JSON 不完整 → 工具调用报错。DeepSeek 输出上限 8192。
+      max_tokens: rParams.max_tokens || (openaiTools ? 8192 : 4000),
     };
     // 只有确定支持的 provider 才要 usage（避免部分兼容实现因未知参数报错）
     if (model.provider === 'openai' || model.provider === 'deepseek') {
@@ -967,6 +1025,8 @@ async function continueLoop(state, { model, sse, clientToolsEnabled }) {
     }
 
     // 执行工具（可能中途因客户端工具/提问暂停）
+    // 记录本轮 finish_reason：tool_calls + length 说明参数很可能被输出长度截断
+    state.lastFinishReason = String(emitRound.finishReason || '');
     state.pendingCalls = toolCalls;
     state.cursor = 0;
     const paused = await runPendingCalls(state, { model, sse, clientToolsEnabled, toolDefs });
@@ -999,10 +1059,32 @@ async function runPendingCalls(state, { model, sse, clientToolsEnabled, toolDefs
     if (sse.closed) return true;
     const call = state.pendingCalls[state.cursor];
     const name = call.function.name;
-    const args = argsOf(call);
     const def = defByName.get(name);
     const label = (tools && tools.labelOf && tools.labelOf(name)) || name;
     const scope = def ? def.scope : 'client';
+
+    // ── 参数严格解析：非法 JSON 通常意味着本轮输出被长度截断，不能静默当成 {} ──
+    const parsedArgs = parseToolArgs(call.function.arguments);
+    if (!parsedArgs.ok) {
+      const truncated = state.lastFinishReason === 'length';
+      const summary = truncated ? '工具参数被截断（输出上限）' : '工具参数格式不正确';
+      const result = (truncated
+        ? '本轮输出达到长度上限，工具参数 JSON 不完整，已跳过执行。'
+        : '工具参数不是合法 JSON，已跳过执行。')
+        + '\n请把单次工具调用的内容拆小（例如先写入一个简化版本，再分次用 update_cloud_file / write_web_space_file 更新），'
+        + '然后重新调用 ' + name + '。';
+      upsertToolBlock(state, call.id, {
+        type: 'tool', id: call.id, name, label, args: {}, scope: 'server',
+        risk: def ? def.risk : 'read', status: 'running', summary,
+      });
+      await sse.write({ type: 'tool_start', id: call.id, name, label, args: {}, scope: 'server', risk: def ? def.risk : 'read' });
+      state.messages.push({ role: 'tool', tool_call_id: call.id, content: '执行失败：' + result });
+      upsertToolBlock(state, call.id, { status: 'error', summary, result });
+      await sse.write({ type: 'tool_end', id: call.id, ok: false, summary, result });
+      state.cursor += 1;
+      continue;
+    }
+    const args = parsedArgs.args;
 
     // 浏览器工具 / 提问 → 暂停，等待前端执行
     if (def && def.scope === 'client') {
@@ -1122,6 +1204,10 @@ async function runPendingCalls(state, { model, sse, clientToolsEnabled, toolDefs
       ms: Date.now() - startedAt,
     });
     if (result.patch) await sse.write({ type: 'patch', patch: result.patch });
+    // 工具主动改了对话标题（set_session_title）→ 立即通知前端刷新会话列表
+    if (result.title) {
+      await sse.write({ type: 'title', title: String(result.title), session_id: state.sessionId });
+    }
 
     state.cursor += 1;
   }

@@ -54,6 +54,22 @@ export interface AiAskBlock {
 
 export type AiBlock = AiTextBlock | AiReasoningBlock | AiToolBlock | AiAskBlock;
 
+/**
+ * 「重试」保存下来的旧回答版本快照（存在消息 meta.alternatives 里）。
+ * AiTurnView 会把它和当前版本一起做成切换器。
+ */
+export interface AiVariant {
+  message_id?: number | string;
+  content: string;
+  blocks: AiBlock[];
+  reasoning?: string;
+  usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+  model?: string;
+  reasoning_level?: string;
+  created_at?: string;
+  interrupted?: boolean;
+}
+
 export interface AiTurn {
   id: string;
   role: 'assistant' | 'user';
@@ -67,6 +83,10 @@ export interface AiTurn {
   finishedAt?: number;
   usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
   interrupted?: boolean;
+  /** 重试前的历史版本（0 条表示没有重试过） */
+  alternatives?: AiVariant[];
+  /** 这条 AI 回复是否有可切换的旧版本 */
+  messageId?: number | string | null;
 }
 
 export interface AiClientToolResult {
@@ -92,12 +112,25 @@ export interface AiStreamOptions {
   hasEditor?: () => boolean;
 }
 
+export interface AiRunBody {
+  content: string;
+  model?: string;
+  reasoning?: string;
+  session_id?: number | null;
+  scope?: string;
+  scope_ref?: number | null;
+  /** 传了就进入「重试」模式：服务端会删掉该 AI 回复及其后文，用上一条用户消息重新生成 */
+  retry_message_id?: number | null;
+}
+
 export interface AiStreamApi {
   turn: Ref<AiTurn | null>;
   isStreaming: Ref<boolean>;
   error: Ref<string | null>;
   start: () => AiTurn;
-  run: (body: { content: string; model?: string; reasoning?: string; session_id?: number | null; scope?: string; scope_ref?: number | null }) => Promise<AiTurn>;
+  run: (body: AiRunBody) => Promise<AiTurn>;
+  /** 重试某条 AI 回复（旧回复会作为可切换版本保留） */
+  retry: (body: { session_id: number; retry_message_id: number; model?: string; reasoning?: string }) => Promise<AiTurn>;
   answerAsk: (id: string, answers: string[]) => void;
   stop: () => void;
 }
@@ -159,6 +192,41 @@ function findAsk(turn: AiTurn, id: string): AiAskBlock | undefined {
 
 // ─────────────────────────── 历史消息还原 ───────────────────────────
 
+/** 服务端 meta.blocks 里的一条 → 展示用 AiBlock（无法识别返回 null） */
+function normalizeStoredBlock(b: any): AiBlock | null {
+  if (!b || typeof b !== 'object') return null;
+  if (b.type === 'text') return { type: 'text', text: String(b.text ?? '') };
+  if (b.type === 'reasoning') {
+    return { type: 'reasoning', text: String(b.text ?? ''), done: true, seconds: b.seconds };
+  }
+  if (b.type === 'tool') {
+    return {
+      type: 'tool',
+      id: String(b.id ?? nextId('h')),
+      name: String(b.name ?? ''),
+      label: String(b.label ?? b.name ?? '工具'),
+      args: b.args ?? {},
+      scope: b.scope === 'client' ? 'client' : 'server',
+      risk: b.risk === 'write' ? 'write' : 'read',
+      status: b.status === 'error' ? 'error' : 'done',
+      summary: b.summary,
+      result: b.result,
+      image: b.image,
+      ms: b.ms,
+    };
+  }
+  if (b.type === 'ask') {
+    return {
+      type: 'ask',
+      id: String(b.id ?? nextId('h')),
+      questions: Array.isArray(b.questions) ? b.questions : [],
+      status: 'answered',
+      answers: Array.isArray(b.answers) ? b.answers : [],
+    };
+  }
+  return null;
+}
+
 /**
  * 把 GET action=messages 返回的一行还原成 AiTurn（含工具卡/提问卡）
  */
@@ -168,34 +236,8 @@ export function parseStoredMessage(row: any): AiTurn {
   const blocks: AiBlock[] = [];
   if (Array.isArray(meta.blocks)) {
     for (const b of meta.blocks) {
-      if (!b || typeof b !== 'object') continue;
-      if (b.type === 'text') blocks.push({ type: 'text', text: String(b.text ?? '') });
-      else if (b.type === 'reasoning') {
-        blocks.push({ type: 'reasoning', text: String(b.text ?? ''), done: true, seconds: b.seconds });
-      } else if (b.type === 'tool') {
-        blocks.push({
-          type: 'tool',
-          id: String(b.id ?? nextId('h')),
-          name: String(b.name ?? ''),
-          label: String(b.label ?? b.name ?? '工具'),
-          args: b.args ?? {},
-          scope: b.scope === 'client' ? 'client' : 'server',
-          risk: b.risk === 'write' ? 'write' : 'read',
-          status: b.status === 'error' ? 'error' : 'done',
-          summary: b.summary,
-          result: b.result,
-          image: b.image,
-          ms: b.ms,
-        });
-      } else if (b.type === 'ask') {
-        blocks.push({
-          type: 'ask',
-          id: String(b.id ?? nextId('h')),
-          questions: Array.isArray(b.questions) ? b.questions : [],
-          status: 'answered',
-          answers: Array.isArray(b.answers) ? b.answers : [],
-        });
-      }
+      const normalized = normalizeStoredBlock(b);
+      if (normalized) blocks.push(normalized);
     }
   }
   if (blocks.length === 0) {
@@ -211,6 +253,23 @@ export function parseStoredMessage(row: any): AiTurn {
     reasoning: meta.reasoning_level,
     usage: meta.usage || null,
     interrupted: !!meta.interrupted,
+    messageId: row?.id ?? null,
+    // 重试前的历史版本（服务端存在 meta.alternatives）
+    alternatives: Array.isArray(meta.alternatives)
+      ? meta.alternatives.map((v: any) => ({
+        message_id: v?.message_id,
+        content: String(v?.content ?? ''),
+        blocks: Array.isArray(v?.blocks)
+          ? v.blocks.map((b: any) => normalizeStoredBlock(b)).filter(Boolean)
+          : [],
+        reasoning: String(v?.reasoning ?? ''),
+        usage: v?.usage || null,
+        model: String(v?.model ?? ''),
+        reasoning_level: String(v?.reasoning_level ?? ''),
+        created_at: String(v?.created_at ?? ''),
+        interrupted: !!v?.interrupted,
+      }))
+      : [],
   };
 }
 
@@ -223,11 +282,14 @@ export function useAiStream(opts: AiStreamOptions): AiStreamApi {
 
   let abortCtl: AbortController | null = null;
   let pendingAsk: { id: string; resolve: (answers: string[]) => void } | null = null;
+  /** 早于 run() 注册就到达的答案（避免提交竞态导致悬挂） */
+  let pendingAnswer: { id: string; answers: string[] } | null = null;
   let stoppedByUser = false;
 
   function start(): AiTurn {
     stoppedByUser = false;
     pendingAsk = null;
+    pendingAnswer = null;
     error.value = null;
     const t: AiTurn = {
       id: nextId('turn'),
@@ -452,10 +514,27 @@ export function useAiStream(opts: AiStreamOptions): AiStreamApi {
     return { wait: null };
   }
 
-  /** 等待用户回答提问卡 */
+  /**
+   * 等待用户回答提问卡。
+   * 兼容三种时序，避免 run() 悬挂：
+   *  1) 正常：先注册，后 answerAsk；
+   *  2) 提前：answerAsk 在注册前就到了（缓存里取）；
+   *  3) 中止：注册前用户已点停止（直接返回空答案）。
+   */
   function waitForAsk(id: string): Promise<string[]> {
+    if (stoppedByUser) return Promise.resolve([]);
+    if (pendingAnswer && pendingAnswer.id === id) {
+      const answers = pendingAnswer.answers;
+      pendingAnswer = null;
+      return Promise.resolve(answers);
+    }
     return new Promise((resolve) => {
       pendingAsk = { id, resolve };
+      // 注册瞬间被 stop() 抢先的极端竞态
+      if (stoppedByUser) {
+        pendingAsk = null;
+        resolve([]);
+      }
     });
   }
 
@@ -472,17 +551,13 @@ export function useAiStream(opts: AiStreamOptions): AiStreamApi {
       const resolve = pendingAsk.resolve;
       pendingAsk = null;
       resolve(answers);
+    } else {
+      // 提问卡还没被 run() 等待（时序提前），先缓存答案
+      pendingAnswer = { id, answers };
     }
   }
 
-  async function run(body: {
-    content: string;
-    model?: string;
-    reasoning?: string;
-    session_id?: number | null;
-    scope?: string;
-    scope_ref?: number | null;
-  }): Promise<AiTurn> {
+  async function run(body: AiRunBody): Promise<AiTurn> {
     const t = start();
     isStreaming.value = true;
     let action: 'stream' | 'resume' = 'stream';
@@ -495,6 +570,7 @@ export function useAiStream(opts: AiStreamOptions): AiStreamApi {
       scope_ref: body.scope_ref ?? null,
       has_editor: !!opts.hasEditor?.(),
     };
+    if (body.retry_message_id) reqBody.retry_message_id = body.retry_message_id;
 
     try {
       for (;;) {
@@ -576,6 +652,20 @@ export function useAiStream(opts: AiStreamOptions): AiStreamApi {
     return t;
   }
 
+  /**
+   * 重试某条 AI 回复：服务端会丢弃该回复（及其后文），用同一条用户消息重新生成；
+   * 旧回复会作为 `alternatives` 存进新消息的 meta，前端可切换查看。
+   */
+  async function retry(body: { session_id: number; retry_message_id: number; model?: string; reasoning?: string }): Promise<AiTurn> {
+    return run({
+      content: '',
+      session_id: body.session_id,
+      retry_message_id: body.retry_message_id,
+      model: body.model,
+      reasoning: body.reasoning,
+    });
+  }
+
   function stop() {
     stoppedByUser = true;
     try { abortCtl?.abort(); } catch (_) { /* ignore */ }
@@ -600,5 +690,5 @@ export function useAiStream(opts: AiStreamOptions): AiStreamApi {
     isStreaming.value = false;
   }
 
-  return { turn, isStreaming, error, start, run, answerAsk, stop };
+  return { turn, isStreaming, error, start, run, retry, answerAsk, stop };
 }

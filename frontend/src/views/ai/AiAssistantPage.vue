@@ -139,21 +139,44 @@
           </div>
         </div>
 
-        <template v-for="entry in entries" :key="entry.key">
-          <div v-if="entry.kind === 'user'" class="chat-message user">
+        <template v-for="(entry, index) in entries" :key="entry.key">
+          <div
+            v-if="entry.kind === 'user'"
+            class="chat-message user"
+            :class="{ 'is-editing': editing.active && editing.messageId === entry.messageId }"
+            @contextmenu.prevent.stop="onMessageContextMenu($event, entry, index)"
+          >
             <div class="message-avatar">
               <Icon icon="ri-user-line" :size="18" />
             </div>
             <div class="message-content">
               <div class="message-bubble user-text">{{ entry.content }}</div>
+              <div class="msg-hover-actions">
+                <button class="msg-action-btn" title="编辑该消息" @click.stop="startEdit(entry, index)">
+                  <Icon icon="ri-edit-line" :size="13" />
+                </button>
+                <button class="msg-action-btn" title="撤回到这里" @click.stop="truncateTo(entry, index)">
+                  <Icon icon="ri-arrow-go-back-line" :size="13" />
+                </button>
+                <button class="msg-action-btn" title="复制文本" @click.stop="copyEntryText(entry)">
+                  <Icon icon="ri-file-copy-line" :size="13" />
+                </button>
+              </div>
             </div>
           </div>
-          <div v-else class="chat-turn">
+          <div v-else class="chat-turn" @contextmenu.prevent.stop="onMessageContextMenu($event, entry, index)">
             <div class="message-avatar turn-avatar">
               <Icon icon="ri-robot-line" :size="20" />
             </div>
             <div class="turn-body">
-              <AiTurnView :turn="entry.turn" :live="isTurnLive(entry.turn)" @answer-ask="onAnswerAsk" />
+              <AiTurnView
+                :turn="entry.turn"
+                :live="isTurnLive(entry.turn)"
+                :can-retry="canRetryEntry(entry, index)"
+                @retry="retryTurn(entry, index)"
+                @copy="onCopyTurnText"
+                @answer-ask="onAnswerAsk"
+              />
             </div>
           </div>
         </template>
@@ -175,6 +198,13 @@
 
       <!-- 输入区 -->
       <footer class="chat-input-area">
+        <div v-if="editing.active" class="edit-history-bar">
+          <Icon icon="ri-edit-line" :size="14" />
+          <span class="edit-history-text">
+            正在编辑历史消息，发送后将丢弃该消息之后的 {{ editingDropCount }} 条对话
+          </span>
+          <button class="edit-history-cancel" @click="cancelEdit">取消</button>
+        </div>
         <div class="input-wrapper">
           <!-- 富文本编辑区：资源卡片 + 文本内嵌 -->
           <div
@@ -183,6 +213,7 @@
             contenteditable="true"
             data-placeholder="输入问题（Enter 发送，Shift+Enter 换行）"
             @keydown.enter.exact.prevent="onEditorEnter"
+            @keydown.esc="onEditorEscape"
             @input="onEditorInput"
             @paste="onEditorPaste"
           ></div>
@@ -233,8 +264,8 @@
                 <span>停止</span>
               </button>
               <button v-else class="send-btn" :disabled="!editorText.trim()" @click="sendMessage">
-                <Icon icon="ri-send-plane-line" :size="16" />
-                <span>发送</span>
+                <Icon :icon="editing.active ? 'ri-check-line' : 'ri-send-plane-line'" :size="16" />
+                <span>{{ editing.active ? '发送修改' : '发送' }}</span>
               </button>
             </div>
           </div>
@@ -320,14 +351,11 @@
                 </div>
                 <div class="form-row">
                   <label>提供商</label>
-                  <select v-model="modelForm.provider">
-                    <option value="">选择提供商</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="openai_compatible">OpenAI 兼容</option>
-                    <option value="deepseek">DeepSeek</option>
-                    <option value="anthropic">Anthropic (Claude)</option>
-                    <option value="google">Google (Gemini)</option>
-                  </select>
+                  <CustomSelect
+                    v-model="modelForm.provider"
+                    :options="providerOptions"
+                    placeholder="选择提供商"
+                  />
                 </div>
                 <div class="form-row">
                   <label>模型 ID</label>
@@ -352,7 +380,7 @@
       </Teleport>
     </main>
 
-    <!-- 右键菜单（会话项 / 列表空白共用） -->
+    <!-- 右键菜单（会话项 / 列表空白 / 消息） -->
     <SessionContextMenu
       :show="menu.show"
       :x="menu.x"
@@ -362,15 +390,21 @@
       @close="closeMenu"
       @select="onMenuSelect"
     />
+
+    <!-- 轻量操作提示 -->
+    <Transition name="page-toast">
+      <div v-if="hintText" class="page-toast">{{ hintText }}</div>
+    </Transition>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import AiTurnView from '../../components/ai/AiTurnView.vue';
 import ModelPicker, { loadModelPrefs } from '../../components/ai/ModelPicker.vue';
 import SessionContextMenu, { type ContextMenuItem } from '../../components/ai/SessionContextMenu.vue';
+import CustomSelect from '../../components/CustomSelect.vue';
 import { aiApi } from '../../api';
 import { useAiStream, parseStoredMessage } from '../../composables/useAiStream';
 
@@ -396,6 +430,8 @@ interface UserEntry {
   kind: 'user';
   key: string;
   content: string;
+  /** 服务端消息 id（本地乐观插入的条目为 null） */
+  messageId: number | null;
 }
 interface TurnEntry {
   kind: 'turn';
@@ -408,6 +444,33 @@ const entries = ref<ChatEntry[]>([]);
 const messagesEl = ref<HTMLElement | null>(null);
 const editorEl = ref<HTMLDivElement | null>(null);
 const editorText = ref('');
+
+// ===== 历史消息编辑态（撤回/编辑后重发）=====
+interface EditingState {
+  active: boolean;
+  messageId: number | null;
+  index: number;
+  /** 进入编辑前输入框里的草稿，取消时恢复 */
+  draft: string;
+}
+const editing = ref<EditingState>({ active: false, messageId: null, index: -1, draft: '' });
+
+// 编辑这条消息之后会被丢弃的条数（用户 / AI 各算一条）
+const editingDropCount = computed(() =>
+  editing.value.active ? Math.max(0, entries.value.length - 1 - editing.value.index) : 0,
+);
+
+// ===== 轻量 toast（复制成功等提示）=====
+const hintText = ref('');
+let hintTimer: number | null = null;
+function showHint(text: string, duration = 1800) {
+  hintText.value = text;
+  if (hintTimer !== null) window.clearTimeout(hintTimer);
+  hintTimer = window.setTimeout(() => {
+    hintText.value = '';
+    hintTimer = null;
+  }, duration);
+}
 
 // ===== 控制栏选项 =====
 const modelPrefs = loadModelPrefs();
@@ -445,6 +508,16 @@ const modelForm = ref({
   endpoint: '',
   api_key: '',
 });
+
+/** 提供商下拉选项（空值项保留为可选项，与原原生 select 行为一致） */
+const providerOptions = [
+  { value: '', label: '选择提供商' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'openai_compatible', label: 'OpenAI 兼容' },
+  { value: 'deepseek', label: 'DeepSeek' },
+  { value: 'anthropic', label: 'Anthropic (Claude)' },
+  { value: 'google', label: 'Google (Gemini)' },
+];
 
 const currentSession = computed(() => sessions.value.find(s => s.id === currentSessionId.value) || null);
 
@@ -489,18 +562,31 @@ const sessionRows = computed<SessionRow[]>(() => {
 });
 
 // ===== 右键菜单 =====
-type MenuMode = 'none' | 'session' | 'blank';
-const menu = ref<{ show: boolean; mode: MenuMode; x: number; y: number; targetId: number | null; title: string }>({
+type MenuMode = 'none' | 'session' | 'blank' | 'message';
+const menu = ref<{
+  show: boolean;
+  mode: MenuMode;
+  x: number;
+  y: number;
+  targetId: number | null;
+  targetIndex: number | null;
+  title: string;
+}>({
   show: false,
   mode: 'none',
   x: 0,
   y: 0,
   targetId: null,
+  targetIndex: null,
   title: '',
 });
 const menuTargetSession = computed(() =>
   menu.value.targetId != null ? sessions.value.find(s => s.id === menu.value.targetId) || null : null,
 );
+const menuTargetEntry = computed<ChatEntry | null>(() => {
+  if (menu.value.targetIndex == null) return null;
+  return entries.value[menu.value.targetIndex] ?? null;
+});
 
 const sessionMenuItems = computed<ContextMenuItem[]>(() => {
   const session = menuTargetSession.value;
@@ -532,9 +618,39 @@ const blankMenuItems = computed<ContextMenuItem[]>(() => [
   },
 ]);
 
+const messageMenuItems = computed<ContextMenuItem[]>(() => {
+  const entry = menuTargetEntry.value;
+  if (!entry) return [];
+  const index = menu.value.targetIndex ?? -1;
+  const isUser = entry.kind === 'user';
+  const hasMessageId = !!messageIdOf(entry);
+  const items: ContextMenuItem[] = [
+    { key: 'copy-text', label: '复制文本', icon: 'ri-file-copy-line', disabled: !textOfEntry(entry) },
+  ];
+  if (isUser) {
+    items.push({ key: 'edit-message', label: '编辑该消息', icon: 'ri-edit-line', disabled: !hasMessageId || isBusy.value });
+  }
+  items.push({
+    key: 'truncate',
+    label: '撤回到这里',
+    icon: 'ri-arrow-go-back-line',
+    disabled: !hasMessageId || isBusy.value,
+  });
+  if (!isUser) {
+    items.push({
+      key: 'retry-message',
+      label: '重新生成',
+      icon: 'ri-refresh-line',
+      disabled: !canRetryEntry(entry, index),
+    });
+  }
+  return items;
+});
+
 const menuItems = computed<ContextMenuItem[]>(() => {
   if (menu.value.mode === 'session') return sessionMenuItems.value;
   if (menu.value.mode === 'blank') return blankMenuItems.value;
+  if (menu.value.mode === 'message') return messageMenuItems.value;
   return [];
 });
 
@@ -545,6 +661,7 @@ function onSessionContextMenu(event: MouseEvent, session: any) {
     x: event.clientX,
     y: event.clientY,
     targetId: session?.id ?? null,
+    targetIndex: null,
     title: session?.title || '新对话',
   };
 }
@@ -559,7 +676,20 @@ function onBlankContextMenu(event: MouseEvent) {
     x: event.clientX,
     y: event.clientY,
     targetId: null,
+    targetIndex: null,
     title: '',
+  };
+}
+
+function onMessageContextMenu(event: MouseEvent, entry: ChatEntry, index: number) {
+  menu.value = {
+    show: true,
+    mode: 'message',
+    x: event.clientX,
+    y: event.clientY,
+    targetId: null,
+    targetIndex: index,
+    title: entry.kind === 'user' ? '用户消息' : 'AI 回复',
   };
 }
 
@@ -570,7 +700,27 @@ function closeMenu() {
 async function onMenuSelect(key: string) {
   const mode = menu.value.mode;
   const target = menuTargetSession.value;
+  const targetEntry = menuTargetEntry.value;
+  const targetIndex = menu.value.targetIndex ?? -1;
   closeMenu();
+  if (mode === 'message') {
+    if (!targetEntry) return;
+    switch (key) {
+      case 'copy-text':
+        await copyEntryText(targetEntry);
+        break;
+      case 'edit-message':
+        startEdit(targetEntry, targetIndex);
+        break;
+      case 'truncate':
+        await truncateTo(targetEntry, targetIndex);
+        break;
+      case 'retry-message':
+        await retryTurn(targetEntry, targetIndex);
+        break;
+    }
+    return;
+  }
   if (mode === 'session' && target) {
     switch (key) {
       case 'pin':
@@ -655,7 +805,7 @@ async function loadSessions() {
   }
 }
 
-async function loadMessages() {
+async function loadMessages(clearOnError = true) {
   if (!currentSessionId.value) {
     entries.value = [];
     return;
@@ -666,7 +816,12 @@ async function loadMessages() {
     for (const row of list || []) {
       if (!row) continue;
       if (row.role === 'user') {
-        next.push({ kind: 'user', key: `user-${row.id}`, content: row.content || '' });
+        next.push({
+          kind: 'user',
+          key: `user-${row.id}`,
+          content: row.content || '',
+          messageId: row.id != null ? Number(row.id) : null,
+        });
       } else {
         next.push({ kind: 'turn', key: `turn-${row.id}`, turn: parseStoredMessage(row) });
       }
@@ -674,7 +829,8 @@ async function loadMessages() {
     entries.value = next;
     scrollToBottom();
   } catch {
-    entries.value = [];
+    // 流式结束后的静默刷新失败时保留当前展示，避免网络抖动把对话清空
+    if (clearOnError) entries.value = [];
   }
 }
 
@@ -688,6 +844,7 @@ function stopActiveStream() {
 
 async function switchSession(id: number) {
   if (id === currentSessionId.value) return;
+  resetEditing(false);
   stopActiveStream();
   currentSessionId.value = id;
   committedIds.value = [];
@@ -700,6 +857,7 @@ async function switchSession(id: number) {
 }
 
 function createNewChat() {
+  resetEditing(false);
   stopActiveStream();
   currentSessionId.value = null;
   committedIds.value = [];
@@ -787,12 +945,12 @@ async function regenerateTitle(session: any) {
   }
 }
 
-async function copySessionId(session: any) {
-  const text = String(session?.id ?? '');
-  if (!text) return;
+// ===== 剪贴板 =====
+async function writeClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
   try {
     await navigator.clipboard.writeText(text);
-    return;
+    return true;
   } catch {
     /* 回退到 execCommand */
   }
@@ -803,10 +961,193 @@ async function copySessionId(session: any) {
     textarea.style.opacity = '0';
     document.body.appendChild(textarea);
     textarea.select();
-    document.execCommand('copy');
+    const ok = document.execCommand('copy');
     textarea.remove();
+    return ok;
   } catch {
-    alert('复制失败');
+    return false;
+  }
+}
+
+async function copySessionId(session: any) {
+  const text = String(session?.id ?? '');
+  if (!text) return;
+  if (await writeClipboard(text)) showHint('已复制会话 ID');
+  else alert('复制失败');
+}
+
+// ===== 消息：复制 / 编辑 / 撤回 / 重试 =====
+function messageIdOf(entry: ChatEntry | null): number | null {
+  if (!entry) return null;
+  if (entry.kind === 'user') return entry.messageId ?? null;
+  const raw = entry.turn?.messageId;
+  const id = Number(raw);
+  return raw != null && Number.isFinite(id) && id > 0 ? id : null;
+}
+
+/** 取一条消息当前显示的文本（AI 取所有 text 块拼接） */
+function textOfEntry(entry: ChatEntry): string {
+  if (entry.kind === 'user') return (entry.content || '').trim();
+  const blocks = Array.isArray(entry.turn?.blocks) ? entry.turn.blocks : [];
+  return blocks
+    .filter((block: any) => block?.type === 'text')
+    .map((block: any) => String(block.text || ''))
+    .join('\n\n')
+    .trim();
+}
+
+async function copyEntryText(entry: ChatEntry) {
+  const text = textOfEntry(entry);
+  if (!text) {
+    showHint('没有可复制的文本');
+    return;
+  }
+  if (await writeClipboard(text)) showHint('已复制消息文本');
+  else alert('复制失败');
+}
+
+/** AiTurnView 的 @copy：只负责写剪贴板 */
+async function onCopyTurnText(text: string) {
+  const value = String(text || '');
+  if (!value) return;
+  if (await writeClipboard(value)) showHint('已复制消息文本');
+  else alert('复制失败');
+}
+
+function startEdit(entry: ChatEntry, index: number) {
+  if (entry.kind !== 'user') return;
+  if (isBusy.value) {
+    showHint('正在生成回复，暂时不能编辑');
+    return;
+  }
+  const messageId = messageIdOf(entry);
+  if (!messageId) {
+    showHint('该消息尚未保存，暂时不能编辑');
+    return;
+  }
+  editing.value = {
+    active: true,
+    messageId,
+    index,
+    draft: getEditorText(),
+  };
+  setEditorText(entry.content || '');
+  nextTick(() => {
+    editorEl.value?.focus();
+    // 光标放到末尾，方便直接修改
+    const sel = window.getSelection();
+    if (!editorEl.value || !sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(editorEl.value);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  });
+}
+
+/** restoreDraft=true 时把进入编辑前的草稿还回输入框；否则清空输入框（放弃这次编辑） */
+function resetEditing(restoreDraft = false) {
+  if (!editing.value.active) return;
+  const draft = editing.value.draft;
+  editing.value = { active: false, messageId: null, index: -1, draft: '' };
+  if (restoreDraft) setEditorText(draft);
+  else clearEditor();
+}
+
+function cancelEdit() {
+  resetEditing(true);
+  showHint('已取消编辑');
+  nextTick(() => editorEl.value?.focus());
+}
+
+function onEditorEscape(e: KeyboardEvent) {
+  if (!editing.value.active) return;
+  e.preventDefault();
+  cancelEdit();
+}
+
+const lastTurnIndex = computed(() => {
+  for (let i = entries.value.length - 1; i >= 0; i--) {
+    if (entries.value[i].kind === 'turn') return i;
+  }
+  return -1;
+});
+
+/** 只有「最后一条 AI 回复 + 已落库 + 空闲态」才允许重试 */
+function canRetryEntry(entry: ChatEntry, index: number): boolean {
+  if (entry.kind !== 'turn') return false;
+  if (isBusy.value || liveTurn.value) return false;
+  if (index !== lastTurnIndex.value) return false;
+  // 列表最后一条必须就是这条 AI 回复（后面还有用户消息时服务端会拒绝重试）
+  if (index !== entries.value.length - 1) return false;
+  if (!messageIdOf(entry)) return false;
+  return entry.turn?.status === 'done';
+}
+
+/** 撤回到某条消息（含该条），其后对话由服务端删除 */
+async function truncateTo(entry: ChatEntry, index: number) {
+  const sessionId = currentSessionId.value;
+  const messageId = messageIdOf(entry);
+  if (!sessionId || !messageId) {
+    showHint('这条消息还没有保存，无法撤回');
+    return;
+  }
+  if (isBusy.value) {
+    showHint('正在生成回复，请先停止');
+    return;
+  }
+  const dropCount = Math.max(0, entries.value.length - 1 - index);
+  const tail = dropCount > 0 ? `其后的 ${dropCount} 条对话` : '该消息本身';
+  if (!confirm(`撤回到这条消息？${tail}会被删除，且无法恢复。`)) return;
+
+  const userText = entry.kind === 'user' ? entry.content : '';
+  try {
+    await aiApi.truncateSession(sessionId, messageId, true);
+  } catch (e: any) {
+    alert('撤回失败：' + (e?.message || '网络错误'));
+    return;
+  }
+  resetEditing(false);
+  await loadMessages();
+  // 撤回用户消息时顺手回填，方便直接重发（不进入编辑态）
+  if (userText) setEditorText(userText);
+  touchSession(sessionId);
+  showHint('已撤回到该消息');
+}
+
+/** AiTurnView 的 @retry：重新生成最后一条 AI 回复 */
+async function retryTurn(entry: ChatEntry, index: number) {
+  if (entry.kind !== 'turn') return;
+  if (!canRetryEntry(entry, index)) {
+    showHint('只能重新生成最后一条回复');
+    return;
+  }
+  const sessionId = currentSessionId.value;
+  const messageId = messageIdOf(entry);
+  if (!sessionId || !messageId) return;
+
+  // 服务端会先删掉该回复，故本地先移除旧条目（失败时 loadMessages 纠正）
+  const removeIndex = entries.value.indexOf(entry);
+  if (removeIndex >= 0) entries.value.splice(removeIndex, 1);
+
+  try {
+    const newTurn: any = await stream.retry({
+      session_id: sessionId,
+      retry_message_id: messageId,
+      model: effectiveModel.value,
+      reasoning: effectiveReasoning.value,
+    });
+    const failed = !newTurn || newTurn.status === 'error';
+    await loadMessages();
+    if (failed) {
+      showHint('重试失败，已重新加载会话');
+      return;
+    }
+    touchSession(sessionId);
+    showHint('已重新生成回复');
+  } catch (e: any) {
+    showHint('重试失败：' + (e?.message || '网络错误'));
+    await loadMessages();
   }
 }
 
@@ -935,18 +1276,48 @@ function commitTurn(turn: any, ev: any) {
 }
 
 // ===== 发送 / 停止 =====
-async function sendMessage() {
-  const content = getEditorText().trim();
-  if (!content || isBusy.value) return;
-
-  // 「停止生成」中断的轮次不会有 done 事件；先落进历史，避免下一次 start() 覆盖后消失
+/** 「停止生成」中断的轮次不会有 done 事件；先落进历史，避免下一次 start() 覆盖后消失 */
+function commitPendingTurn() {
   const pending: any = streamTurn.value;
   if (pending?.id && !committedIds.value.includes(pending.id) && !suppressedIds.value.includes(pending.id)) {
     commitTurn(pending, null);
   }
+}
+
+/** 流式结束后重新拉一次消息，补上服务端 messageId / alternatives / usage（编辑、重试依赖） */
+let skipNextRefresh = false;
+async function refreshMessagesAfterRun(sessionId: number | null) {
+  if (skipNextRefresh) {
+    skipNextRefresh = false;
+    return;
+  }
+  const activeSessionId = currentSessionId.value;
+  if (!activeSessionId) return;
+  if (sessionId != null && activeSessionId !== sessionId) return;
+  await loadMessages(false);
+}
+
+async function sendMessage() {
+  const content = getEditorText().trim();
+  if (!content || isBusy.value) return;
 
   const sessionId = currentSessionId.value;
-  entries.value.push({ kind: 'user', key: `user-${Date.now()}`, content });
+
+  // 编辑历史消息：先撤回到该消息（含自身），刷新后再按普通消息发送
+  if (editing.value.active && editing.value.messageId && sessionId) {
+    try {
+      await aiApi.truncateSession(sessionId, editing.value.messageId, true);
+    } catch (e: any) {
+      alert('撤回历史消息失败，编辑未发送：' + (e?.message || '网络错误'));
+      return;
+    }
+    editing.value = { active: false, messageId: null, index: -1, draft: '' };
+    await loadMessages();
+  } else {
+    commitPendingTurn();
+  }
+
+  entries.value.push({ kind: 'user', key: `user-${Date.now()}`, content, messageId: null });
   clearEditor();
   scrollToBottom();
 
@@ -961,6 +1332,11 @@ async function sendMessage() {
     // 流内错误已落到 turn.error / stream.error，这里只兜底日志
     console.warn('[ai-assistant] stream failed:', e?.message || e);
   } finally {
+    try {
+      await refreshMessagesAfterRun(sessionId);
+    } catch {
+      /* 刷新失败不影响已展示内容 */
+    }
     nextTick(() => editorEl.value?.focus());
   }
 }
@@ -1000,9 +1376,12 @@ function toggleResourceSelector() {
 function clearCurrentChat() {
   if (entries.value.length === 0 && !liveTurn.value) return;
   if (!confirm('确认清空当前对话所有消息？')) return;
+  resetEditing(false);
   stopActiveStream();
   entries.value = [];
   committedIds.value = [];
+  // 「清空」只清本地展示（与旧行为一致）：下一次发送后不要立刻整表回填
+  skipNextRefresh = true;
 }
 
 // ===== 文件上传 =====
@@ -1311,6 +1690,10 @@ watch(
   },
   { deep: true },
 );
+
+onBeforeUnmount(() => {
+  if (hintTimer !== null) window.clearTimeout(hintTimer);
+});
 </script>
 
 <style scoped>
@@ -2365,8 +2748,7 @@ watch(
   color: var(--text-secondary);
 }
 
-.form-row input,
-.form-row select {
+.form-row input {
   height: 36px;
   padding: 0 var(--spacer-3);
   background: var(--ctrl-fill-default);
@@ -2378,8 +2760,7 @@ watch(
   font-family: inherit;
 }
 
-.form-row input:focus,
-.form-row select:focus {
+.form-row input:focus {
   border-color: var(--accent-base);
 }
 
@@ -2514,5 +2895,142 @@ watch(
 
 .send-btn.stop-btn:hover:not(:disabled) {
   filter: brightness(0.94);
+}
+
+/* ===== v5：消息操作（悬停按钮 / 编辑态 / 复制选中）===== */
+.chat-messages,
+.message-bubble,
+.chat-messages :deep(.md-body) {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.message-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chat-message.user .message-content {
+  align-items: flex-end;
+}
+
+.msg-hover-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--fast-duration);
+}
+
+.chat-message:hover .msg-hover-actions,
+.chat-message.is-editing .msg-hover-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.msg-action-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--fast-duration), color var(--fast-duration);
+}
+
+.msg-action-btn:hover {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+}
+
+.chat-message.is-editing .message-bubble {
+  outline: 2px solid var(--accent-base);
+  outline-offset: 1px;
+}
+
+/* 编辑历史消息提示条 */
+.edit-history-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto 8px;
+  padding: 6px var(--spacer-3);
+  box-sizing: border-box;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-base);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.edit-history-bar > svg {
+  flex-shrink: 0;
+  color: var(--accent-base);
+}
+
+.edit-history-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.edit-history-cancel {
+  flex-shrink: 0;
+  padding: 2px 10px;
+  background: transparent;
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--fast-duration), color var(--fast-duration);
+}
+
+.edit-history-cancel:hover {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+}
+
+/* 轻量 toast */
+.page-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 88px;
+  transform: translateX(-50%);
+  z-index: 9999;
+  padding: 8px 16px;
+  background: var(--flyout-bg);
+  backdrop-filter: var(--flyout-backdrop);
+  border: 1px solid var(--flyout-border);
+  border-radius: var(--radius-full);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.page-toast-enter-active,
+.page-toast-leave-active {
+  transition:
+    opacity var(--normal-duration) var(--fast-out-slow-in),
+    transform var(--normal-duration) var(--fast-out-slow-in);
+}
+
+.page-toast-enter-from,
+.page-toast-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(6px);
 }
 </style>

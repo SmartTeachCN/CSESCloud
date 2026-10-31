@@ -919,6 +919,10 @@ const aiEditorContext = computed(() => {
     fileName: currentFile.value.name,
     fileContent: currentFile.value.content,
     language: currentFile.value.ext || '',
+    // 完整云端路径：让模型用工具操作当前文件时能一次命中（避免只给文件名导致同名歧义）
+    path: currentFile.value.path || '',
+    fileId: currentFile.value.id || '',
+    source: currentFile.value.source || 'local',
   };
 });
 const saving = ref(false);

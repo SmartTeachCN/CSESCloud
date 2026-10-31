@@ -1,0 +1,49 @@
+<div class="md-app" id="app">
+  <div class="md-toolbar">
+    <div class="md-toolbar-left">
+      <span class="md-logo">MD</span>
+      <span class="md-file" id="fileName" title="当前文件">Markdown</span>
+      <span class="md-dirty" id="dirtyDot" hidden title="有未保存的修改">未保存</span>
+    </div>
+    <div class="md-toolbar-right">
+      <div class="md-modes" role="tablist" aria-label="视图模式">
+        <button type="button" class="md-mode-btn" data-mode-btn="split" title="左侧预览 + 右侧源码 (Alt+1)">
+          <span class="md-mode-dot"></span>分栏
+        </button>
+        <button type="button" class="md-mode-btn" data-mode-btn="preview" title="全预览（只读阅读）(Alt+2)">
+          <span class="md-mode-dot"></span>全预览
+        </button>
+        <button type="button" class="md-mode-btn" data-mode-btn="source" title="全源码（纯编辑）(Alt+3)">
+          <span class="md-mode-dot"></span>全源码
+        </button>
+      </div>
+      <button type="button" class="md-save-btn" id="saveBtn" title="保存 (Ctrl+S)">
+        <span class="md-save-ico">↓</span>保存
+      </button>
+    </div>
+  </div>
+
+  <div class="md-notice" id="notice" hidden></div>
+
+  <div class="md-body" id="body" data-mode="split">
+    <div class="md-pane md-pane-preview" id="panePreview">
+      <div class="md-preview" id="preview"></div>
+      <div class="md-empty" id="empty" hidden>
+        <div class="md-empty-icon">¶</div>
+        <p>还没有内容</p>
+        <span>切到「分栏」或「全源码」开始写 Markdown 吧</span>
+      </div>
+    </div>
+    <div class="md-pane md-pane-source" id="paneSource">
+      <textarea id="src" class="md-source-input" spellcheck="false" placeholder="在这里写 Markdown…"></textarea>
+    </div>
+    <div class="md-splitter" id="splitter" title="拖动调整比例"></div>
+  </div>
+
+  <div class="md-status" id="status">
+    <span id="statChars">0 字符</span>
+    <span id="statLines">0 行</span>
+    <span id="statWords">0 词</span>
+    <span class="md-status-right" id="statSaved">已同步</span>
+  </div>
+</div>

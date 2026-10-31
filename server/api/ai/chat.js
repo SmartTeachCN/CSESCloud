@@ -39,10 +39,18 @@ function jsonParseSafe(s, def = null) {
   try { return JSON.parse(s); } catch (_) { return def; }
 }
 
-/** 去掉「[编辑器上下文]」片段后的用户问题（用于标题） */
+/**
+ * 用户消息里可能被客户端拼进「[编辑器上下文]」片段（当前文件 / 云文件路径 / 整个文件内容）。
+ * 这段内容是给模型看的上下文，**不应该出现在聊天气泡里**，也不该以用户消息形式入库。
+ * 这里统一剥出真正的用户问题。
+ */
 function cleanUserText(content) {
-  const m = /\[用户问题\]\s*\n?([\s\S]*)$/.exec(String(content ?? ''));
-  return (m ? m[1] : String(content ?? '')).trim();
+  const raw = String(content ?? '');
+  const m = /\[用户问题\]\s*\n?([\s\S]*)$/.exec(raw);
+  if (m) return m[1].trim();
+  // 老版本消息没有 [用户问题] 标记：整段都是编辑器上下文 → 正文里不展示
+  if (/^\s*\[编辑器上下文\]/.test(raw)) return '';
+  return raw.trim();
 }
 
 function ownerHash(ownerKey) {
@@ -135,7 +143,62 @@ function loadHistory(sessionId, limit = 20) {
     'SELECT role, content, meta FROM ai_chat_messages WHERE session_id = ? ORDER BY id DESC LIMIT ?',
     [sessionId, limit]
   ).reverse();
-  return rows.map((r) => ({ role: r.role, content: r.content, meta: jsonParseSafe(r.meta, null) }));
+  return rows.map((r) => ({
+    role: r.role,
+    // 历史里的用户消息同样剥掉编辑器上下文，避免把旧文件内容反复喂给模型
+    content: r.role === 'user' ? cleanUserText(r.content) : r.content,
+    meta: jsonParseSafe(r.meta, null),
+  })).filter((r) => r.role !== 'user' || String(r.content || '') !== '');
+}
+
+/**
+ * 读取指定消息之前的上下文（正序），用于「重试」时把历史截断到那条用户消息之前。
+ */
+function loadHistoryBefore(sessionId, beforeMessageId, limit = 20) {
+  const rows = DB.all(
+    'SELECT role, content, meta FROM ai_chat_messages WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ?',
+    [sessionId, beforeMessageId, limit]
+  ).reverse();
+  return rows.map((r) => ({
+    role: r.role,
+    content: r.role === 'user' ? cleanUserText(r.content) : r.content,
+    meta: jsonParseSafe(r.meta, null),
+  })).filter((r) => r.role !== 'user' || String(r.content || '') !== '');
+}
+
+/**
+ * 把一条 assistant 消息拍成「版本快照」（重试时可以切回旧版本）
+ */
+function variantOfMessage(msg) {
+  if (!msg) return null;
+  const meta = jsonParseSafe(msg.meta, null) || {};
+  return {
+    message_id: msg.id,
+    content: String(msg.content || ''),
+    blocks: Array.isArray(meta.blocks) ? meta.blocks : [],
+    reasoning: String(meta.reasoning || ''),
+    usage: meta.usage || null,
+    model: String(meta.model || ''),
+    reasoning_level: String(meta.reasoning_level || ''),
+    created_at: String(msg.created_at || ''),
+    interrupted: !!meta.interrupted,
+  };
+}
+
+/**
+ * 删除会话里从某条消息开始的全部消息（含或不含该条）
+ * @returns {number} 删除条数
+ */
+function truncateMessagesFrom(sessionId, fromMessageId, inclusive = true) {
+  const op = inclusive ? '>=' : '>';
+  const info = DB.delete(
+    'ai_chat_messages',
+    'session_id = ? AND id ' + op + ' ?',
+    [sessionId, fromMessageId]
+  );
+  DB.update('ai_chat_sessions', { updated_at: nowStr() }, 'id = ?', [sessionId]);
+  Runs.removeBySession(sessionId);
+  return Number((info && info.changes) || 0);
 }
 
 /** 生成标题（模型优先，规则兜底）；返回 { title, usedModel } */
@@ -263,7 +326,8 @@ module.exports = async (ctx) => {
       id: r.id,
       session_id: r.session_id,
       role: r.role,
-      content: r.content,
+      // 用户消息只回显真正的提问；[编辑器上下文] 片段不入正文（历史脏数据也在这里被折叠）
+      content: r.role === 'user' ? (cleanUserText(r.content) || '（本轮只提供了编辑器上下文）') : r.content,
       meta: jsonParseSafe(r.meta, null),
       created_at: r.created_at,
     })));
@@ -358,15 +422,78 @@ module.exports = async (ctx) => {
     Response.success({ id, url: '/api/ai/chat?action=shot&id=' + encodeURIComponent(id), size: buf.length });
   }
 
-  // ── 流式发送 ──
+  // ── 流式发送（普通发送 / 重试指定 AI 消息） ──
   if (method === 'POST' && action === 'stream') {
-    const content = String(body.content ?? '').trim();
+    const retryMessageId = parseInt(body.retry_message_id ?? 0, 10) || 0;
     const scope = body.scope ?? 'global';
     const scopeRef = body.scope_ref ?? null;
     let sessionId = parseInt(body.session_id ?? 0, 10) || 0;
-    const model = String(body.model ?? 'default');
-    const reasoning = String(body.reasoning ?? 'auto');
+    let model = String(body.model ?? 'default');
+    let reasoning = String(body.reasoning ?? 'auto');
     const hasEditor = !!body.has_editor;
+
+    // ══ 重试：删掉该条 AI 回复及其后文，用同一条用户消息重新生成，旧回复存为版本快照 ══
+    if (retryMessageId) {
+      if (!sessionId) Response.error('缺少 session_id');
+      const retrySession = getSession(sessionId, ownerKey);
+      if (!retrySession) Response.error('会话不存在或无权限', 403, 403);
+      const target = DB.one('SELECT * FROM ai_chat_messages WHERE id = ? AND session_id = ?', [retryMessageId, sessionId]);
+      if (!target) Response.error('要重试的消息不存在', 404, 404);
+      if (target.role !== 'assistant') Response.error('只能重试 AI 的回复', 400, 400);
+      // 只允许重试最后一条 AI 回复，避免无提示地丢掉后面对话
+      const after = Number(DB.scalar('SELECT COUNT(*) FROM ai_chat_messages WHERE session_id = ? AND id > ?', [sessionId, target.id])) || 0;
+      if (after > 0) Response.error('只能重试最后一条 AI 回复；如需回到更早的位置，请先用「撤回到这里」', 400, 400);
+      const lastUser = DB.one(
+        "SELECT * FROM ai_chat_messages WHERE session_id = ? AND role = 'user' AND id < ? ORDER BY id DESC LIMIT 1",
+        [sessionId, retryMessageId]
+      );
+      if (!lastUser) Response.error('找不到可重试的用户消息', 400, 400);
+
+      const oldMeta = jsonParseSafe(target.meta, null) || {};
+      const oldVariant = variantOfMessage(target);
+      const previousVariants = Array.isArray(oldMeta.alternatives) ? oldMeta.alternatives : [];
+      const alternatives = [oldVariant].concat(previousVariants);
+
+      // 丢弃目标回复（及其后文），保留用户消息本身作为本轮输入
+      truncateMessagesFrom(sessionId, target.id, true);
+
+      const userContent = cleanUserText(lastUser.content);
+      const lastUserMeta = jsonParseSafe(lastUser.meta, null) || {};
+      const editorContext = lastUserMeta.editor_context && typeof lastUserMeta.editor_context === 'object'
+        ? lastUserMeta.editor_context
+        : null;
+      const history = loadHistoryBefore(sessionId, lastUser.id, 20);
+      if (body.model) model = String(body.model);
+      if (body.reasoning) reasoning = String(body.reasoning);
+
+      const sseRetry = Agent.createSSE(req, res);
+      let retryResult;
+      try {
+        retryResult = await Agent.startTurn({
+          user, ownerKey, sessionId, history,
+          userMessage: userContent,
+          modelName: model,
+          reasoning,
+          sse: sseRetry,
+          editorContext,
+          hasEditor,
+        });
+      } catch (e) {
+        console.error('[ai] retry startTurn 异常:', e);
+        try { await sseRetry.write({ type: 'error', message: 'AI 重试失败：' + (e && e.message ? e.message : e) }); } catch (_) { /* ignore */ }
+        retryResult = { suspended: false, reply: '', blocks: [], interrupted: true, error: String(e && e.message || e) };
+      }
+
+      await finishStream({
+        ctx, sse: sseRetry, result: retryResult, sessionId, session: retrySession, ownerKey, model, reasoning,
+        content: userContent, res,
+        extraMeta: { alternatives, retried_from: target.id, retry_of_variant_count: alternatives.length },
+      });
+      throw new HttpSent();
+    }
+
+    // ══ 普通发送 ══
+    const content = String(body.content ?? '').trim();
     const editorContext = body.editor_context && typeof body.editor_context === 'object'
       ? body.editor_context
       : Agent.parseEditorContext(content);
@@ -391,11 +518,16 @@ module.exports = async (ctx) => {
     }
 
     // 保存用户消息 + 更新会话
+    // 注意：只存「用户真正问的话」，[编辑器上下文] 片段（可能含整份文件内容）放进 meta，
+    // 否则会话历史与聊天气泡里会出现一大段上下文/系统提示词。
     const now = nowStr();
-    saveMessage(sessionId, 'user', content, editorContext ? { editor_context: editorContext } : null);
+    const userQuestion = cleanUserText(content);
+    saveMessage(sessionId, 'user', userQuestion !== '' ? userQuestion : '（本轮只提供了编辑器上下文）',
+      editorContext ? { editor_context: editorContext } : null);
     DB.update('ai_chat_sessions', { updated_at: now, model, reasoning }, 'id = ?', [sessionId]);
 
-    const history = loadHistory(sessionId, 20).slice(0, -1); // 去掉刚存的这条用户消息
+    // 历史里最后一条就是刚存的用户消息（已清洗），去掉它；本轮问题单独用原始 content 交给 Agent
+    const history = loadHistory(sessionId, 21).slice(0, -1);
 
     const sse = Agent.createSSE(req, res);
     let result;
@@ -422,6 +554,30 @@ module.exports = async (ctx) => {
       ctx, sse, result, sessionId, session, ownerKey, model, reasoning, content, res,
     });
     throw new HttpSent();
+  }
+
+  // ── 撤回到某条消息（放弃其后对话） ──
+  if (method === 'POST' && action === 'truncate') {
+    const sessionId = parseInt(body.session_id ?? 0, 10) || 0;
+    const fromMessageId = parseInt(body.from_message_id ?? 0, 10) || 0;
+    const inclusive = body.inclusive === undefined ? true : !!body.inclusive;
+    if (!sessionId) Response.error('缺少 session_id');
+    if (!fromMessageId) Response.error('缺少 from_message_id');
+    const session = getSession(sessionId, ownerKey);
+    if (!session) Response.error('会话不存在或无权限', 403, 403);
+    const target = DB.one('SELECT * FROM ai_chat_messages WHERE id = ? AND session_id = ?', [fromMessageId, sessionId]);
+    if (!target) Response.error('要撤回的消息不存在', 404, 404);
+
+    const deleted = truncateMessagesFrom(sessionId, fromMessageId, inclusive);
+    Response.success({
+      session_id: sessionId,
+      deleted,
+      message: {
+        id: target.id,
+        role: target.role,
+        content: target.role === 'user' ? cleanUserText(target.content) : String(target.content || ''),
+      },
+    });
   }
 
   // ── 续跑（客户端工具 / 用户回答） ──
@@ -474,9 +630,10 @@ module.exports = async (ctx) => {
       if (!session) Response.error('会话不存在或无权限', 403, 403);
     }
 
-    saveMessage(sessionId, 'user', content, null);
+    const userQuestion = cleanUserText(content);
+    saveMessage(sessionId, 'user', userQuestion !== '' ? userQuestion : '（本轮只提供了编辑器上下文）', null);
     DB.update('ai_chat_sessions', { updated_at: nowStr(), model, reasoning }, 'id = ?', [sessionId]);
-    const history = loadHistory(sessionId, 20).slice(0, -1);
+    const history = loadHistory(sessionId, 21).slice(0, -1);
 
     const collector = makeCollectorSSE();
     let result;
@@ -511,8 +668,9 @@ module.exports = async (ctx) => {
 
   /**
    * 流式收尾：落库 + 自动标题 + 发 done
+   * @param {object} extraMeta 额外的 meta 字段（如重试时的 alternatives 版本快照）
    */
-  async function finishStream({ sse, result, sessionId, session, ownerKey, model, reasoning, content }) {
+  async function finishStream({ sse, result, sessionId, session, ownerKey, model, reasoning, content, extraMeta }) {
     if (!result) result = { suspended: false, reply: '', blocks: [] };
 
     if (result.suspended) {
@@ -523,7 +681,7 @@ module.exports = async (ctx) => {
     }
 
     const reply = String(result.reply || '');
-    const meta = {
+    const meta = Object.assign({
       blocks: result.blocks || [],
       reasoning: result.reasoning || '',
       model: result.model?.name || model,
@@ -531,7 +689,7 @@ module.exports = async (ctx) => {
       usage: result.usage || null,
       interrupted: !!result.interrupted,
       error: result.error || '',
-    };
+    }, extraMeta || {});
     let messageId = 0;
     // 空回复（且不是断连）也要留一条，避免会话看起来没反应
     if (reply !== '' || !result.interrupted) {
@@ -557,7 +715,10 @@ module.exports = async (ctx) => {
    */
   async function maybeAutoTitle({ ownerKey, sessionId, session, modelName, content, reply }) {
     if (!session || !sessionId) return '';
-    if (Number(session.title_generated) === 1) return '';
+    // 重新读一次：本轮 AI 可能已经用 set_session_title 改过标题（title_generated=1），
+    // 不能拿任务开始前的旧 session 快照把它覆盖回去。
+    const fresh = DB.one('SELECT title, title_generated FROM ai_chat_sessions WHERE id = ?', [sessionId]) || session;
+    if (Number(fresh.title_generated) === 1) return '';
     const count = DB.scalar('SELECT COUNT(*) FROM ai_chat_messages WHERE session_id = ?', [sessionId]);
     if (Number(count) > 2) return ''; // 已有轮次，不再自动改标题
     const userText = cleanUserText(content) || session.title || '';

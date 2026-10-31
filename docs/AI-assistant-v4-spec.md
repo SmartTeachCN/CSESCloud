@@ -272,3 +272,280 @@ export function parseStoredMessage(row:any): AiTurn
 
 **测试脚本**：`_smoke_ai.js`、`_smoke_tools.js`、`_smoke_real_ai.js`。
 
+
+
+## 踩过的坑（回归测试覆盖）
+
+### 1. 流式数据到了、界面不动 —— ref 里存的不是 reactive 代理
+`turn` 是 `ref<AiTurn | null>`。`turn.value = t` 之后 ref 内部存的是 `reactive(t)`，
+但早期 `start()` 返回的是**原始对象** `t`。后续所有 `t.blocks.push(...)` / `t.status = ...`
+都绕过了 Proxy 的 set 拦截，Vue 不会 trigger —— 现象是 SSE 逐段到达、对象也在更新，
+但界面一直不动，直到流结束（`isStreaming` 变化触发一次重渲染）才把整段内容一次性画出来。
+工具卡的 awaiting→running→done 阶段、提问卡的出现同样全部看不到（提问卡甚至永远不出现，
+用户无法作答，`run()` 一直等下去）。
+
+修复：`start()` 必须 `return turn.value as AiTurn;`。回归测试：
+
+```bash
+node --experimental-strip-types frontend/_smoke_ai_stream.mjs
+# 7 项：多次响应式更新 / 工具卡阶段可见 / 提问卡作答续跑 / 停止不悬挂
+```
+
+对照实验（把 `return turn.value` 改回 `return t` 再跑）会得到
+`renders: ["", "streaming|", "done|你好，世界"]` —— 只有初始和结束两帧，正是该 bug 的特征。
+
+### 2. Vite dev 代理会截断 SSE —— 规则还匹配着旧 action 名
+`frontend/vite.config.ts` 里原来只对 `send_stream` 关闭请求超时。v4 把 action 改名成
+`stream` / `resume` 后该规则失效，长回答可能被代理层 N 秒后重置
+（dev server 日志表现为 `http proxy error: /api/ai/chat?action=stream — read ECONNRESET`）。
+
+修复：代理加 `timeout: 0` / `proxyTimeout: 0`，并在 `proxyReq` 里同时匹配
+`action=stream`、`action=resume`、`send_stream`，顺手关掉 Nagle；`proxyRes` 里禁止缓冲。
+
+### 3. 提问卡相关竞态
+- 用户在提问卡上作答/点的「停止」如果早于 `run()` 注册等待，旧实现会让 `run()` 永久悬挂。
+  现在 `waitForAsk()` 会检查是否已停止、并缓存「提前到达的答案」；`stop()` 也会唤醒挂起的提问卡。
+
+
+---
+
+# v4.1 增补（用户反馈修复 + 网页空间 + Markdown 插件）
+
+## A. 修复「AI 编辑时提示非当前用户文件，要求用 list 重新获取」
+
+**根因**：`resolveCloudFile` 只在「file_id 命中 / 路径精确命中 / basename 唯一命中」时成功，
+一旦目录里出现同名文件、或模型复用了上一轮回复里的非标准路径写法，就落到同一条错误文案
+「云文件不存在或不属于当前用户 + 请先用 list_cloud_files 获取」——把两种完全不同的原因混在一起，
+模型无法判断该重试、该改名还是该新建，于是反复 list 卡死。
+
+**改法**：
+1. `resolveCloudFile` 改为诊断式 `{ row, reason, candidates }`，reason ∈
+   `ok / id_not_found / id_other_space / dir_missing / file_missing / ambiguous`。
+2. 路径归一化更宽容：`/.cloud/`、`.cloud/`、`/`、反斜杠、首尾空格、连续斜杠都能识别；
+   再退到「大小写不敏感精确匹配」→「祖先目录是否存在」→「basename 唯一匹配」（先同目录再全局）。
+3. basename 多命中 → `ambiguous` 并列出全部候选相对路径（≤20），不再笼统报错。
+4. 失败文案统一附「现有文件清单」（≤30 条、带目录层级），并明确区分：
+   - 目录不存在 → 「create_cloud_file 会自动创建目录」
+   - 目录存在但没这个文件 → 「可用 create_cloud_file / create_if_missing=true」
+   - id 属于其他数据空间 → 「不属于当前数据空间」
+5. `update_cloud_file` 新增 `create_if_missing`（默认 false），仅在「目录存在但无此文件」时按
+   创建语义新建，其余情况仍要求澄清，避免瞎建。
+6. 前端同时把「当前文件完整云路径 + 云文件 ID」放进 `[编辑器上下文]`（`LightEditor` 的
+   `aiEditorContext` → `AiAssistantPanel` → `agent.js#buildSystemPrompt`），
+   模型从第一轮就知道该用哪个路径，从源头减少歧义。
+
+## B. 新增网页空间工具（AI 现在能操作 + 预览网页空间）
+
+| 工具 | 说明 |
+|---|---|
+| `list_web_spaces` | 账号名下网页空间：id / slug / title / 文件数与大小 / 启用与审查状态 / `/site/{slug}/` |
+| `list_web_space_files` | 网页空间文件树（path / size / type / review_status） |
+| `read_web_space_file` | 读文本文件（二进制友好拒绝；>200KB 截断提示） |
+| `write_web_space_file` | 创建/覆盖文件；**严格对齐 web-hosting save-file 的审核语义**（置 `pending_review`、不动 `published_content`/`published_size`、禁写 `/.published`、配额口径一致），返回 `public_url` / `preview_url`，patch `{refresh:'web-space'}` |
+| `delete_web_space_file` | 删除文件；删目录必须显式 `recursive=true` |
+| `get_web_space_preview_url` | 返回公开地址与 `?preview=1` 预览地址（只读） |
+| `publish_cloud_file` | 把 `/.cloud` 里的文件内容复制进网页空间（走同一审核语义） |
+
+空间解析区分「不存在 / 不属于当前账号 / 无空间」；`is_enabled=0` 或被管理员停用的空间拒绝写入并说明。
+
+## C. 模型选择框两项修复
+
+1. **平台提供的模型区域按需隐藏**：`GET /api/ai/models?action=presets` 每项新增 `configured`
+   （平台/用户是否为该预设配了可用 API Key，含服务端环境变量兜底）。
+   前端 `ModelPicker` 只渲染 `configured !== false` 的预设，并去掉与自定义模型重复的项；
+   一个都没有时整组「平台提供的模型」不显示，底部提示「N 个平台预设未配置 API Key，已隐藏」。
+2. **滚轮一滚就关闭**：原实现在 `window` 上用 capture 监听所有 `scroll` 事件，下拉列表内部滚动也会被
+   当成「外部滚动」而关闭。现在只在下拉面板**外部**滚动时关闭；面板加 `@wheel.stop` 与
+   `overscroll-behavior: contain`，列表可以正常滚动选择。
+
+另外：`action=list` 不再向前端返回明文 `api_key`（改为 `has_api_key` + `api_key_masked`）。
+
+## D. 编辑器旁 AI 助理外观对齐全屏模式
+
+`AiAssistantPanel.vue` 重做外观：
+- 用户消息改为右对齐强调色气泡（与全屏模式同一套圆角/内边距/阴影），助手回合外包同款气泡底；
+- 输入区改为「圆角输入框 + 底行控件」结构（focus 时描边高亮），与全屏模式一致；
+- 模型控件从旧 `CustomSelect` 换成全屏同款 `ModelPicker`（含**推理等级**），并同样用
+  localStorage 记忆选择、把 `reasoning` 传给服务端；
+- 发送/停止按钮与全屏模式同形（停止时变红）。
+
+## E. 新增编辑器插件：Markdown 阅读器
+
+`data/dev/plugins/markdown_reader/`（文件系统即注册，无需插库）：
+
+| 文件 | 说明 |
+|---|---|
+| `manifest.json` | plugin_key=markdown_reader，extensions=`md/markdown/mdown`，ribbon 提供 分栏/全预览/全源码/保存/重新渲染 |
+| `editor.html` | 工具栏 + 预览区 + 源码区 + 可拖拽分隔条 + 状态栏 |
+| `editor.css` | 深浅色自适应（prefers-color-scheme）、预览排版、三种模式布局 |
+| `editor.js` | 自带离线 Markdown 渲染器（纯函数、无 DOM 依赖）+ 编辑器交互 |
+| `icon.png` | 64×64 官方图标（Pillow 生成） |
+| `samples/markdown-sample.md` | 「从模板新建」示例 |
+
+- 模式：**分栏**（左预览 / 右源码，可拖拽比例、滚动同步）、**全预览**（只读阅读）、**全源码**；
+  快捷键 Alt+1/2/3，模式记忆到 localStorage（失败静默）。
+- 渲染支持：ATX 标题、粗体/斜体/删除线、行内代码、围栏代码块（语言标签 + 内容转义）、
+  有序/无序/嵌套列表、任务列表、引用块、分隔线、链接、图片、GFM 管道表格、软换行；
+  **默认转义源码 HTML**，剥离 `<script>`/`on*`/`javascript:`。
+- 保存：`CSEditor.emitSave` / 平台 `{__ceseCommand:'save'}` → 全局 `saveConfig()`，保存后清除未保存标记。
+- 大文件保护：>800KB 只渲染前 300KB 并在预览顶部提示。
+
+**验证**：`node _smoke_md_plugin.js` → **58/58**（manifest / html+js 契约 / 23 条渲染断言 /
+`PluginFS.resolveByExt` 解析）；`/api/dev/plugins?action=resolver&ext=md` 返回本插件。
+
+## F. v4.1 验收
+
+| 测试 | 结果 |
+|---|---|
+| `node _smoke_ai.js`（协议/流式/工具/续跑/标题/会话/截图） | 45/45 |
+| `node _smoke_tools.js`（服务端 12 个基础工具） | 42/42 |
+| `node _smoke_md_plugin.js`（Markdown 插件） | 58/58 |
+| 云文件解析文案 / 网页空间只读工具 / presets.configured（真实库，一次性脚本） | 27/27 |
+| `pnpm --dir frontend build` | 通过 |
+
+
+---
+
+# v4.2 增补（AI 主动改标题 + 修复上下文/系统提示词串到用户消息）
+
+## A. AI 可以主动修改对话标题
+
+新增服务端工具 **`set_session_title`**（`server/api/ai/tools.js`）：
+
+- 参数：`{ title: string }`，标题会被清洗（去引号/结尾标点/压缩空白）并截到 24 字符；
+- 只能改 `ctx.sessionId` 对应的会话，并校验 `owner_key` 归属；
+- 写库 `title` + `title_generated=1`，返回 `title` 字段；
+- `agent.js` 检测到工具返回里的 `title` 时，立即向前端推 SSE **`title` 事件**（带 `session_id`），
+  会话列表/页头无需刷新即可更新；
+- `chat.js#maybeAutoTitle` 会**重新读库**判断 `title_generated`，避免 AI 刚改完标题又被"首轮自动标题"覆盖。
+
+系统提示词新增第 8 条明确要求：
+
+> 对话标题由你维护：当用户明确要求「改个标题 / 重命名对话」，或者对话主题已经明显切换
+> （例如从「看课表」转到「把页面发布到网页空间」）时，**主动调用 set_session_title** 把标题改成
+> 16 字以内的短标题（抓住主题关键词，不要带引号）。同一主题下的普通追问不要频繁改标题，
+> 也不要向用户解释「我调用了工具」。
+
+## B. 修复「系统提示词 / 编辑器上下文」出现在用户消息里
+
+**现象**：编辑器内 AI 面板会把「当前文件 / 云文件路径 / 云文件 ID / 整个文件内容」拼成
+`[编辑器上下文] … [用户问题] …` 一起发给服务端；服务端之前把**整段原文**当作用户消息入库并回显，
+于是会话里会看到一大段上下文（甚至整份文件内容 / 提示词片段）。
+
+**改法**（`server/api/ai/chat.js`）：
+1. `stream` 与 `send` 两条路径都只把 `cleanUserText(content)`（真正的提问）入库；
+   `[编辑器上下文]` 片段继续保存在 `meta.editor_context`，并作为系统提示词的一部分给模型；
+2. `action=messages` 回显时对用户消息再次清洗 → **历史脏数据也会被折叠**，不用迁移库；
+3. `loadHistory()` 同样清洗用户消息（并丢弃清洗后为空的消息），避免把旧文件内容反复喂给模型；
+4. 兼容没有 `[用户问题]` 标记的老消息：整段都是上下文时，正文显示为「（本轮只提供了编辑器上下文）」。
+
+**验证**：原有会话 39 的 18 条用户消息中，含 `[编辑器上下文]` 的脏数据现在读取时 0 条泄漏。
+
+## C. v4.2 验收
+
+| 测试 | 结果 |
+|---|---|
+| `node _smoke_ai.js`（新增 11 条断言：title 事件 / 工具改标题 / 不被自动标题覆盖 / 用户消息不含上下文 / meta 保留上下文 / 历史折叠） | **56/56** |
+| `node _smoke_tools.js` | 42/42 |
+| `node _smoke_md_plugin.js` | 58/58 |
+
+
+### 补充（v4.2 真实模型验证）
+
+- 系统提示词里额外提供了「当前对话标题」，模型据此判断是否需要改名；
+- 用库里配置的 DeepSeek（deepseek-flash）实测：对「把当前对话的标题改成『云文件整理』」这一请求，
+  模型**主动调用 `set_session_title`** → 服务端推 `title` 事件 → 会话标题即时更新；
+  验证脚本：`node _smoke_real_title.js`（7/7，最小请求，结束自动删除测试会话）。
+
+
+---
+
+# v4.3 增补（消息级操作：撤回/编辑/复制/重试 + Tokens）
+
+## A. 后端协议
+
+### 1. 撤回（放弃其后对话）
+```
+POST /api/ai/chat?action=truncate
+{ session_id, from_message_id, inclusive?: boolean }   // inclusive 默认 true
+→ { session_id, deleted, message: { id, role, content } }
+```
+删除该消息（含/不含）之后的全部消息、清理待续跑断点、更新会话时间；回传被撤回消息的正文
+（用户消息已剥掉编辑器上下文），便于前端回填输入框做「编辑后重发」。
+
+### 2. 重试（在同一条用户消息上重新生成 AI 回复）
+```
+POST /api/ai/chat?action=stream
+{ session_id, retry_message_id, model?, reasoning?, has_editor? }
+```
+- 只允许最后一条 assistant 消息（否则返回 400，提示先「撤回到这里」）；
+- 找到它前面最近的一条用户消息，删掉该 AI 回复及其后文（保留用户消息）；
+- 用同一条用户消息重新跑 Agent 回合，SSE 事件与普通发送一致；
+- 旧回复拍成版本快照写进新消息的 `meta.alternatives`（数组，0 号是最近一次重试前的版本；
+  多次重试会累积），新消息同时记录 `retried_from` / `retry_of_variant_count`；
+- 前端据此做「当前版本 / 重试前的版本」切换器（纯展示，不需要请求服务端）。
+
+## B. 前端
+
+- `useAiStream`：新增 `retry({ session_id, retry_message_id, model?, reasoning? })`；
+  `parseStoredMessage()` 返回 `messageId` 与 `alternatives`；`AiTurn` 增 `usage` 展示所需字段；
+- `api/index.ts`：新增 `aiApi.truncateSession(sessionId, fromMessageId, inclusive)`；
+- `AiTurnView`：底部 meta 行显示 **Tokens（↑ prompt ↓ completion）**、**重试按钮**（`can-retry` 控制）、
+  **版本切换器**（`‹ 1/N ›` +「当前版本 / 重试前的版本」）、**复制**按钮；
+- 会话页：消息右键菜单（复制文本 / 编辑该消息 / 撤回到这里 / 重新生成）+ 悬停操作按钮 +
+  编辑态提示条（发送后丢弃其后对话）+ 消息文本可鼠标选中复制。
+
+## C. 验收
+
+| 测试 | 结果 |
+|---|---|
+| `node _smoke_ai.js`（新增 12 条：truncate 删除条数与回传内容、撤回后清空、重试生成新消息、只保留一轮、alternatives 快照内容一致、重试用户消息被拒绝） | **67/67** |
+
+
+---
+
+# v4.4 修复：工具调用经常出错（工具链可用性 + 调用准确性）
+
+## 排查结论（来自真实会话 91「创建汇率计算器网页」）
+
+失败的 4 次工具调用分两类：
+
+1. **参数被输出长度截断**：`write_web_space_file` / `create_cloud_file` 收到 `{}`。
+   根因是工具轮次的 `max_tokens` 只有 4000，模型在输出较长的 HTML `content` 时被截断，
+   工具参数 JSON 不完整；而 agent 侧 `jsonParseSafe` 失败后**静默当成 `{}` 执行**，
+   于是表现为「缺少 path / 文件名不能为空」这类莫名错误。
+2. **缺少「创建网页空间」工具**：模型想发布到新站点，只能猜一个 slug（`fx-rate`），
+   工具返回「网页空间不存在」。它没有别的路可走。
+
+## 修复内容
+
+### agent.js
+- **工具轮次输出预算提升到 8192**（DeepSeek 上限）：大文件内容/多工具参数不再被 4000 截断。
+- **严格解析工具参数**（`parseToolArgs`）：非法 JSON 不再静默当 `{}`；
+  识别到 `finish_reason === 'length'` 时给出「参数被截断，请把内容拆小/分次写入」的明确错误，
+  并把该错误作为 tool 结果喂回模型，让它在同一轮里自我纠正（而不是继续瞎试）。
+- 支持双重编码的 arguments 自动解一层。
+
+### tools.js
+- **参数归一化层**（`normalizeToolArgs`）：`fileId/file_path/new_content/filename/spaceId/instanceId`
+  等常见别名自动映射；`"355"` → 355；`"true"` → true；非 content 字符串自动 trim。
+- **必填参数预检查**：缺参时返回「缺少必填参数：path、content + 该工具支持参数：… +
+  请补齐后重新调用本工具」，而不是让模型猜或换工具绕开。
+- **新增工具**：`create_web_space`（标题/slug 可选，自动去重、自动生成默认 index.html）、
+  `update_web_space`（改名/描述/启停）——解决「AI 只能猜 slug」的死路。
+- `write_web_space_file` 描述里补充「单次 content 建议 ≤4000 字符，大文件分次写」。
+
+### 系统提示词（新增规则 9-11）
+- 调工具必须给全必填参数，需要 id/路径/空间时先 `list_*`/`get_*` 查真实值，不要猜；
+  参数不完整时按提示补齐重试**同一个**工具，不要换工具绕开。
+- 单次工具调用写入内容建议 ≤4000 字符，大文件拆文件或分次覆盖。
+- 要发布到新站点先 `create_web_space`，已有空间用 `list_web_spaces` 查真实 slug。
+
+## 验证
+
+| 测试 | 内容 | 结果 |
+|---|---|---|
+| `_smoke_tool_chain.js`（新） | 22 个服务端工具全量可用性 + 别名/字符串数字/布尔字符串 + 缺参提示 + 网页空间全流程 | **62/62** |
+| `_smoke_ai.js` | 新增「tool_calls 参数被截断」用例：必须标记失败并给出可操作错误，且模型能继续 | **72/72** |
+| `_smoke_real_tools.js`（新） | 真实 DeepSeek：`create_web_space` → `write_web_space_file` → DB 校验页面内容 | **11/11** |
+| `_smoke_tools.js` / `_smoke_md_plugin.js` / 前端流式回归 | 回归 | 42/42、58/58、7/7 |

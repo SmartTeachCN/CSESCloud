@@ -248,18 +248,32 @@ function cloudPathFor(name, dir) {
   return CLOUD_PREFIX + (cleanDir ? cleanDir + '/' : '') + name;
 }
 
-/** 相对 cloud 路径 → 完整路径（用于 read/update/rename/delete 的 path 入参） */
-function normalizeCloudFilePath(pathArg) {
-  let s = String(pathArg === undefined || pathArg === null ? '' : pathArg).replace(/\\/g, '/').trim();
-  if (s === '') return null;
-  if (s.indexOf('/.cloud/') === 0) s = s.slice('/.cloud/'.length);
-  else s = s.replace(/^\/+/, '');
-  const parts = s.split('/').filter(Boolean);
-  if (!parts.length) return null;
-  for (const part of parts) {
-    if (!validCloudName(part)) return null;
+/**
+ * 把模型/用户给的 path 归一化成「相对 `/.cloud/` 的路径」。
+ *
+ * 兼容真实使用里各种写法（模型经常复用它上一轮回复里的路径）：
+ *   `/.cloud/web/a.html`、`.cloud/web/a.html`、`/web/a.html`、`web\a.html`、
+ *   `/.cloud`（无尾斜杠）、多余斜杠、首尾空格。
+ *
+ * @returns {{rel:string, valid:boolean}} rel 不含首尾斜杠（根目录为 ''）；
+ *   valid=false 表示路径含非法片段（如 `..`、`:`、`*` 等），解析器会按 file_missing 处理。
+ */
+function cleanCloudRelPath(pathArg) {
+  let s = String(pathArg === undefined || pathArg === null ? '' : pathArg).trim();
+  s = s.replace(/\\/g, '/').replace(/\/+/g, '/');
+  s = s.replace(/^\/+/, '');
+  // 反复剥离 `.cloud` / `.cloud/` 前缀（兼容带与不带前导斜杠的写法）
+  let guard = 0;
+  while (guard++ < 4 && (s === '.cloud' || s.indexOf('.cloud/') === 0)) {
+    s = s === '.cloud' ? '' : s.slice('.cloud/'.length);
+    s = s.replace(/^\/+/, '');
   }
-  return CLOUD_PREFIX + parts.join('/');
+  s = s.replace(/^\/+|\/+$/g, '');
+  if (s === '') return { rel: '', valid: true };
+  const parts = s.split('/').filter(Boolean);
+  if (!parts.length) return { rel: '', valid: true };
+  const valid = parts.every((part) => validCloudName(part));
+  return { rel: parts.join('/'), valid: valid };
 }
 
 /** 完整路径 → 相对 `/.cloud/` 的父目录（根为 ''） */
@@ -347,27 +361,207 @@ function ensureCloudDirs(DB, spaceId, dir, now) {
   }
 }
 
-/** 按 file_id / path 定位云文件；精确路径不存在时按唯一同名文件兜底。 */
+/**
+ * 诊断式云文件解析（read/update/rename/delete/create_instance 共用）。
+ *
+ * 解析顺序（逐步放宽，避免模型因路径写法不同而「改一次就改不了」）：
+ *   1) file_id → 全局查；存在但 space_id 不同 → `id_other_space`
+ *   2) 精确路径
+ *   3) 归一化前缀后（`/.cloud/`、`.cloud/`、`/`、`\`、首尾空格）
+ *   4) 大小写不敏感精确匹配
+ *   5) 祖先目录缺失 → `dir_missing`
+ *   6) basename 匹配（先同目录、再全局）：唯一 → ok；多个 → `ambiguous` + 候选相对路径
+ *   7) 否则 → `file_missing`
+ *
+ * @param {object} DB DB 模块
+ * @param {number} spaceId 当前用户数据空间 id
+ * @param {{file_id?:number, path?:string, file_path?:string, name?:string}} args
+ * @returns {{row:object|null, reason:'ok'|'id_not_found'|'id_other_space'|'dir_missing'|'file_missing'|'ambiguous', candidates:string[]}}
+ */
 function resolveCloudFile(DB, spaceId, args) {
-  const fileId = parseInt((args || {}).file_id ?? 0, 10) || 0;
+  const a = args || {};
+  const sid = parseInt(spaceId, 10) || 0;
+
+  // 1) file_id
+  const fileId = parseInt(a.file_id ?? 0, 10) || 0;
   if (fileId > 0) {
-    return DB.one('SELECT * FROM web_hosting_files WHERE id = ? AND space_id = ?', [fileId, spaceId]);
+    const byId = DB.one('SELECT * FROM web_hosting_files WHERE id = ?', [fileId]);
+    if (!byId) return { row: null, reason: 'id_not_found', candidates: [] };
+    if ((parseInt(byId.space_id, 10) || 0) !== sid) {
+      return { row: null, reason: 'id_other_space', candidates: [] };
+    }
+    return { row: byId, reason: 'ok', candidates: [] };
   }
-  const pathArg = (args || {}).path ?? (args || {}).file_path;
-  if (pathArg === undefined || pathArg === null || String(pathArg).trim() === '') return null;
-  const fullPath = normalizeCloudFilePath(pathArg);
-  if (!fullPath) return null;
-  const row = DB.one('SELECT * FROM web_hosting_files WHERE space_id = ? AND file_path = ?', [spaceId, fullPath]);
-  if (row) return row;
-  // 兜底：path 只给了文件名时，允许匹配唯一同名文件
-  const base = formats.basename(fullPath);
-  if (!base) return null;
-  const candidates = DB.all(
-    "SELECT * FROM web_hosting_files WHERE space_id = ? AND file_path LIKE '/.cloud/%' AND is_directory = 0 ORDER BY id ASC LIMIT 500",
-    [spaceId]
-  ).filter((r) => formats.basename(r.file_path) === base);
-  return candidates.length === 1 ? candidates[0] : null;
+
+  // 2) path 归一化
+  const pathArg = a.path ?? a.file_path ?? a.name;
+  if (pathArg === undefined || pathArg === null || String(pathArg).trim() === '') {
+    return { row: null, reason: 'file_missing', candidates: [] };
+  }
+  const cleaned = cleanCloudRelPath(pathArg);
+  if (!cleaned.valid || cleaned.rel === '') {
+    return { row: null, reason: 'file_missing', candidates: [] };
+  }
+  const rel = cleaned.rel;
+  const canonical = CLOUD_PREFIX + rel;
+
+  // 3) 精确路径
+  let row = DB.one(
+    'SELECT * FROM web_hosting_files WHERE space_id = ? AND file_path = ?',
+    [sid, canonical]
+  );
+  if (row) return { row: row, reason: 'ok', candidates: [] };
+
+  // 4) 大小写不敏感精确匹配
+  row = DB.one(
+    'SELECT * FROM web_hosting_files WHERE space_id = ? AND LOWER(file_path) = LOWER(?)',
+    [sid, canonical]
+  );
+  if (row) return { row: row, reason: 'ok', candidates: [] };
+
+  // 5) 祖先目录是否存在
+  if (!cloudAncestorsExist(DB, sid, rel)) {
+    return { row: null, reason: 'dir_missing', candidates: [] };
+  }
+
+  // 6) basename 兜底：先同目录、再全局（大小写不敏感）
+  const base = formats.basename(rel).toLowerCase();
+  if (!base) return { row: null, reason: 'file_missing', candidates: [] };
+  const parentRel = parentDirOfCloudPath(canonical);
+  const parentDirPath = parentRel ? CLOUD_PREFIX + parentRel : '/.cloud';
+  const allRows = DB.all(
+    'SELECT * FROM web_hosting_files WHERE space_id = ? ORDER BY is_directory DESC, file_path ASC',
+    [sid]
+  );
+  const sameBaseAll = allRows.filter((r) => formats.basename(r.file_path).toLowerCase() === base);
+  const inDir = sameBaseAll.filter((r) => {
+    const p = parentDirOfCloudPath(r.file_path);
+    return (p ? CLOUD_PREFIX + p : '/.cloud') === parentDirPath;
+  });
+  const pool = inDir.length ? inDir : sameBaseAll;
+  if (pool.length === 1) return { row: pool[0], reason: 'ok', candidates: [] };
+  if (pool.length > 1) {
+    return {
+      row: null,
+      reason: 'ambiguous',
+      candidates: pool.slice(0, 20).map((r) => relCloudPath(r.file_path)),
+    };
+  }
+
+  // 7) 目录存在但没有同名文件
+  return { row: null, reason: 'file_missing', candidates: [] };
 }
+
+/** 检查 rel 的所有祖先目录在空间内是否存在（一级文件 / 根目录视为存在）。 */
+function cloudAncestorsExist(DB, spaceId, rel) {
+  const parts = String(rel).split('/').filter(Boolean);
+  if (parts.length <= 1) return true;
+  let cur = '';
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur = cur ? cur + '/' + parts[i] : parts[i];
+    const exists = DB.scalar(
+      'SELECT 1 FROM web_hosting_files WHERE space_id = ? AND LOWER(file_path) = LOWER(?) AND is_directory = 1',
+      [spaceId, CLOUD_PREFIX + cur]
+    );
+    if (!exists) return false;
+  }
+  return true;
+}
+
+/** 现有云文件清单（失败提示用，最多 30 条，带目录层级缩进）。 */
+function cloudFileInventory(DB, spaceId, limit) {
+  const max = parseInt(limit, 10) > 0 ? parseInt(limit, 10) : 30;
+  const rows = DB.all(
+    "SELECT file_path, is_directory FROM web_hosting_files WHERE space_id = ? AND file_path LIKE '/.cloud/%' AND file_path != '/.cloud' ORDER BY file_path ASC",
+    [spaceId]
+  );
+  if (!rows.length) return '（当前数据空间还没有云文件，可用 create_cloud_file 新建）';
+  const lines = [];
+  let shown = 0;
+  for (const r of rows) {
+    if (shown >= max) {
+      lines.push('…（还有 ' + (rows.length - shown) + ' 条未显示，可用 list_cloud_files 查看全部）');
+      break;
+    }
+    shown++;
+    const rel = relCloudPath(r.file_path);
+    const depth = rel.split('/').length - 1;
+    const isDir = parseInt(r.is_directory, 10) === 1;
+    lines.push('  '.repeat(depth) + rel + (isDir ? '/' : ''));
+  }
+  return lines.join('\n');
+}
+
+/** 失败提示里描述「用户想操作的目标」。 */
+function cloudTargetDesc(args) {
+  const a = args || {};
+  const fileId = parseInt(a.file_id ?? 0, 10) || 0;
+  if (fileId > 0) return 'file_id=' + fileId;
+  const pathArg = a.path ?? a.file_path ?? a.name;
+  if (pathArg === undefined || pathArg === null || String(pathArg).trim() === '') {
+    return '目标（未提供 file_id 或 path）';
+  }
+  const cleaned = cleanCloudRelPath(pathArg);
+  return cleaned.rel ? CLOUD_PREFIX + cleaned.rel : '目标（路径为空）';
+}
+
+/**
+ * 统一的、可自救的云文件解析失败结果。
+ * 不再出现「不存在或不属于当前用户」这种把「不存在 / 不属于当前空间」混在一起、会误导模型反复 list 的文案。
+ * @param {object} DB
+ * @param {number} spaceId
+ * @param {{reason:string, candidates?:string[]}} resolution
+ * @param {string} targetDesc cloudTargetDesc(args) 的结果
+ * @returns {{ok:false, summary:string, result:string}}
+ */
+function cloudResolveFailureResult(DB, spaceId, resolution, targetDesc) {
+  const reason = (resolution && resolution.reason) || 'file_missing';
+  const candidates = (resolution && resolution.candidates) || [];
+  const target = targetDesc || '目标文件';
+  const inventory = cloudFileInventory(DB, spaceId, 30);
+
+  if (reason === 'id_not_found') {
+    return {
+      ok: false,
+      summary: '该云文件 ID 不存在',
+      result: target + ' 在当前数据空间不存在（可能文件已删除，或 ID 来自其它账号/其它会话）。'
+        + '请用 list_cloud_files 获取当前空间最新的 file_id，或改用 path。\n现有文件清单：\n' + inventory,
+    };
+  }
+  if (reason === 'id_other_space') {
+    return {
+      ok: false,
+      summary: '该文件 ID 不属于当前数据空间',
+      result: target + ' 确实存在，但属于其他数据空间（不属于当前数据空间 / 不是当前账号可操作的空间），因此不能读写。'
+        + '请用 list_cloud_files 获取当前空间的 file_id，或改用 path；不要复用其它账号/其它会话里的文件 ID。\n现有文件清单：\n' + inventory,
+    };
+  }
+  if (reason === 'ambiguous') {
+    return {
+      ok: false,
+      summary: '有多个同名文件，需要更精确的路径',
+      result: target + ' 匹配到 ' + candidates.length + ' 个同名文件，无法确定要操作哪一个。'
+        + '请改用带目录的完整相对路径（或 file_id）重试，候选：\n'
+        + candidates.map((p) => '- ' + p).join('\n'),
+    };
+  }
+  if (reason === 'dir_missing') {
+    return {
+      ok: false,
+      summary: '该目录不存在',
+      result: target + ' 所在的目录不存在。create_cloud_file 会自动创建目录；'
+        + '如要新建请用 create_cloud_file（directory 可指定新目录）。\n现有文件清单：\n' + inventory,
+    };
+  }
+  return {
+    ok: false,
+    summary: '该目录存在但没有这个文件',
+    result: target + '：该目录存在但没有这个文件。'
+      + '如需新建请用 create_cloud_file（会自动创建目录），或 update_cloud_file 并传 create_if_missing=true。'
+      + '\n现有文件清单：\n' + inventory,
+  };
+}
+
 
 /** 云文件内容的文本化（BLOB / TEXT 都兼容） */
 function contentText(content) {
@@ -602,6 +796,12 @@ function instanceUrlsOf(ctx, row, group) {
 /** 空参数 JSON Schema */
 const NO_PARAMS = { type: 'object', properties: {}, additionalProperties: false };
 
+/** 网页空间定位参数（space_id / slug 二选一；都省略时用当前账号的默认空间） */
+const WEB_SPACE_REF_PROPS = {
+  space_id: { type: 'number', description: '网页空间 ID（list_web_spaces 返回）；省略则用默认空间' },
+  slug: { type: 'string', description: '网页空间 slug（访问地址 /site/{slug}/ 中的一段）' },
+};
+
 /** 全部工具定义（按 spec §3 顺序）。hasEditor 控制浏览器端编辑器工具是否下发。 */
 function buildDefinitions(hasEditor) {
   const defs = [
@@ -659,6 +859,56 @@ function buildDefinitions(hasEditor) {
       description: '查看数据空间的文件树概览与用量（云文件、网页空间、版本历史、操作记录）。',
       parameters: NO_PARAMS,
     },
+    // ── server / read（网页空间） ──
+    {
+      name: 'list_web_spaces',
+      label: '列出网页空间',
+      scope: 'server',
+      risk: 'read',
+      description: '列出当前账号的网页空间（id / slug / 标题 / 文件数与总大小 / 是否启用 / 审查状态 / 访问地址）。',
+      parameters: NO_PARAMS,
+    },
+    {
+      name: 'list_web_space_files',
+      label: '列出网页空间文件',
+      scope: 'server',
+      risk: 'read',
+      description: '列出指定网页空间的文件树（路径 / 是否目录 / 大小 / 更新时间 / 审查状态）。省略 space_id/slug 时使用默认空间。',
+      parameters: {
+        type: 'object',
+        properties: Object.assign({}, WEB_SPACE_REF_PROPS),
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'read_web_space_file',
+      label: '读取网页空间文件',
+      scope: 'server',
+      risk: 'read',
+      description: '读取网页空间里的文本文件内容（二进制文件会拒绝；超过 200KB 截断）。',
+      parameters: {
+        type: 'object',
+        properties: Object.assign({}, WEB_SPACE_REF_PROPS, {
+          path: { type: 'string', description: '网页空间内的文件路径，如 /index.html' },
+        }),
+        required: ['path'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'get_web_space_preview_url',
+      label: '获取网页预览地址',
+      scope: 'server',
+      risk: 'read',
+      description: '返回网页空间/某个文件的公开访问地址与预览地址（预览地址会显示待审查的最新草稿）。',
+      parameters: {
+        type: 'object',
+        properties: Object.assign({}, WEB_SPACE_REF_PROPS, {
+          path: { type: 'string', description: '文件路径；省略表示站点根路径 /' },
+        }),
+        additionalProperties: false,
+      },
+    },
     // ── server / write ──
     {
       name: 'create_cloud_file',
@@ -682,13 +932,17 @@ function buildDefinitions(hasEditor) {
       label: '保存云文件',
       scope: 'server',
       risk: 'write',
-      description: '用新内容覆盖云文件（可用 file_id 或 path 定位）。',
+      description: '用新内容覆盖云文件（可用 file_id 或 path 定位，路径写法宽容）。文件不存在时可传 create_if_missing=true 新建。',
       parameters: {
         type: 'object',
         properties: {
           file_id: { type: 'number', description: '云文件 ID' },
           path: { type: 'string', description: '相对 `/.cloud/` 的路径或文件名' },
           content: { type: 'string', description: '新的完整文件内容' },
+          create_if_missing: {
+            type: 'boolean',
+            description: '默认 false；为 true 且文件不存在时按 create_cloud_file 语义新建（要求目录已存在）',
+          },
         },
         required: ['content'],
         additionalProperties: false,
@@ -773,6 +1027,114 @@ function buildDefinitions(hasEditor) {
           instance_id: { type: 'number', description: '配置实例 ID' },
         },
         required: ['instance_id'],
+        additionalProperties: false,
+      },
+    },
+    // ── 会话 ──
+    {
+      name: 'set_session_title',
+      label: '修改对话标题',
+      scope: 'server',
+      risk: 'write',
+      description: '把当前对话的标题改成更贴合内容的短标题（不超过 16 个中文字符）。'
+        + '当用户明确要求改名，或对话主题已经明显切换（例如从「看课表」转到「发布网页」）时主动调用；'
+        + '普通追问、同一主题的继续讨论不要频繁改标题。',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: {
+            type: 'string',
+            description: '新的对话标题：简洁、抓住主题关键词，不超过 16 个中文字符，不要带引号或标点结尾',
+          },
+        },
+        required: ['title'],
+        additionalProperties: false,
+      },
+    },
+    // ── server / write（网页空间） ──
+    {
+      name: 'create_web_space',
+      label: '创建网页空间',
+      scope: 'server',
+      risk: 'write',
+      description: '为当前账号新建一个网页空间（独立站点），返回空间 id/slug 与访问地址 /site/{slug}/。'
+        + '之后用 write_web_space_file 写入页面。**不要猜测不存在的 slug**：要发布到新站点就先调用本工具创建。',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: '空间名称（显示在控制台），如「汇率计算器」' },
+          slug: { type: 'string', description: '可选：访问路径 /site/{slug}/ 中的一段，仅小写字母/数字/连字符；省略时自动生成' },
+          description: { type: 'string', description: '可选：空间描述' },
+        },
+        required: ['title'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'update_web_space',
+      label: '修改网页空间',
+      scope: 'server',
+      risk: 'write',
+      description: '修改网页空间的名称、描述或启用状态（不会改 slug）。',
+      parameters: {
+        type: 'object',
+        properties: Object.assign({}, WEB_SPACE_REF_PROPS, {
+          title: { type: 'string', description: '新的空间名称' },
+          description: { type: 'string', description: '新的描述' },
+          enabled: { type: 'boolean', description: '是否启用该空间（false=关闭访问）' },
+        }),
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'write_web_space_file',
+      label: '写入网页空间文件',
+      scope: 'server',
+      risk: 'write',
+      description: '创建或覆盖网页空间里的文本文件。写入后文件与空间都会进入待审查（pending_review）状态，'
+        + '公开页在管理员审核通过前仍显示上一次已发布版本；不能写 /.published 目录。'
+        + '单次 content 建议不超过 4000 字符，大文件请分文件写或分次覆盖。',
+      parameters: {
+        type: 'object',
+        properties: Object.assign({}, WEB_SPACE_REF_PROPS, {
+          path: { type: 'string', description: '网页空间内的文件路径，如 /index.html 或 /css/style.css' },
+          content: { type: 'string', description: '完整的文件内容（文本）' },
+          create: { type: 'boolean', description: '默认 true；为 false 时仅允许覆盖已有文件' },
+        }),
+        required: ['path', 'content'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'delete_web_space_file',
+      label: '删除网页空间文件',
+      scope: 'server',
+      risk: 'write',
+      description: '删除网页空间里的文件；目标是目录时必须显式传 recursive=true 才会递归删除。/.published 目录由审核流程维护，不能用此工具删除。',
+      parameters: {
+        type: 'object',
+        properties: Object.assign({}, WEB_SPACE_REF_PROPS, {
+          path: { type: 'string', description: '要删除的文件或目录路径' },
+          recursive: { type: 'boolean', description: '目标是目录时需显式传 true 才会递归删除' },
+        }),
+        required: ['path'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'publish_cloud_file',
+      label: '发布云文件到网页空间',
+      scope: 'server',
+      risk: 'write',
+      description: '把云文件（`/.cloud/` 下）的内容复制到网页空间的指定路径，常用于把 index.html 发布成站点。'
+        + '走与网页空间写文件相同的审核流程（pending_review）。',
+      parameters: {
+        type: 'object',
+        properties: Object.assign({}, WEB_SPACE_REF_PROPS, {
+          file_id: { type: 'number', description: '云文件 ID' },
+          path: { type: 'string', description: '云文件路径或文件名（与 file_id 二选一）' },
+          target_path: { type: 'string', description: '网页空间内的目标路径，默认 /<云文件名>' },
+        }),
         additionalProperties: false,
       },
     },
@@ -1089,10 +1451,11 @@ async function toolReadCloudFile(args, ctx) {
   const space = findDataSpace(DB, u.allianceUsername);
   if (!space) return { ok: false, summary: '云文件不存在', result: '当前账户还没有数据空间。' };
 
-  const row = resolveCloudFile(DB, space.id, args);
-  if (!row) {
-    return { ok: false, summary: '云文件不存在或不属于当前用户', result: '请先用 list_cloud_files 获取可用的 file_id / path。' };
+  const resolution = resolveCloudFile(DB, space.id, args);
+  if (resolution.reason !== 'ok') {
+    return cloudResolveFailureResult(DB, space.id, resolution, cloudTargetDesc(args));
   }
+  const row = resolution.row;
   const rel = relCloudPath(row.file_path);
   if (parseInt(row.is_directory, 10) === 1) {
     return { ok: false, summary: '目标是一个目录：' + rel, result: '请用 list_cloud_files 指定 directory 查看目录内容。' };
@@ -1287,6 +1650,54 @@ async function toolCreateCloudFile(args, ctx) {
   };
 }
 
+/**
+ * update_cloud_file 的 create_if_missing 分支：按 create_cloud_file 语义新建文件
+ * （同样的名称/目录校验、同名冲突检查与配额检查）。
+ * @returns {{id:number, rel:string, bytes:number}|{error:string, detail?:string}}
+ */
+function createCloudFileForUpdate(DB, u, space, args, ctx) {
+  const a = args || {};
+  const pathArg = a.path ?? a.file_path ?? a.name;
+  if (pathArg === undefined || pathArg === null || String(pathArg).trim() === '') {
+    return { error: 'create_if_missing 需要 path', detail: '只给了 file_id 时无法推断新文件名，请改用 path 指定文件路径。' };
+  }
+  const cleaned = cleanCloudRelPath(pathArg);
+  if (!cleaned.valid || cleaned.rel === '') {
+    return { error: '目标路径不合法', detail: '路径不能包含 / \\ : * ? " < > | 等字符，也不能包含 ..。' };
+  }
+  const rel = cleaned.rel;
+  const parts = rel.split('/');
+  const name = parts[parts.length - 1];
+  const dir = parts.slice(0, -1).join('/');
+  if (!validCloudName(name)) {
+    return { error: '文件名不合法', detail: '文件名不能包含 / \\ : * ? " < > | 等字符，且不能是 . 或 ..' };
+  }
+  const path = CLOUD_PREFIX + rel;
+  if (DB.scalar('SELECT 1 FROM web_hosting_files WHERE space_id = ? AND file_path = ?', [space.id, path])) {
+    return { error: '同名文件已存在', detail: '该路径已有同名文件，请直接更新（去掉 create_if_missing）或换一个文件名。' };
+  }
+  const content = a.content === undefined || a.content === null ? '' : String(a.content);
+  const bytes = Buffer.byteLength(content, 'utf8');
+  const quotaErr = quotaProblem(DB, u, space, bytes);
+  if (quotaErr) return { error: quotaErr, detail: '请先清理数据空间后再保存。' };
+
+  const now = nowStr();
+  ensureCloudRoot(DB, space.id, now);
+  ensureCloudDirs(DB, space.id, dir, now);
+  const id = DB.insert('web_hosting_files', {
+    space_id: space.id,
+    file_path: path,
+    file_size: bytes,
+    content_type: guessCloudContentType(name),
+    content: content,
+    is_directory: 0,
+    created_at: now,
+    updated_at: now,
+  });
+  audit(ctx, 'cloud_file_create', 'AI 创建云文件(create_if_missing): ' + u.allianceUsername + ' -> ' + path);
+  return { id: id, rel: rel, bytes: bytes };
+}
+
 async function toolUpdateCloudFile(args, ctx) {
   const DB = dbOf(ctx);
   const u = userContext(ctx);
@@ -1296,8 +1707,27 @@ async function toolUpdateCloudFile(args, ctx) {
   }
   const space = findDataSpace(DB, u.allianceUsername);
   if (!space) return { ok: false, summary: '云文件不存在', result: '当前账户还没有数据空间。' };
-  const row = resolveCloudFile(DB, space.id, a);
-  if (!row) return { ok: false, summary: '云文件不存在或不属于当前用户', result: '请先用 list_cloud_files 获取 file_id / path。' };
+  const resolution = resolveCloudFile(DB, space.id, a);
+  let row = resolution.reason === 'ok' ? resolution.row : null;
+
+  // create_if_missing：仅在「目录存在但没有这个文件」时按 create_cloud_file 语义新建，
+  // 歧义 / 目录缺失等情况仍要求模型先澄清（避免瞎猜路径）。
+  if (!row && a.create_if_missing === true && resolution.reason === 'file_missing') {
+    const created = createCloudFileForUpdate(DB, u, space, a, ctx);
+    if (created.error) {
+      return { ok: false, summary: created.error, result: created.detail || '' };
+    }
+    return {
+      ok: true,
+      summary: '原文件不存在，已新建并写入 ' + created.rel + '（' + fmtBytes(created.bytes) + '）',
+      result: 'id=' + created.id + '\npath=' + created.rel + '\nsize=' + created.bytes
+        + ' B\n（create_if_missing=true：原文件不存在，已按 create_cloud_file 语义新建）',
+      patch: { refresh: 'cloud-files' },
+    };
+  }
+  if (!row) {
+    return cloudResolveFailureResult(DB, space.id, resolution, cloudTargetDesc(a));
+  }
   const rel = relCloudPath(row.file_path);
   if (parseInt(row.is_directory, 10) === 1) {
     return { ok: false, summary: '目标是一个目录：' + rel, result: 'update_cloud_file 只能写入文件。' };
@@ -1343,8 +1773,11 @@ async function toolRenameCloudFile(args, ctx) {
   }
   const space = findDataSpace(DB, u.allianceUsername);
   if (!space) return { ok: false, summary: '云文件不存在', result: '当前账户还没有数据空间。' };
-  const row = resolveCloudFile(DB, space.id, a);
-  if (!row) return { ok: false, summary: '云文件不存在或不属于当前用户', result: '请先用 list_cloud_files 获取 file_id / path。' };
+  const resolution = resolveCloudFile(DB, space.id, a);
+  if (resolution.reason !== 'ok') {
+    return cloudResolveFailureResult(DB, space.id, resolution, cloudTargetDesc(a));
+  }
+  const row = resolution.row;
 
   // 分享占位条目：重命名会破坏分享关系，一律拒绝
   if (sharePlaceholderOf(row)) {
@@ -1411,8 +1844,11 @@ async function toolDeleteCloudFile(args, ctx) {
   }
   const space = findDataSpace(DB, u.allianceUsername);
   if (!space) return { ok: false, summary: '云文件不存在', result: '当前账户还没有数据空间。' };
-  const row = resolveCloudFile(DB, space.id, args);
-  if (!row) return { ok: false, summary: '云文件不存在或不属于当前用户', result: '请先用 list_cloud_files 获取 file_id / path。' };
+  const resolution = resolveCloudFile(DB, space.id, args);
+  if (resolution.reason !== 'ok') {
+    return cloudResolveFailureResult(DB, space.id, resolution, cloudTargetDesc(args));
+  }
+  const row = resolution.row;
 
   // 分享占位条目：删除会破坏分享关系（cloud-files.js 同样拒绝），一律拒绝
   if (sharePlaceholderOf(row)) {
@@ -1467,8 +1903,11 @@ async function toolCreateInstance(args, ctx) {
   }
   const space = findDataSpace(DB, u.allianceUsername);
   if (!space) return { ok: false, summary: '云文件不存在', result: '当前账户还没有数据空间。' };
-  const file = resolveCloudFile(DB, space.id, a);
-  if (!file) return { ok: false, summary: '源云文件不存在或不属于当前用户', result: '请先用 list_cloud_files 获取 file_id / path。' };
+  const resolution = resolveCloudFile(DB, space.id, a);
+  if (resolution.reason !== 'ok') {
+    return cloudResolveFailureResult(DB, space.id, resolution, cloudTargetDesc(a));
+  }
+  const file = resolution.row;
   if (parseInt(file.is_directory, 10) === 1) {
     return { ok: false, summary: '源文件必须是文件而不是目录', result: '请选择一个配置文件（.json / .yml / .ea2 等）。' };
   }
@@ -1676,6 +2115,841 @@ async function toolDeleteInstance(args, ctx) {
   };
 }
 
+// ────────────────────────────── 网页空间（web hosting）工具 ──────────────────────────────
+
+/** 已公开版本目录（审核流程维护，AI 不可写/不可删） */
+const WEB_PUBLISHED_PREFIX = '/.published';
+/** 网页空间文本文件读取上限（字节） */
+const WEB_MAX_READ_BYTES = 200 * 1024;
+
+/** 网页空间路径归一化（对齐 server/api/web-hosting.js#normalizePath） */
+function normalizeWebPath(input) {
+  let s = String(input === undefined || input === null ? '' : input).trim();
+  if (s === '') return '/';
+  s = s.replace(/\\/g, '/').replace(/\/+/g, '/');
+  if (s[0] !== '/') s = '/' + s;
+  if (s.length > 1 && s.endsWith('/')) s = s.replace(/\/+$/, '');
+  return s;
+}
+
+/** 网页空间路径安全检查；返回错误文案，空串表示通过。 */
+function webPathProblem(filePath, opts) {
+  const p = String(filePath === undefined || filePath === null ? '/' : filePath);
+  const o = opts || {};
+  if (p === '/' && o.allowRoot !== true) return '不能对根路径 / 执行该操作，请指定文件路径';
+  if (p.split('/').some((seg) => seg === '..')) return '路径不能包含 ..（防止越出网页空间）';
+  if (/[\x00-\x1F]/.test(p)) return '路径包含非法控制字符';
+  if (o.writable === true && (p === WEB_PUBLISHED_PREFIX || p.indexOf(WEB_PUBLISHED_PREFIX + '/') === 0)) {
+    return '已公开版本（/.published）文件不可编辑，仅可查看或删除';
+  }
+  return '';
+}
+
+/** 列出账号名下的全部空间（网页空间 + 数据空间/班级主页），按 id 升序。 */
+function userWebSpaces(DB, username) {
+  return DB.all('SELECT * FROM web_hosting_spaces WHERE alliance_username = ? ORDER BY id ASC', [username]);
+}
+
+/**
+ * 解析目标网页空间：space_id / slug 二选一，都省略时取默认空间（id 最小的那个，语义等价于
+ * web-hosting.js#ensureSpace 取到的第一行）。
+ * @returns {{space:object|null, reason:'ok'|'not_found'|'other_user'|'no_space', spaces:object[]}}
+ */
+function resolveWebSpace(DB, username, args) {
+  const spaces = userWebSpaces(DB, username || '');
+  const a = args || {};
+  const spaceId = parseInt(a.space_id ?? 0, 10) || 0;
+  const slug = String(a.slug ?? '').trim();
+
+  if (spaceId > 0) {
+    const hit = spaces.find((s) => (parseInt(s.id, 10) || 0) === spaceId);
+    if (hit) return { space: hit, reason: 'ok', spaces: spaces };
+    const other = DB.one('SELECT id FROM web_hosting_spaces WHERE id = ?', [spaceId]);
+    return { space: null, reason: other ? 'other_user' : 'not_found', spaces: spaces };
+  }
+  if (slug !== '') {
+    const hit = spaces.find((s) => String(s.slug || '').toLowerCase() === slug.toLowerCase());
+    if (hit) return { space: hit, reason: 'ok', spaces: spaces };
+    const other = DB.one('SELECT id FROM web_hosting_spaces WHERE LOWER(slug) = LOWER(?)', [slug]);
+    return { space: null, reason: other ? 'other_user' : 'not_found', spaces: spaces };
+  }
+  if (!spaces.length) return { space: null, reason: 'no_space', spaces: spaces };
+  return { space: spaces[0], reason: 'ok', spaces: spaces };
+}
+
+/** 网页空间解析失败的可自救结果（区分「不存在」与「不属于当前账号」）。 */
+function webSpaceResolveFailure(resolution, targetDesc) {
+  const reason = (resolution && resolution.reason) || 'not_found';
+  const spaces = (resolution && resolution.spaces) || [];
+  const target = targetDesc || '目标网页空间';
+  const list = spaces.length
+    ? spaces.map((s) => '- id=' + s.id + ' slug=' + s.slug + ' 「' + (s.title || s.slug) + '」（'
+      + (parseInt(s.is_web_space, 10) === 1 ? '网页空间' : '数据空间/班级主页') + '）').join('\n')
+    : '（当前账号还没有任何网页空间）';
+
+  if (reason === 'other_user') {
+    return {
+      ok: false,
+      summary: '该网页空间不属于当前账号',
+      result: target + ' 存在，但属于其他账号的网页空间，不能读写。\n当前账号的空间：\n' + list,
+    };
+  }
+  if (reason === 'not_found') {
+    return {
+      ok: false,
+      summary: '网页空间不存在',
+      result: target + ' 不存在（id/slug 可能有误，或空间已被删除）。\n当前账号的空间：\n' + list,
+    };
+  }
+  return {
+    ok: false,
+    summary: '当前账号还没有网页空间',
+    result: '当前账号还没有网页空间。请先在控制台「网页空间」里创建，或让用户确认要操作哪个空间。\n当前账号的空间：\n' + list,
+  };
+}
+
+/** 写操作前的空间状态检查（is_enabled / disabled_by_admin）。 */
+function webSpaceWriteProblem(space) {
+  if (!space) return '网页空间不存在';
+  if (parseInt(space.disabled_by_admin, 10) === 1) {
+    return '该网页空间已被管理员停用（' + (space.disabled_reason || '违反相关规定') + '），不能写入。';
+  }
+  if (parseInt(space.is_enabled, 10) === 0) {
+    return '该网页空间的「启用」开关处于关闭状态（is_enabled=0），请用户先在控制台启用后再写入。';
+  }
+  return '';
+}
+
+/** 网页空间内父目录路径。 */
+function parentWebDir(filePath) {
+  const s = String(filePath || '').replace(/\/+$/, '');
+  const i = s.lastIndexOf('/');
+  if (i <= 0) return '/';
+  return s.slice(0, i);
+}
+
+/** 递归确保网页空间目录存在（对齐 web-hosting.js#ensureDirectoryExists）。 */
+function ensureWebParentDirs(DB, spaceId, dirPath, now) {
+  const p = normalizeWebPath(dirPath);
+  if (p === '/') return;
+  const exists = DB.scalar(
+    'SELECT 1 FROM web_hosting_files WHERE space_id = ? AND file_path = ? AND is_directory = 1',
+    [spaceId, p]
+  );
+  if (!exists) {
+    const parent = parentWebDir(p);
+    if (parent && parent !== '/') ensureWebParentDirs(DB, spaceId, parent, now);
+    DB.insert('web_hosting_files', {
+      space_id: spaceId,
+      file_path: p,
+      file_size: 0,
+      content_type: null,
+      content: null,
+      is_directory: 1,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+}
+
+/** 现有网页空间文件清单（失败提示用，最多 30 条）。 */
+function webFileInventory(DB, spaceId, limit) {
+  const max = parseInt(limit, 10) > 0 ? parseInt(limit, 10) : 30;
+  const rows = DB.all(
+    "SELECT file_path, is_directory FROM web_hosting_files WHERE space_id = ? AND file_path NOT LIKE '/.published%' ORDER BY file_path ASC",
+    [spaceId]
+  );
+  if (!rows.length) return '（该网页空间还没有文件，可用 write_web_space_file 新建）';
+  const lines = [];
+  let shown = 0;
+  for (const r of rows) {
+    if (shown >= max) {
+      lines.push('…（还有 ' + (rows.length - shown) + ' 条未显示，可用 list_web_space_files 查看全部）');
+      break;
+    }
+    shown++;
+    const depth = String(r.file_path).split('/').filter(Boolean).length - 1;
+    lines.push('  '.repeat(depth) + r.file_path + (parseInt(r.is_directory, 10) === 1 ? '/' : ''));
+  }
+  return lines.join('\n');
+}
+
+/** 生成网页空间的访问 / 预览地址（base 地址由 ctx.req 推导，缺失时用相对路径）。 */
+function siteUrls(ctx, space, filePath) {
+  let baseUrl = '';
+  try {
+    if (ctx && ctx.req) {
+      const { baseUrlFromRequest } = require('../../lib/static-control-public');
+      baseUrl = baseUrlFromRequest(ctx.req);
+    }
+  } catch (_) { /* 无请求上下文时退化为相对地址 */ }
+  const slug = String(space && space.slug ? space.slug : '');
+  const clean = normalizeWebPath(filePath);
+  const suffix = clean === '/' ? '' : clean.replace(/^\/+/, '');
+  const publicUrl = baseUrl + '/site/' + encodeURIComponent(slug) + '/' + suffix;
+  const previewUrl = publicUrl + '?preview=1';
+  return { public: publicUrl, preview: previewUrl, slug: slug };
+}
+
+/**
+ * 把文本转成可用的 slug 片段（只保留 ASCII 字母数字；纯中文标题会返回空串，由调用方兜底）
+ */
+function slugifyAscii(text) {
+  const s = String(text === undefined || text === null ? '' : text)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return s.slice(0, 32);
+}
+
+/** 生成一个未被占用的空间 slug */
+function ensureUniqueSpaceSlug(DB, base) {
+  const seed = String(base || '').trim().toLowerCase();
+  let root = /^[a-z0-9][a-z0-9-]{1,31}$/.test(seed) ? seed : 'site';
+  let candidate = root;
+  let n = 1;
+  while (DB.scalar('SELECT 1 FROM web_hosting_spaces WHERE LOWER(slug) = LOWER(?)', [candidate])) {
+    n += 1;
+    candidate = root + '-' + n;
+    if (n > 200) {
+      candidate = root + '-' + Date.now().toString(36);
+      break;
+    }
+  }
+  return candidate;
+}
+
+/**
+ * 创建网页空间（AI 需要「新建站点」时使用；避免模型去猜一个不存在的 slug）
+ */
+async function toolCreateWebSpace(args, ctx) {
+  const DB = dbOf(ctx);
+  const u = userContext(ctx);
+  const a = args || {};
+  if (!u.allianceUsername) {
+    return { ok: false, summary: '创建网页空间需要智教联盟账户', result: '请用智教联盟账号登录后再创建网页空间。' };
+  }
+
+  const title = String(a.title === undefined || a.title === null ? '' : a.title).trim();
+  if (title === '') return { ok: false, summary: '空间名称不能为空', result: '请提供 title（空间名称，如「汇率计算器」）。' };
+  if (Array.from(title).length > 40) {
+    return { ok: false, summary: '空间名称过长', result: 'title 请控制在 40 个字符以内。' };
+  }
+
+  let slug = String(a.slug === undefined || a.slug === null ? '' : a.slug).trim().toLowerCase();
+  if (slug !== '') {
+    if (!/^[a-z0-9][a-z0-9-]{1,31}$/.test(slug)) {
+      return {
+        ok: false,
+        summary: 'slug 不合法',
+        result: 'slug 只能由小写字母、数字、连字符组成，长度 2-32，且不能以连字符开头（例如 fx-rate）。',
+      };
+    }
+    const dup = DB.one('SELECT id, alliance_username FROM web_hosting_spaces WHERE LOWER(slug) = ?', [slug]);
+    if (dup) {
+      const mine = String(dup.alliance_username || '') === u.allianceUsername;
+      return {
+        ok: false,
+        summary: 'slug 已被占用：' + slug,
+        result: mine
+          ? '你名下已有该 slug 的空间，可直接用 list_web_spaces 查看并写入文件，或换一个 slug。'
+          : '该 slug 属于其他账号，请换一个 slug。',
+      };
+    }
+  } else {
+    slug = ensureUniqueSpaceSlug(DB, slugifyAscii(title) || u.allianceUsername);
+  }
+
+  const now = nowStr();
+  const spaceId = DB.insert('web_hosting_spaces', {
+    alliance_username: u.allianceUsername,
+    slug: slug,
+    title: title,
+    description: String(a.description === undefined || a.description === null ? '' : a.description).trim(),
+    storage_quota: 100 * 1024 * 1024,
+    is_enabled: 1,
+    is_web_space: 1,
+    review_status: 'published',
+    created_at: now,
+    updated_at: now,
+  });
+  const space = DB.one('SELECT * FROM web_hosting_spaces WHERE id = ?', [spaceId]);
+
+  // 默认 index.html（与 web-hosting.js#ensureSpace 一致：直接可用，不走待审）
+  const indexHtml = '<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n<meta charset="UTF-8">\n'
+    + '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
+    + '<title>' + title.replace(/[<>&]/g, '') + '</title>\n</head>\n'
+    + '<body style="font-family:system-ui,sans-serif;padding:40px">\n'
+    + '  <h1>' + title.replace(/[<>&]/g, '') + '</h1>\n'
+    + '  <p>这个页面还没有内容。可以让 AI 用 write_web_space_file 写入 /index.html。</p>\n'
+    + '</body>\n</html>\n';
+  try {
+    DB.insert('web_hosting_files', {
+      space_id: spaceId,
+      file_path: '/index.html',
+      file_size: Buffer.byteLength(indexHtml, 'utf8'),
+      content_type: 'text/html',
+      content: indexHtml,
+      published_content: indexHtml,
+      published_size: Buffer.byteLength(indexHtml, 'utf8'),
+      review_status: 'published',
+      is_directory: 0,
+      created_at: now,
+      updated_at: now,
+    });
+  } catch (_) { /* 默认首页失败不影响空间创建 */ }
+
+  const urls = siteUrls(ctx, space, '/');
+  audit(ctx, 'web_hosting_create', 'AI 创建网页空间: ' + u.allianceUsername + ' -> ' + slug);
+
+  return {
+    ok: true,
+    summary: '已创建网页空间「' + title + '」（slug=' + slug + '）',
+    result: 'id=' + spaceId + '\nslug=' + slug + '\n访问地址=' + urls.public,
+    patch: { refresh: 'web-space' },
+  };
+}
+
+/**
+ * 修改网页空间（名称 / 描述 / 启用状态）
+ */
+async function toolUpdateWebSpace(args, ctx) {
+  const DB = dbOf(ctx);
+  const u = userContext(ctx);
+  const a = args || {};
+  if (!u.allianceUsername) {
+    return { ok: false, summary: '当前账户没有网页空间', result: '网页空间仅对智教联盟账户开放。' };
+  }
+  const resolution = resolveWebSpace(DB, u.allianceUsername, a);
+  if (resolution.reason !== 'ok') {
+    return webSpaceResolveFailure(resolution, (a.space_id || a.slug) ? 'space_id=' + (a.space_id || '-') + ' slug=' + (a.slug || '-') : '默认网页空间');
+  }
+  const space = resolution.space;
+
+  const data = {};
+  const changed = [];
+  if ('title' in a) {
+    const title = String(a.title === undefined || a.title === null ? '' : a.title).trim();
+    if (title === '') return { ok: false, summary: '空间名称不能为空', result: '请提供非空 title。' };
+    data.title = title;
+    changed.push('名称→' + title);
+  }
+  if ('description' in a) {
+    data.description = String(a.description === undefined || a.description === null ? '' : a.description).trim();
+    changed.push('描述已更新');
+  }
+  if ('enabled' in a) {
+    const enabled = !!(a.enabled === true || a.enabled === 1 || a.enabled === 'true' || a.enabled === '1');
+    data.is_enabled = enabled ? 1 : 0;
+    changed.push(enabled ? '已启用' : '已关闭');
+  }
+  if (!changed.length) {
+    return { ok: false, summary: '没有要修改的内容', result: '请至少提供 title / description / enabled 之一。' };
+  }
+  data.updated_at = nowStr();
+  DB.update('web_hosting_spaces', data, 'id = ?', [space.id]);
+  audit(ctx, 'web_hosting_update', 'AI 修改网页空间: ' + u.allianceUsername + ' -> ' + space.slug);
+  return {
+    ok: true,
+    summary: '已更新网页空间「' + (data.title || space.title || space.slug) + '」：' + changed.join('，'),
+    result: 'id=' + space.id + '\nslug=' + space.slug,
+    patch: { refresh: 'web-space' },
+  };
+}
+
+/**
+ * 保存网页空间文件（创建或覆盖）。
+ *
+ * 严格对齐 server/api/web-hosting.js#saveFile 的审查语义，不绕过审核：
+ *   - 写入后文件 review_status 一律置 pending_review；
+ *   - 不改动 published_content / published_size（那是管理员审核通过时的动作）；
+ *   - 同时把 web_hosting_spaces.review_status 置 pending_review；
+ *   - 禁止写 /.published 目录、禁止写根路径；
+ *   - 配额口径与 save-file 一致（更新已有文件时先减去原大小）。
+ *
+ * @returns {{ok:boolean, summary:string, result:string, patch?:object, path?:string, isNew?:boolean, urls?:object}}
+ */
+function saveWebFile(ctx, DB, u, space, filePathRaw, content, options) {
+  const opts = options || {};
+  const filePath = normalizeWebPath(filePathRaw);
+  const pathProblem = webPathProblem(filePath, { writable: true });
+  if (pathProblem) return { ok: false, summary: '路径不可写入', result: pathProblem };
+
+  const contentValue = content === undefined || content === null ? '' : String(content);
+  const contentSize = Buffer.byteLength(contentValue, 'utf8');
+  const existing = DB.one(
+    'SELECT * FROM web_hosting_files WHERE space_id = ? AND file_path = ?',
+    [space.id, filePath]
+  );
+  if (existing && parseInt(existing.is_directory, 10) === 1) {
+    return { ok: false, summary: '目标路径是目录', result: filePath + ' 是一个目录，不能写入文件内容；请换一个文件路径。' };
+  }
+  if (!existing && opts.create === false) {
+    return { ok: false, summary: '文件不存在且未允许新建', result: filePath + ' 不存在；如需新建请传 create=true。' };
+  }
+
+  const quota = parseInt(space.storage_quota || 0, 10) || 0;
+  let used = parseInt(DB.scalar(
+    'SELECT COALESCE(SUM(file_size), 0) FROM web_hosting_files WHERE space_id = ?',
+    [space.id]
+  ) ?? 0, 10) || 0;
+  if (existing) used -= (parseInt(existing.file_size, 10) || 0);
+  if (quota > 0 && used + contentSize > quota) {
+    return {
+      ok: false,
+      summary: '网页空间配额不足',
+      result: '网页空间储存不足（已用 ' + fmtBytes(used) + ' / ' + fmtBytes(quota) + '），请先清理文件后重试。',
+    };
+  }
+
+  const now = nowStr();
+  const contentType = guessCloudContentType(filePath);
+  if (existing) {
+    // 对齐 save-file：只改内容 + 置待审，绝不触碰 published_content / published_size
+    DB.update('web_hosting_files', {
+      file_size: contentSize,
+      content_type: contentType,
+      content: contentValue,
+      review_status: 'pending_review',
+      updated_at: now,
+    }, 'space_id = ? AND file_path = ?', [space.id, filePath]);
+  } else {
+    const parent = parentWebDir(filePath);
+    if (parent && parent !== '/') ensureWebParentDirs(DB, space.id, parent, now);
+    DB.insert('web_hosting_files', {
+      space_id: space.id,
+      file_path: filePath,
+      file_size: contentSize,
+      content_type: contentType,
+      content: contentValue,
+      is_directory: 0,
+      review_status: 'pending_review',
+      created_at: now,
+      updated_at: now,
+    });
+  }
+  // 对齐 save-file：空间整体置为待审查
+  DB.update('web_hosting_spaces', { review_status: 'pending_review', updated_at: now }, 'id = ?', [space.id]);
+  audit(ctx, existing ? 'web_hosting_update_file' : 'web_hosting_create_file',
+    'AI ' + (existing ? '更新' : '创建') + '网页空间文件: ' + u.allianceUsername + filePath);
+
+  const urls = siteUrls(ctx, space, filePath);
+  return {
+    ok: true,
+    summary: (existing ? '已保存（待审查）' : '已创建（待审查）') + ' ' + filePath,
+    result: [
+      'path=' + filePath,
+      'size=' + contentSize + ' B',
+      'review_status=pending_review（管理员审核通过前，公开页仍显示上一次已发布版本）',
+      'public_url=' + urls.public,
+      'preview_url=' + urls.preview,
+    ].join('\n'),
+    patch: { refresh: 'web-space' },
+    path: filePath,
+    isNew: !existing,
+    urls: urls,
+  };
+}
+
+// ── 网页空间工具实现 ──
+
+async function toolListWebSpaces(args, ctx) {
+  const DB = dbOf(ctx);
+  const u = userContext(ctx);
+  if (!u.allianceUsername) {
+    return { ok: false, summary: '当前账户没有网页空间', result: '网页空间仅对智教联盟账户开放（需要联盟登录）。' };
+  }
+  const spaces = userWebSpaces(DB, u.allianceUsername);
+  if (!spaces.length) {
+    return { ok: true, summary: '当前账号还没有网页空间', result: '当前账号还没有网页空间（可在控制台「网页空间」里创建）。' };
+  }
+  const lines = [];
+  for (const s of spaces) {
+    const fileRow = DB.one(
+      'SELECT COUNT(*) AS n, COALESCE(SUM(file_size), 0) AS bytes FROM web_hosting_files WHERE space_id = ? AND is_directory = 0',
+      [s.id]
+    ) || { n: 0, bytes: 0 };
+    const pending = parseInt(DB.scalar(
+      "SELECT COUNT(*) FROM web_hosting_files WHERE space_id = ? AND review_status = 'pending_review' AND is_directory = 0",
+      [s.id]
+    ) ?? 0, 10) || 0;
+    const urls = siteUrls(ctx, s, '/');
+    lines.push(
+      '#' + s.id + ' 「' + (s.title || s.slug) + '」 slug=' + s.slug
+      + '｜' + (parseInt(s.is_web_space, 10) === 1 ? '网页空间' : '数据空间/班级主页')
+      + '｜文件 ' + (parseInt(fileRow.n, 10) || 0) + ' 个 / ' + fmtBytes(fileRow.bytes)
+      + '｜' + (parseInt(s.is_enabled, 10) === 0 ? '已关闭' : '已启用')
+      + (parseInt(s.disabled_by_admin, 10) === 1 ? '｜被管理员停用' : '')
+      + '｜审查 ' + (s.review_status || 'published') + (pending ? '（待审 ' + pending + '）' : '')
+      + '｜' + urls.public
+    );
+  }
+  return {
+    ok: true,
+    summary: '网页空间 ' + spaces.length + ' 个',
+    result: lines.join('\n'),
+  };
+}
+
+async function toolListWebSpaceFiles(args, ctx) {
+  const DB = dbOf(ctx);
+  const u = userContext(ctx);
+  if (!u.allianceUsername) {
+    return { ok: false, summary: '当前账户没有网页空间', result: '网页空间仅对智教联盟账户开放。' };
+  }
+  const resolution = resolveWebSpace(DB, u.allianceUsername, args);
+  if (resolution.reason !== 'ok') {
+    return webSpaceResolveFailure(resolution, (args && (args.space_id || args.slug))
+      ? 'space_id=' + (args.space_id || '-') + ' slug=' + (args.slug || '-')
+      : '默认网页空间');
+  }
+  const space = resolution.space;
+  const rows = DB.all(
+    "SELECT id, file_path, file_size, content_type, is_directory, review_status, updated_at FROM web_hosting_files WHERE space_id = ? AND file_path NOT LIKE '/.published%' ORDER BY file_path ASC",
+    [space.id]
+  );
+  const lines = [];
+  let totalBytes = 0;
+  let pending = 0;
+  let shown = 0;
+  for (const r of rows) {
+    if (shown >= MAX_LIST_ITEMS) {
+      lines.push('…（还有 ' + (rows.length - shown) + ' 项未显示）');
+      break;
+    }
+    shown++;
+    const p = String(r.file_path);
+    const depth = p.split('/').filter(Boolean).length - 1;
+    const indent = '  '.repeat(depth);
+    const isDir = parseInt(r.is_directory, 10) === 1;
+    if (isDir) {
+      lines.push(indent + p + '/');
+      continue;
+    }
+    totalBytes += parseInt(r.file_size, 10) || 0;
+    if ((r.review_status || 'published') === 'pending_review') pending++;
+    lines.push(indent + p + '（' + fmtBytes(r.file_size) + '，' + (fileExt(p) || '—') + '，' + (r.review_status || 'published') + '）');
+  }
+  const urls = siteUrls(ctx, space, '/');
+  return {
+    ok: true,
+    summary: '网页空间「' + (space.title || space.slug) + '」：' + rows.length + ' 项 / ' + fmtBytes(totalBytes)
+      + (pending ? '（待审 ' + pending + '）' : ''),
+    result: 'space_id=' + space.id + ' slug=' + space.slug + ' 访问地址=' + urls.public + '\n'
+      + (lines.length ? lines.join('\n') : '（空）'),
+  };
+}
+
+async function toolReadWebSpaceFile(args, ctx) {
+  const DB = dbOf(ctx);
+  const u = userContext(ctx);
+  const a = args || {};
+  if (!u.allianceUsername) {
+    return { ok: false, summary: '当前账户没有网页空间', result: '网页空间仅对智教联盟账户开放。' };
+  }
+  const pathProblem = webPathProblem(normalizeWebPath(a.path), {});
+  const resolution = resolveWebSpace(DB, u.allianceUsername, a);
+  if (resolution.reason !== 'ok') {
+    return webSpaceResolveFailure(resolution, (a.space_id || a.slug) ? 'space_id=' + (a.space_id || '-') + ' slug=' + (a.slug || '-') : '默认网页空间');
+  }
+  const space = resolution.space;
+  const filePath = normalizeWebPath(a.path);
+  if (pathProblem) return { ok: false, summary: '路径不合法', result: pathProblem };
+
+  const row = DB.one(
+    'SELECT * FROM web_hosting_files WHERE space_id = ? AND file_path = ?',
+    [space.id, filePath]
+  );
+  if (!row) {
+    return {
+      ok: false,
+      summary: '网页空间里没有这个文件',
+      result: filePath + ' 不存在。如需新建请用 write_web_space_file；'
+        + '如是路径写法问题，可从下面的现有文件清单里复制路径。\n现有文件清单：\n' + webFileInventory(DB, space.id, 30),
+    };
+  }
+  if (parseInt(row.is_directory, 10) === 1) {
+    return { ok: false, summary: '目标是一个目录', result: filePath + ' 是目录，请用 list_web_space_files 查看目录内容。' };
+  }
+
+  const contentType = String(row.content_type || '');
+  const ext = fileExt(filePath);
+  const textLike = /^(text\/|application\/(javascript|json|xml)|image\/svg)/i.test(contentType)
+    || ['html', 'htm', 'css', 'js', 'mjs', 'json', 'txt', 'md', 'markdown', 'xml', 'yaml', 'yml', 'csv', 'svg', 'cses'].indexOf(ext) >= 0;
+  if (!textLike) {
+    return {
+      ok: false,
+      summary: '二进制文件不支持 AI 读取',
+      result: filePath + ' 的类型是 ' + (contentType || ext || '未知') + '，不是文本文件，AI 无法安全读取；'
+        + '请在网页空间中下载，或用编辑器/浏览器打开。',
+    };
+  }
+
+  const text = contentText(row.content);
+  const bytes = parseInt(row.file_size, 10) || Buffer.byteLength(text, 'utf8');
+  const reviewStatus = row.review_status || 'published';
+  const truncated = bytes > WEB_MAX_READ_BYTES;
+  let body = text;
+  if (truncated) {
+    body = Buffer.from(text, 'utf8').subarray(0, WEB_MAX_READ_BYTES).toString('utf8')
+      + '\n…（文件较大，已截断到前 ' + fmtBytes(WEB_MAX_READ_BYTES) + '，完整内容请在网页空间中下载）';
+  }
+  const header = [
+    'path=' + filePath,
+    'size=' + fmtBytes(bytes),
+    'review_status=' + reviewStatus + (reviewStatus === 'pending_review'
+      ? '（最新草稿；公开地址在审核通过前仍显示上一次已发布版本，预览请加 ?preview=1）'
+      : ''),
+  ].join('\n');
+  return {
+    ok: true,
+    summary: '已读取 ' + filePath + '（' + fmtBytes(bytes) + '，' + reviewStatus + '）',
+    result: header + '\n\n' + (body || '（空文件）'),
+  };
+}
+
+async function toolWriteWebSpaceFile(args, ctx) {
+  const DB = dbOf(ctx);
+  const u = userContext(ctx);
+  const a = args || {};
+  if (!u.allianceUsername) {
+    return { ok: false, summary: '当前账户没有网页空间', result: '网页空间仅对智教联盟账户开放。' };
+  }
+  if (a.path === undefined || a.path === null || String(a.path).trim() === '') {
+    return { ok: false, summary: '缺少 path', result: '请提供要写入的文件路径，例如 /index.html。' };
+  }
+  if (a.content === undefined || a.content === null) {
+    return { ok: false, summary: '缺少 content', result: '请提供完整的文件内容。' };
+  }
+  const resolution = resolveWebSpace(DB, u.allianceUsername, a);
+  if (resolution.reason !== 'ok') {
+    return webSpaceResolveFailure(resolution, (a.space_id || a.slug) ? 'space_id=' + (a.space_id || '-') + ' slug=' + (a.slug || '-') : '默认网页空间');
+  }
+  const space = resolution.space;
+  const writeProblem = webSpaceWriteProblem(space);
+  if (writeProblem) return { ok: false, summary: '该网页空间不可写入', result: writeProblem };
+
+  return saveWebFile(ctx, DB, u, space, a.path, a.content, { create: a.create !== false });
+}
+
+async function toolDeleteWebSpaceFile(args, ctx) {
+  const DB = dbOf(ctx);
+  const u = userContext(ctx);
+  const a = args || {};
+  if (!u.allianceUsername) {
+    return { ok: false, summary: '当前账户没有网页空间', result: '网页空间仅对智教联盟账户开放。' };
+  }
+  const resolution = resolveWebSpace(DB, u.allianceUsername, a);
+  if (resolution.reason !== 'ok') {
+    return webSpaceResolveFailure(resolution, (a.space_id || a.slug) ? 'space_id=' + (a.space_id || '-') + ' slug=' + (a.slug || '-') : '默认网页空间');
+  }
+  const space = resolution.space;
+  const writeProblem = webSpaceWriteProblem(space);
+  if (writeProblem) return { ok: false, summary: '该网页空间不可写入', result: writeProblem };
+
+  const filePath = normalizeWebPath(a.path);
+  const pathProblem = webPathProblem(filePath, {});
+  if (pathProblem) return { ok: false, summary: '路径不合法', result: pathProblem };
+  if (filePath === WEB_PUBLISHED_PREFIX || filePath.indexOf(WEB_PUBLISHED_PREFIX + '/') === 0) {
+    return {
+      ok: false,
+      summary: '已公开版本目录不支持 AI 删除',
+      result: filePath + ' 位于 /.published（审核流程维护的「最后允许公开的版本」），AI 不能删除；'
+        + '如确需清理，请在网页空间控制台操作。',
+    };
+  }
+
+  const row = DB.one(
+    'SELECT * FROM web_hosting_files WHERE space_id = ? AND file_path = ?',
+    [space.id, filePath]
+  );
+  if (!row) {
+    return {
+      ok: false,
+      summary: '网页空间里没有这个文件',
+      result: filePath + ' 不存在，无法删除。\n现有文件清单：\n' + webFileInventory(DB, space.id, 30),
+    };
+  }
+  const isDir = parseInt(row.is_directory, 10) === 1;
+  if (isDir && a.recursive !== true) {
+    return {
+      ok: false,
+      summary: '目标是目录，需要显式确认递归删除',
+      result: filePath + ' 是目录。确认要连带删除其中所有文件时，请重新调用并传 recursive=true。',
+    };
+  }
+  if (isDir) {
+    const prefix = filePath.replace(/\/+$/, '') + '/';
+    DB.delete('web_hosting_files', 'space_id = ? AND (file_path = ? OR file_path LIKE ?)',
+      [space.id, filePath, prefix + '%']);
+  } else {
+    DB.delete('web_hosting_files', 'space_id = ? AND file_path = ?', [space.id, filePath]);
+  }
+  audit(ctx, isDir ? 'web_hosting_delete_dir' : 'web_hosting_delete_file',
+    'AI 删除网页空间' + (isDir ? '目录: ' : '文件: ') + u.allianceUsername + filePath);
+  return {
+    ok: true,
+    summary: '已删除 ' + filePath + (isDir ? '（目录及内容）' : ''),
+    result: 'path=' + filePath + '\n（删除的是最新草稿/文件；已公开版本不受影响）',
+    patch: { refresh: 'web-space' },
+  };
+}
+
+async function toolGetWebSpacePreviewUrl(args, ctx) {
+  const DB = dbOf(ctx);
+  const u = userContext(ctx);
+  const a = args || {};
+  if (!u.allianceUsername) {
+    return { ok: false, summary: '当前账户没有网页空间', result: '网页空间仅对智教联盟账户开放。' };
+  }
+  const resolution = resolveWebSpace(DB, u.allianceUsername, a);
+  if (resolution.reason !== 'ok') {
+    return webSpaceResolveFailure(resolution, (a.space_id || a.slug) ? 'space_id=' + (a.space_id || '-') + ' slug=' + (a.slug || '-') : '默认网页空间');
+  }
+  const space = resolution.space;
+  const hasPath = a.path !== undefined && a.path !== null && String(a.path).trim() !== '';
+  const filePath = hasPath ? normalizeWebPath(a.path) : '/';
+
+  if (hasPath) {
+    const pathProblem = webPathProblem(filePath, { allowRoot: true });
+    if (pathProblem) return { ok: false, summary: '路径不合法', result: pathProblem };
+    const row = DB.one(
+      'SELECT id, file_path, is_directory, review_status FROM web_hosting_files WHERE space_id = ? AND file_path = ?',
+      [space.id, filePath]
+    );
+    if (!row) {
+      return {
+        ok: false,
+        summary: '网页空间里没有这个文件',
+        result: filePath + ' 不存在，暂无法生成该文件的预览地址。\n现有文件清单：\n' + webFileInventory(DB, space.id, 30),
+      };
+    }
+    const urls = siteUrls(ctx, space, filePath);
+    return {
+      ok: true,
+      summary: '预览地址：' + urls.preview,
+      result: 'space_id=' + space.id + '\npath=' + filePath
+        + '\nreview_status=' + (row.review_status || 'published')
+        + '\npublic_url=' + urls.public
+        + '\npreview_url=' + urls.preview
+        + '\n（preview_url 会显示待审查的最新草稿；public_url 显示上一次审核通过的版本）',
+    };
+  }
+
+  const urls = siteUrls(ctx, space, '/');
+  const indexRow = DB.one(
+    "SELECT review_status FROM web_hosting_files WHERE space_id = ? AND file_path = '/index.html'",
+    [space.id]
+  );
+  return {
+    ok: true,
+    summary: '站点地址：' + urls.public,
+    result: 'space_id=' + space.id + '\nslug=' + space.slug
+      + '\npublic_url=' + urls.public
+      + '\npreview_url=' + urls.preview
+      + '\nindex.html=' + (indexRow ? (indexRow.review_status || 'published') : '不存在（访问根路径会 404）'),
+  };
+}
+
+async function toolPublishCloudFile(args, ctx) {
+  const DB = dbOf(ctx);
+  const u = userContext(ctx);
+  const a = args || {};
+  if (!u.allianceUsername) {
+    return { ok: false, summary: '当前账户没有云文件/网页空间', result: '该工具仅对智教联盟账户开放。' };
+  }
+  const space = findDataSpace(DB, u.allianceUsername);
+  if (!space) return { ok: false, summary: '当前账户还没有数据空间', result: '还没有云文件空间，无法发布。' };
+
+  const resolution = resolveCloudFile(DB, space.id, a);
+  if (resolution.reason !== 'ok') {
+    return cloudResolveFailureResult(DB, space.id, resolution, cloudTargetDesc(a));
+  }
+  const file = resolution.row;
+  if (parseInt(file.is_directory, 10) === 1) {
+    return { ok: false, summary: '源文件必须是文件而不是目录', result: '请选择一个云文件（如 index.html）。' };
+  }
+  if (sharePlaceholderOf(file)) {
+    return {
+      ok: false,
+      summary: '源文件是分享占位条目',
+      result: '这是其他用户分享的占位条目，不能作为发布源；请让用户先复制为副本。',
+    };
+  }
+
+  const webResolution = resolveWebSpace(DB, u.allianceUsername, a);
+  if (webResolution.reason !== 'ok') {
+    return webSpaceResolveFailure(webResolution, (a.space_id || a.slug) ? 'space_id=' + (a.space_id || '-') + ' slug=' + (a.slug || '-') : '默认网页空间');
+  }
+  const webSpace = webResolution.space;
+  const writeProblem = webSpaceWriteProblem(webSpace);
+  if (writeProblem) return { ok: false, summary: '该网页空间不可写入', result: writeProblem };
+
+  const sourceRel = relCloudPath(file.file_path);
+  const targetPath = (a.target_path !== undefined && a.target_path !== null && String(a.target_path).trim() !== '')
+    ? normalizeWebPath(a.target_path)
+    : normalizeWebPath('/' + formats.basename(file.file_path));
+  const written = saveWebFile(ctx, DB, u, webSpace, targetPath, contentText(file.content), { create: true });
+  if (!written.ok) return written;
+  return {
+    ok: true,
+    summary: '已把云文件 ' + sourceRel + ' 发布到网页空间 ' + targetPath + '（待审查）',
+    result: 'source=' + sourceRel + '\n' + written.result,
+    patch: { refresh: 'web-space' },
+  };
+}
+
+
+// ────────────────────────────── 会话标题 ──────────────────────────────
+
+/**
+ * 修改当前对话标题（AI 主动重命名）
+ * ctx.sessionId 由 agent.js 传入；只允许改当前用户自己的会话。
+ */
+async function toolSetSessionTitle(args, ctx) {
+  const DB = dbOf(ctx);
+  const safeCtx = ctx || {};
+  const sessionId = parseInt(safeCtx.sessionId === undefined || safeCtx.sessionId === null ? 0 : safeCtx.sessionId, 10) || 0;
+  if (!sessionId) {
+    return { ok: false, summary: '当前没有可命名的对话', result: '该工具只能在 AI 对话里使用。' };
+  }
+
+  const rawTitle = String((args || {}).title === undefined || (args || {}).title === null ? '' : (args || {}).title)
+    .trim()
+    .replace(/^["'“”‘’「」『』]+/, '')
+    .replace(/["'“”‘’「」『』]+$/, '')
+    .replace(/[。！？!?.,，；;：:]+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (rawTitle === '') {
+    return { ok: false, summary: '标题不能为空', result: '请提供 title（不超过 16 个中文字符）。' };
+  }
+  const title = Array.from(rawTitle).slice(0, 24).join('');
+
+  const session = DB.one('SELECT * FROM ai_chat_sessions WHERE id = ?', [sessionId]);
+  if (!session) {
+    return { ok: false, summary: '对话不存在', result: 'session_id=' + sessionId };
+  }
+  const ownerKey = String(safeCtx.ownerKey || '');
+  if (ownerKey !== '' && String(session.owner_key || '') !== ownerKey) {
+    return { ok: false, summary: '无权修改该对话标题', result: '对话不属于当前用户。' };
+  }
+  if (String(session.title || '') === title) {
+    return { ok: true, summary: '对话标题已经是「' + title + '」', result: 'title=' + title };
+  }
+
+  DB.update('ai_chat_sessions', { title: title, title_generated: 1, updated_at: nowStr() }, 'id = ?', [sessionId]);
+  return {
+    ok: true,
+    summary: '已把对话标题改为「' + title + '」',
+    result: 'title=' + title,
+    // agent.js 会把它变成 SSE title 事件，前端即时刷新会话列表
+    title: title,
+    patch: { refresh: 'session-title' },
+  };
+}
+
+
 // ────────────────────────────── 工具分发 ──────────────────────────────
 
 /** 服务端工具实现表 */
@@ -1685,6 +2959,10 @@ const SERVER_HANDLERS = {
   read_cloud_file: toolReadCloudFile,
   list_instances: toolListInstances,
   get_dataspace_info: toolGetDataspaceInfo,
+  list_web_spaces: toolListWebSpaces,
+  list_web_space_files: toolListWebSpaceFiles,
+  read_web_space_file: toolReadWebSpaceFile,
+  get_web_space_preview_url: toolGetWebSpacePreviewUrl,
   create_cloud_file: toolCreateCloudFile,
   update_cloud_file: toolUpdateCloudFile,
   rename_cloud_file: toolRenameCloudFile,
@@ -1692,6 +2970,12 @@ const SERVER_HANDLERS = {
   create_instance: toolCreateInstance,
   update_instance: toolUpdateInstance,
   delete_instance: toolDeleteInstance,
+  write_web_space_file: toolWriteWebSpaceFile,
+  delete_web_space_file: toolDeleteWebSpaceFile,
+  publish_cloud_file: toolPublishCloudFile,
+  create_web_space: toolCreateWebSpace,
+  update_web_space: toolUpdateWebSpace,
+  set_session_title: toolSetSessionTitle,
 };
 
 /**
@@ -1699,11 +2983,113 @@ const SERVER_HANDLERS = {
  * @param {string} name 工具名
  * @param {object} args 模型给出的参数
  * @param {{ownerKey?:string,user?:object,sessionId?:number,scope?:string,editorContext?:object,DB?:object,client?:{hasEditor?:boolean},req?:object,Auth?:object}} ctx
- * @returns {Promise<{ok:boolean, summary:string, result?:string, image?:string, patch?:{refresh?:'cloud-files'|'instances'|'dataspace'}}>}
+ * @returns {Promise<{ok:boolean, summary:string, result?:string, image?:string, patch?:{refresh?:'cloud-files'|'instances'|'dataspace'|'web-space'}}>}
  */
+// ────────────────────────────── 参数归一化 ──────────────────────────────
+
+/**
+ * 常见参数别名 → 规范名。
+ * 不同模型（尤其 OpenAI 兼容实现）经常把 file_id 写成 fileId、把 path 写成 file_path，
+ * 或把数字写成字符串。这里统一纠偏，避免「工具调用出错」其实是参数名/类型不对。
+ */
+const ARG_ALIASES = {
+  fileid: 'file_id',
+  file_id_: 'file_id',
+  file: 'path',
+  filename: 'name',
+  file_name: 'name',
+  file_path: 'path',
+  filepath: 'path',
+  new_name: 'new_name',
+  newname: 'new_name',
+  newspace: 'title',
+  spaceid: 'space_id',
+  space_slug: 'slug',
+  instanceid: 'instance_id',
+  instance: 'instance_id',
+  new_content: 'content',
+  newcontent: 'content',
+  text: 'content',
+  body: 'content',
+  targetpath: 'target_path',
+  target_file: 'target_path',
+  directory_path: 'directory',
+  dir: 'directory',
+  panel_id: 'panel',
+  line_no: 'line',
+  linenumber: 'line',
+};
+
+/** 需要数字的参数（模型常传字符串 "355"） */
+const NUMERIC_ARGS = new Set(['file_id', 'space_id', 'instance_id', 'line']);
+/** 需要布尔的参数（模型常传 "true" / 1） */
+const BOOLEAN_ARGS = new Set(['create', 'create_if_missing', 'recursive', 'enabled', 'pinned']);
+/** 内容类参数不要 trim 掉内部空白/换行 */
+const CONTENT_ARGS = new Set(['content', 'text', 'fileContent']);
+
+function normalizeToolArgs(input) {
+  const out = {};
+  const src = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  for (const [rawKey, rawValue] of Object.entries(src)) {
+    if (rawValue === undefined || rawValue === null) continue;
+    const lower = String(rawKey).toLowerCase().replace(/[\s-]/g, '_');
+    const key = ARG_ALIASES[lower] || ARG_ALIASES[String(rawKey)] || rawKey;
+    if (key === rawKey && lower !== rawKey && NUMERIC_ARGS.has(lower)) {
+      // 例如 FileID → file_id 之外的变体，交给下面按类型处理
+    }
+    let value = rawValue;
+    if (NUMERIC_ARGS.has(key)) {
+      const n = typeof value === 'number' ? value : Number(String(value).trim());
+      if (!Number.isFinite(n)) {
+        // 数字参数给了非数字 → 保留原值，让具体工具的校验给出可读错误
+        value = rawValue;
+      } else {
+        value = Math.trunc(n);
+      }
+    } else if (BOOLEAN_ARGS.has(key)) {
+      if (typeof value === 'string') {
+        const v = value.trim().toLowerCase();
+        value = (v === 'true' || v === '1' || v === 'yes') ? true : (v === 'false' || v === '0' || v === 'no' ? false : value);
+      } else {
+        value = !!value;
+      }
+    } else if (typeof value === 'string' && !CONTENT_ARGS.has(key)) {
+      value = value.trim();
+    }
+    out[key] = value;
+  }
+  // 同时兼容 snake_case / camelCase 两套写法（未在别名表里的）
+  for (const [k, v] of Object.entries(out)) {
+    const snake = k.replace(/[A-Z]/g, (m) => '_' + m.toLowerCase());
+    if (snake !== k && out[snake] === undefined) out[snake] = v;
+  }
+  return out;
+}
+
+/**
+ * 校验必填参数（用 definitions 里的 required 决定），返回可读错误。
+ * 目的：让模型拿到「缺哪个参数、这个工具支持哪些参数」，而不是笼统失败。
+ */
+function missingRequiredArgs(toolName, args) {
+  const defs = buildDefinitions(true);
+  const def = defs.find((d) => d.name === toolName);
+  if (!def) return '';
+  const params = def.parameters || {};
+  const required = Array.isArray(params.required) ? params.required : [];
+  const missing = required.filter((k) => {
+    const v = args[k];
+    return v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+  });
+  if (!missing.length) return '';
+  const props = Object.keys(params.properties || {});
+  return '缺少必填参数：' + missing.join('、')
+    + '\n该工具支持参数：' + (props.length ? props.join('、') : '（无参数）')
+    + '\n请补齐参数后重新调用一次本工具（不要改用其它工具绕开）。';
+}
+
 async function execute(name, args, ctx) {
   const toolName = String(name || '');
-  const safeArgs = args && typeof args === 'object' ? args : {};
+  const safeArgs = normalizeToolArgs(args);
   const safeCtx = ctx && typeof ctx === 'object' ? ctx : {};
 
   // 客户端工具由浏览器执行（agent.js 走 await_tool / await_user），这里只兜底
@@ -1719,6 +3105,11 @@ async function execute(name, args, ctx) {
     return { ok: false, summary: '未知工具：' + toolName, result: '可用工具请参考 tools.definitions()。' };
   }
 
+  const missProblem = missingRequiredArgs(toolName, safeArgs);
+  if (missProblem) {
+    return { ok: false, summary: '参数不完整：' + missProblem.split('\n')[0].replace('缺少必填参数：', ''), result: missProblem };
+  }
+
   try {
     const out = await handler(safeArgs, safeCtx);
     if (!out || typeof out !== 'object') {
@@ -1730,6 +3121,8 @@ async function execute(name, args, ctx) {
       ...(out.result !== undefined ? { result: String(out.result) } : {}),
       ...(out.image !== undefined ? { image: out.image } : {}),
       ...(out.patch !== undefined ? { patch: out.patch } : {}),
+      // set_session_title 等工具会带回 title，agent.js 转成 SSE title 事件
+      ...(out.title !== undefined ? { title: String(out.title) } : {}),
     };
   } catch (e) {
     return {

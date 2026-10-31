@@ -36,6 +36,7 @@
         :style="panelStyle"
         @pointerdown.stop
         @click.stop
+        @wheel.stop
       >
         <div class="mp-panel-title">选择模型</div>
         <div class="mp-panel-body">
@@ -60,9 +61,9 @@
           </template>
           <div v-if="!choiceGroups.length" class="mp-empty">暂无可用模型</div>
         </div>
-        <div class="mp-panel-footer">
+        <div class="mp-panel-footer" v-if="hiddenPresetCount > 0">
           <Icon icon="ri-information-line" :size="13" />
-          <span>预设模型需先在「模型设置」里配置 API Key，未配置时会回落到规则引擎</span>
+          <span>{{ hiddenPresetCount }} 个平台预设未配置 API Key，已隐藏；可在「模型设置」里添加自定义模型</span>
         </div>
       </div>
 
@@ -73,6 +74,7 @@
         :style="panelStyle"
         @pointerdown.stop
         @click.stop
+        @wheel.stop
       >
         <div class="mp-panel-title">推理等级</div>
         <div class="mp-panel-subtitle">{{ currentLabel }}</div>
@@ -118,6 +120,8 @@ export interface AiModelPreset {
   /** 默认推理等级 */
   default?: string;
   capabilities?: { thinking?: boolean; reasoning_effort?: boolean };
+  /** 平台是否已为该预设配置可用 API Key（false 时前端隐藏该项） */
+  configured?: boolean;
 }
 
 export interface AiModelPrefs {
@@ -242,18 +246,29 @@ function onViewportChange() {
   panel.value = null;
 }
 
+/**
+ * 滚动处理：只在下拉面板**外部**滚动时关闭。
+ * 之前的实现是任意 scroll（capture）都关闭，导致鼠标滚轮在下拉列表里
+ * 一滚面板就消失（列表稍长时根本选不了下面的模型）。
+ */
+function onDocumentScroll(event: Event) {
+  const target = event.target as Node | null;
+  if (target && panelEl.value && panelEl.value.contains(target)) return; // 面板内部滚动 → 不关闭
+  if (panelEl.value) panel.value = null;
+}
+
 function bindGlobalListeners() {
   document.addEventListener('pointerdown', onDocumentPointerDown, true);
   document.addEventListener('keydown', onDocumentKeydown, true);
   window.addEventListener('resize', onViewportChange);
-  window.addEventListener('scroll', onViewportChange, true);
+  window.addEventListener('scroll', onDocumentScroll, true);
 }
 
 function unbindGlobalListeners() {
   document.removeEventListener('pointerdown', onDocumentPointerDown, true);
   document.removeEventListener('keydown', onDocumentKeydown, true);
   window.removeEventListener('resize', onViewportChange);
-  window.removeEventListener('scroll', onViewportChange, true);
+  window.removeEventListener('scroll', onDocumentScroll, true);
 }
 
 async function togglePanel(kind: Exclude<PanelKind, null>) {
@@ -320,8 +335,33 @@ const builtinChoices: ModelChoice[] = [
   },
 ];
 
+/**
+ * 只有「平台确实为该预设配置了 API Key」的预设才显示；
+ * 同时去掉与自定义模型重复的项（同一 model_id 只出现一次）。
+ */
+const visiblePresets = computed<AiModelPreset[]>(() => {
+  const customKeys = new Set<string>();
+  for (const m of props.models || []) {
+    if (m?.name) customKeys.add(String(m.name).trim().toLowerCase());
+    if (m?.model_id) customKeys.add(String(m.model_id).trim().toLowerCase());
+  }
+  return presets.value.filter((preset) => {
+    // 服务端返回 configured=false → 平台没配置该模型，整项隐藏
+    if (preset.configured === false) return false;
+    const keys = [preset.key, preset.model_id]
+      .filter(Boolean)
+      .map((k) => String(k).trim().toLowerCase());
+    return !keys.some((k) => customKeys.has(k));
+  });
+});
+
+/** 被隐藏的未配置预设数量（用于底部说明） */
+const hiddenPresetCount = computed(
+  () => presets.value.filter((preset) => preset.configured === false).length
+);
+
 const presetChoices = computed<ModelChoice[]>(() =>
-  presets.value.map((preset) => {
+  visiblePresets.value.map((preset) => {
     const levels = Array.isArray(preset.levels) && preset.levels.length ? [...preset.levels] : [...ALL_LEVELS];
     return {
       value: preset.key,
@@ -358,7 +398,7 @@ const choices = computed<ModelChoice[]>(() => [
 const choiceGroups = computed(() => {
   const groups = [
     { label: '内置', items: builtinChoices },
-    { label: '服务器预设', items: presetChoices.value },
+    { label: '平台提供的模型', items: presetChoices.value },
     { label: '自定义模型', items: customChoices.value },
   ];
   return groups.filter(group => group.items.length > 0);
@@ -586,6 +626,8 @@ defineExpose({ reloadPresets: loadPresets });
 .mp-panel-body {
   max-height: 320px;
   overflow-y: auto;
+  /* 滚动到边界时不要把滚动继续传给页面（否则页面一滚面板就可能被判定为外部滚动） */
+  overscroll-behavior: contain;
   padding: 2px 2px 4px;
 }
 

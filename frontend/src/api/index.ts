@@ -39,6 +39,16 @@ export const aiApi = {
   /** 清空会话消息 */
   clearSession: (sessionId: number) =>
     api.post<any>('/ai/chat?action=clear', { session_id: sessionId }),
+  /**
+   * 撤回到某条消息（放弃其后对话）。
+   * inclusive=true 时该条消息本身也删除（「编辑历史消息」用）；false 时保留它。
+   */
+  truncateSession: (sessionId: number, fromMessageId: number, inclusive = true) =>
+    api.post<any>('/ai/chat?action=truncate', {
+      session_id: sessionId,
+      from_message_id: fromMessageId,
+      inclusive,
+    }),
   /** 上传编辑器截图（客户端工具结果），返回 { url } */
   uploadShot: (dataUrl: string) =>
     api.post<any>('/ai/chat?action=upload-shot', { data_url: dataUrl }),

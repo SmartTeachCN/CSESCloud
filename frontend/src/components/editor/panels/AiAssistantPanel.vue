@@ -22,19 +22,26 @@
         <p>{{ emptyHint }}</p>
       </div>
 
-      <template v-for="item in items" :key="item.key">
+      <template v-for="(item, idx) in items" :key="item.key">
         <div v-if="item.role === 'user'" class="ai-msg user">
           <div class="msg-avatar">
             <Icon icon="ri-user-line" :size="14" />
           </div>
-          <div class="msg-content user-md" v-html="renderUserMarkdown(item.content || '')"></div>
+          <div class="msg-bubble user">{{ item.content }}</div>
         </div>
         <div v-else-if="item.turn" class="ai-msg assistant">
           <div class="msg-avatar">
             <Icon icon="ri-robot-line" :size="14" />
           </div>
           <div class="turn-body">
-            <AiTurnView :turn="item.turn" :live="false" @answer-ask="onAnswerAsk" />
+            <AiTurnView
+              :turn="item.turn"
+              :live="false"
+              :can-retry="canRetryItem(item, idx)"
+              @answer-ask="onAnswerAsk"
+              @retry="onRetry(item)"
+              @copy="onCopy"
+            />
           </div>
         </div>
       </template>
@@ -49,48 +56,56 @@
       </div>
     </div>
 
-    <!-- 对话框控件（模型/语音） -->
-    <div class="ai-controls">
-      <CustomSelect
-        v-model="selectedModel"
-        :options="panelModelOptions"
-        class="ctrl-select-custom"
-        height="26px"
-      />
-      <button
-        class="ctrl-btn"
-        :class="{ recording: isVoiceRecording }"
-        @click="toggleVoice"
-        title="语音输入"
-      >
-        <Icon :icon="isVoiceRecording ? 'ri-stop-circle-fill' : 'ri-mic-line'" :size="14" />
-      </button>
-    </div>
+    <transition name="ai-toast-fade">
+      <div v-if="toastText" class="ai-toast" role="status">{{ toastText }}</div>
+    </transition>
 
-    <div class="ai-input-area">
-      <textarea
-        v-model="input"
-        class="ai-input"
-        :placeholder="isStreaming ? '正在生成回复…' : '输入问题（Enter 发送，Shift+Enter 换行）'"
-        @keydown.enter.exact.prevent="send"
-      ></textarea>
-      <button
-        v-if="isStreaming"
-        class="ai-send stop"
-        title="停止生成"
-        @click="stopStream"
-      >
-        <Icon icon="ri-stop-fill" :size="14" />
-      </button>
-      <button
-        v-else
-        class="ai-send"
-        :disabled="sending || !input.trim()"
-        :title="sending ? '正在收尾上一轮…' : '发送'"
-        @click="send"
-      >
-        <Icon icon="ri-send-plane-line" :size="14" />
-      </button>
+    <!-- 输入区：外观对齐全屏模式（同一套气泡/圆角/控件排布） -->
+    <div class="ai-composer">
+      <div class="composer-box">
+        <textarea
+          v-model="input"
+          class="ai-input"
+          :placeholder="isStreaming ? '正在生成回复…' : '输入问题（Enter 发送，Shift+Enter 换行）'"
+          @keydown.enter.exact.prevent="send"
+        ></textarea>
+        <div class="composer-actions">
+          <ModelPicker
+            v-model:model="selectedModel"
+            v-model:reasoning="reasoningLevel"
+            :models="customModels"
+            :disabled="isStreaming"
+            class="composer-model"
+          />
+          <button
+            class="ctrl-btn"
+            :class="{ recording: isVoiceRecording }"
+            @click="toggleVoice"
+            title="语音输入"
+          >
+            <Icon :icon="isVoiceRecording ? 'ri-stop-circle-fill' : 'ri-mic-line'" :size="14" />
+          </button>
+          <button
+            v-if="isStreaming"
+            class="send-btn stop"
+            title="停止生成"
+            @click="stopStream"
+          >
+            <Icon icon="ri-stop-fill" :size="14" />
+            <span>停止</span>
+          </button>
+          <button
+            v-else
+            class="send-btn"
+            :disabled="sending || !input.trim()"
+            :title="sending ? '正在收尾上一轮…' : '发送'"
+            @click="send"
+          >
+            <Icon icon="ri-send-plane-line" :size="14" />
+            <span>发送</span>
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -99,8 +114,8 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { marked } from 'marked';
-import CustomSelect from '../../CustomSelect.vue';
 import AiTurnView from '../../ai/AiTurnView.vue';
+import ModelPicker, { loadModelPrefs } from '../../ai/ModelPicker.vue';
 import { aiApi } from '../../../api';
 import {
   useAiStream,
@@ -119,6 +134,12 @@ const props = defineProps<{
     fileContent?: string;
     language?: string;
     selection?: string;
+    /** 当前文件完整云端路径（如 /.cloud/web/index.html） */
+    path?: string;
+    /** 当前文件在云文件系统里的 ID */
+    fileId?: string;
+    /** local / cloud / shared */
+    source?: string;
   };
 }>();
 
@@ -145,8 +166,23 @@ const messagesEl = ref<HTMLElement | null>(null);
 /** 一轮 send() 是否还在执行（stop() 之后仍可能短暂为 true，用于防止旧 run 未收尾时开新 run） */
 const sending = ref(false);
 
-// 控件
-const selectedModel = ref('default');
+/** 轻提示（复制成功/失败、重试失败等），不引入额外依赖 */
+const toastText = ref('');
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
+
+function notify(message: string) {
+  toastText.value = message;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastText.value = '';
+    toastTimer = null;
+  }, 2400);
+}
+
+// 控件（与全屏模式一致：模型 + 推理等级）
+const panelPrefs = loadModelPrefs();
+const selectedModel = ref(panelPrefs.model || 'default');
+const reasoningLevel = ref(panelPrefs.reasoning || '');
 const isVoiceRecording = ref(false);
 const customModels = ref<any[]>([]);
 let recognition: any = null;
@@ -243,15 +279,31 @@ function rowToItem(row: any, index: number): PanelItem | null {
   return { key: `turn_${id}_${index}`, role: 'assistant', turn };
 }
 
+/** 从服务端重新拉取当前会话消息（刷新后能拿到 messageId / usage / alternatives） */
+async function reloadMessages(forceScroll = false) {
+  if (!sessionId.value) return;
+  // 服务端返回的历史行 id 与本地直播 turn 的 id 不同：先隐藏直播 turn，避免刷新后重复显示
+  const current = stream.turn.value;
+  if (current && !stream.isStreaming.value && !suppressedTurnIds.value.includes(current.id)) {
+    suppressedTurnIds.value = [...suppressedTurnIds.value, current.id];
+  }
+  try {
+    const rows = await aiApi.listMessages(sessionId.value);
+    items.value = (rows || [])
+      .map((row: any, i: number) => rowToItem(row, i))
+      .filter((it: PanelItem | null): it is PanelItem => !!it);
+    scrollToBottom(forceScroll);
+  } catch {
+    // 静默：保留现有列表
+  }
+}
+
 async function loadSession() {
   try {
     const sessions = await aiApi.listSessions(props.scope);
     if (sessions && sessions.length > 0) {
       sessionId.value = sessions[0].id;
-      const rows = await aiApi.listMessages(sessionId.value);
-      items.value = (rows || [])
-        .map((row: any, i: number) => rowToItem(row, i))
-        .filter((it: PanelItem | null): it is PanelItem => !!it);
+      await reloadMessages(true);
       scrollToBottom(true);
     }
   } catch {
@@ -324,9 +376,14 @@ function toggleVoice() {
 // ===== 构造带编辑器上下文的消息 =====
 function buildFullContent(content: string): string {
   if (!props.editorContext) return content;
-  const ctx = props.editorContext;
+  const ctx: any = props.editorContext;
   const ctxParts: string[] = [];
   if (ctx.fileName) ctxParts.push(`当前文件: ${ctx.fileName}`);
+  // 完整路径 + 文件 ID：模型用 read/update_cloud_file 操作当前文件时可以一次命中，
+  // 避免只给文件名在同名文件存在时被迫反复 list。
+  if (ctx.path) ctxParts.push(`云文件路径: ${ctx.path}`);
+  if (ctx.fileId) ctxParts.push(`云文件ID: ${ctx.fileId}`);
+  if (ctx.source) ctxParts.push(`来源: ${ctx.source}`);
   if (ctx.language) ctxParts.push(`语言: ${ctx.language}`);
   if (ctx.selection) ctxParts.push(`选中内容:\n\`\`\`\n${ctx.selection}\n\`\`\``);
   else if (ctx.fileContent) ctxParts.push(`文件内容:\n\`\`\`\n${ctx.fileContent}\n\`\`\``);
@@ -353,6 +410,7 @@ async function send() {
     const turn = await stream.run({
       content: buildFullContent(content),
       model: selectedModel.value === 'default' ? undefined : selectedModel.value,
+      reasoning: selectedModel.value === 'default' ? undefined : (reasoningLevel.value || undefined),
       session_id: sessionId.value,
       scope: props.scope,
       scope_ref: props.scopeRef ?? null,
@@ -360,10 +418,13 @@ async function send() {
     // 期间点了「新会话」：丢弃这一轮，避免旧回合被提交进新会话列表
     if (gen !== runGeneration) return;
     commitTurn(turn);
+    // 以服务端 meta 为准刷新（补全 messageId / usage / alternatives，重试按钮与版本切换器依赖它）
+    await reloadMessages();
   } catch {
     if (gen !== runGeneration) return;
     // useAiStream 内部会落 turn.error；这里只兜底极端情况
     commitTurn(stream.turn.value);
+    await reloadMessages();
   } finally {
     sending.value = false;
     scrollToBottom();
@@ -387,6 +448,104 @@ function onAnswerAsk(id: string, answers: string[]) {
   if (!liveAsk) return;
   stream.answerAsk(id, answers);
   scrollToBottom();
+}
+
+// ===== 重试 / 复制（消息级操作） =====
+
+/** 列表里最后一条 assistant 消息的下标（「重试」只对最后一条 AI 回复开放） */
+function isLastAssistantIndex(targetIndex: number): boolean {
+  for (let i = items.value.length - 1; i >= 0; i--) {
+    const it = items.value[i];
+    if (it.role === 'assistant' && it.turn) return i === targetIndex;
+  }
+  return false;
+}
+
+/** 是否给这条 AI 消息显示「重试」：最后一条、有 messageId、不在流式中 */
+function canRetryItem(item: PanelItem, index: number): boolean {
+  if (!item.turn || item.turn.messageId == null) return false;
+  if (sending.value || stream.isStreaming.value) return false;
+  const status = item.turn.status;
+  if (status !== 'done' && status !== 'error') return false;
+  if (!isLastAssistantIndex(index)) return false;
+  return Number.isFinite(Number(item.turn.messageId));
+}
+
+async function onRetry(item: PanelItem) {
+  const turn = item.turn;
+  if (!turn || turn.messageId == null) return;
+  if (sending.value || stream.isStreaming.value) return;
+  const sid = sessionId.value;
+  const retryMessageId = Number(turn.messageId);
+  if (!sid || !Number.isFinite(retryMessageId)) {
+    notify('当前无法重试：会话未就绪');
+    return;
+  }
+
+  sending.value = true;
+  const gen = ++runGeneration;
+  try {
+    const newTurn = await stream.retry({
+      session_id: sid,
+      retry_message_id: retryMessageId,
+      model: selectedModel.value === 'default' ? undefined : selectedModel.value,
+      reasoning: selectedModel.value === 'default' ? undefined : (reasoningLevel.value || undefined),
+    });
+    if (gen !== runGeneration) return;
+    // 服务端已删掉旧回复：先移除旧条目，再提交新回合
+    const idx = items.value.findIndex((it) => it === item);
+    if (idx >= 0) items.value.splice(idx, 1);
+    commitTurn(newTurn);
+    if (newTurn.status === 'error') {
+      notify('重试失败：' + (newTurn.error || '请求失败'));
+    }
+    // 拉取服务端 meta：补全 messageId / usage / alternatives（版本切换器需要）
+    await reloadMessages();
+  } catch (e: any) {
+    if (gen === runGeneration) notify('重试失败：' + (e?.message || '请求失败'));
+  } finally {
+    sending.value = false;
+    scrollToBottom();
+  }
+}
+
+async function onCopy(text: string) {
+  if (!text) return;
+  const ok = await writeClipboard(text);
+  notify(ok ? '已复制' : '复制失败，请手动选择文本复制');
+}
+
+/** 复制到剪贴板：优先 Clipboard API，失败回退 execCommand */
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // 无权限 / 非安全上下文：走回退
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.left = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {
+      ok = false;
+    }
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 // ===== 滚动 =====
@@ -734,8 +893,244 @@ onMounted(() => {
   opacity: 0.88;
 }
 
+
+/* ===== v4.1：外观对齐「全屏模式」（同气泡/同圆角/同控件排布）===== */
+.ai-messages {
+  padding: var(--spacer-3) var(--spacer-2);
+  gap: 0;
+}
+
+.ai-msg {
+  display: flex;
+  gap: var(--spacer-2);
+  margin-bottom: var(--spacer-3);
+  align-items: flex-start;
+  max-width: 100%;
+}
+
+/* 用户消息：右对齐 + 强调色气泡（与全屏模式一致） */
+.ai-msg.user {
+  flex-direction: row-reverse;
+  margin-left: auto;
+  max-width: 88%;
+}
+
+.msg-avatar {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.ai-msg.user .msg-avatar {
+  background: var(--accent-base);
+  color: #fff;
+}
+
+.ai-msg.assistant .msg-avatar {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--divider-stroke);
+}
+
+/* 气泡外壳：与全屏模式的 .message-bubble 一致 */
+.msg-bubble {
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--spacer-2) var(--spacer-3);
+  background: var(--layer-default);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--text-primary);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.msg-bubble.user {
+  background: var(--accent-base);
+  border-color: transparent;
+  color: #fff;
+}
+
+/* 助手回合外壳也套上同样的气泡底 */
+.turn-body {
+  min-width: 0;
+  flex: 1;
+  padding: var(--spacer-2) var(--spacer-3);
+  background: var(--layer-default);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* ===== 输入区：与全屏模式的 input-wrapper 一致 ===== */
+.ai-composer {
+  flex-shrink: 0;
+  padding: var(--spacer-2);
+  border-top: 1px solid var(--divider-stroke);
+  background: var(--layer-default);
+}
+
+.composer-box {
+  background: var(--ctrl-fill-default);
+  border: 1px solid var(--ctrl-border-rest);
+  border-radius: var(--radius-lg);
+  transition: border-color var(--fast-duration), background var(--fast-duration);
+  overflow: hidden;
+}
+
+.composer-box:focus-within {
+  border-color: var(--accent-base);
+  background: var(--ctrl-fill-input-active);
+}
+
+.ai-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: var(--spacer-2) var(--spacer-3);
+  font-size: var(--font-size-xs);
+  color: var(--text-primary);
+  resize: none;
+  min-height: 44px;
+  max-height: 120px;
+  font-family: inherit;
+  line-height: 1.6;
+  box-sizing: border-box;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 6px;
+}
+
+/* ModelPicker 在窄面板里压缩：两个 trigger 横向排列、标签省略 */
+.composer-model {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.composer-model :deep(.mp-trigger) {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+  border-radius: var(--radius-sm);
+  background: var(--subtle-secondary);
+  border: 1px solid var(--divider-stroke);
+  color: var(--text-secondary);
+  max-width: 150px;
+}
+
+.composer-model :deep(.mp-trigger-label) {
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctrl-btn {
+  width: 28px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ctrl-btn:hover {
+  background: var(--subtle-pressed);
+  color: var(--text-primary);
+}
+
+.ctrl-btn.recording {
+  background: var(--status-error);
+  border-color: var(--status-error);
+  color: #fff;
+}
+
+/* 发送 / 停止按钮：与全屏模式同形 */
+.send-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px;
+  background: var(--accent-base);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.send-btn:hover { background: var(--accent-hover); }
+.send-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.send-btn.stop { background: var(--status-error); }
+.send-btn.stop:hover { opacity: 0.9; }
+
 @keyframes ai-live-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+
+/* ===== v4.2：Tokens / 重试 / 版本切换 / 复制 / 轻提示 ===== */
+.ai-panel {
+  position: relative;
+}
+
+/* 正文与用户气泡都可鼠标选中复制 */
+.msg-bubble {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.ai-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 96px;
+  z-index: 30;
+  max-width: 82%;
+  padding: 5px 10px;
+  background: var(--flyout-bg);
+  border: 1px solid var(--flyout-border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.ai-toast-fade-enter-active,
+.ai-toast-fade-leave-active {
+  transition: opacity var(--fast-duration), transform var(--fast-duration);
+}
+
+.ai-toast-fade-enter-from,
+.ai-toast-fade-leave-to {
+  opacity: 0;
+  transform: translate(-50%, 4px);
 }
 </style>

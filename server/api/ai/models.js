@@ -132,8 +132,37 @@ module.exports = async (ctx) => {
   DB.addMissingColumn('ai_models', 'default_reasoning', 'TEXT');
 
   // 内置模型预设（DeepSeek 优先；供前端模型选择框使用）
+  // v4.1：额外返回 configured —— 平台是否真的配置了对应模型（有可用 API Key）。
+  // 前端据此隐藏「未配置」的预设分组，避免用户选了一个必然回落到规则引擎的模型。
   if (method === 'GET' && action === 'presets') {
-    Response.success(builtinPresets());
+    const configuredKeys = new Set();
+    try {
+      const rows = DB.all(
+        "SELECT name, model_id, api_key FROM ai_models WHERE (owner_key = ? OR owner_key = 'system') AND is_enabled = 1",
+        [ownerKey]
+      );
+      for (const r of rows) {
+        if (String(r.api_key || '').trim() === '') continue;
+        if (r.name) configuredKeys.add(String(r.name).trim().toLowerCase());
+        if (r.model_id) configuredKeys.add(String(r.model_id).trim().toLowerCase());
+      }
+    } catch (_) { /* 模型表缺失时视为未配置 */ }
+
+    const envKeys = {
+      deepseek: !!(process.env.DEEPSEEK_API_KEY || '').trim(),
+      openai: !!(process.env.OPENAI_API_KEY || '').trim(),
+      anthropic: !!(process.env.ANTHROPIC_API_KEY || '').trim(),
+      google: !!(process.env.GOOGLE_API_KEY || '').trim(),
+    };
+
+    const list = builtinPresets().map((preset) => {
+      const provider = String(preset.provider || '').toLowerCase();
+      const configured = configuredKeys.has(String(preset.key || '').toLowerCase())
+        || configuredKeys.has(String(preset.model_id || '').toLowerCase())
+        || !!envKeys[provider];
+      return { ...preset, configured };
+    });
+    Response.success(list);
   }
 
   // 列出模型
