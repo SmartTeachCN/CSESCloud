@@ -235,6 +235,32 @@ function normalizeStoredBlock(b: any): AiBlock | null {
 }
 
 /**
+ * 服务端历史回填时，用「本地正在展示的回合」和「服务端存的回合」合并：
+ * - 本地块更多（流式期间收到但服务端没存全，例如工具卡/思考块）→ 保留本地块；
+ * - 否则用服务端块（跨会话/刷新后更权威）；
+ * - messageId / alternatives / usage 等以服务端为准。
+ *
+ * 这样解决「AI 操作过程在回复完毕后被刷新回填删掉」的问题。
+ */
+export function pickRicherTurn(local: AiTurn | null | undefined, stored: AiTurn): AiTurn {
+  if (!local) return stored;
+  const localBlocks = Array.isArray(local.blocks) ? local.blocks : [];
+  const storedBlocks = Array.isArray(stored.blocks) ? stored.blocks : [];
+  const useLocalBlocks = localBlocks.length > storedBlocks.length;
+  return {
+    ...stored,
+    blocks: useLocalBlocks ? localBlocks : storedBlocks,
+    startedAt: local.startedAt || stored.startedAt,
+    finishedAt: stored.finishedAt || local.finishedAt,
+    usage: stored.usage || local.usage,
+    model: stored.model || local.model,
+    reasoning: stored.reasoning || local.reasoning,
+    messageId: stored.messageId ?? local.messageId ?? null,
+    alternatives: (stored.alternatives && stored.alternatives.length) ? stored.alternatives : (local.alternatives || []),
+  };
+}
+
+/**
  * 把 GET action=messages 返回的一行还原成 AiTurn（含工具卡/提问卡）
  */
 export function parseStoredMessage(row: any): AiTurn {

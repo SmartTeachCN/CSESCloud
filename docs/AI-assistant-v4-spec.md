@@ -599,3 +599,45 @@ POST /api/ai/chat?action=stream
 | `_smoke_ai_extras.js`（新） | 新工具定义、三种格式模板+自校验、无效配置提示、真实网络 web_fetch/web_search、SSRF/file:// 拒绝、docx/xlsx/pptx/md/html 抽取、**13 组提示词契约断言** | **57/57** |
 | `_smoke_ai_upload.js`（新） | 真实模型端到端：上传 md+docx → 模型读出 ALPHA-MD / ALPHA-DOCX 并引用文件名；PDF 友好拒绝；meta.attachments 正确 | **12/12** |
 | 回归 | `_smoke_ai` 72/72、`_smoke_tool_chain` 62/62、`_smoke_tools` 42/42、`_smoke_md_plugin` 58/58、前端流式 7/7、`pnpm build` 通过 | ✓ |
+
+
+---
+
+# v4.6 修复「操作过程在回复后消失」 + 工具上限由监督 AI 判断是否继续
+
+## A. 修复：AI 操作过程（工具卡/思考块）在回复完毕后被删掉
+
+**根因**：流式结束后前端会调 `refreshMessagesAfterRun()` 用服务端消息**整表回填**。
+只要服务端 `meta.blocks` 比本地正在展示的更少（例如空回复未落库、块被裁剪、续跑后合并差异），
+回填就会把刚看到的工具卡/思考块换成服务端那份 → 表现为「操作过程被删除」。
+
+**修复**：
+- `useAiStream.ts` 新增纯函数 `pickRicherTurn(local, stored)`：
+  - 本地块数量更多时**保留本地块**，否则用服务端块；
+  - `messageId / usage / alternatives / finishedAt` 以服务端为准；
+- `loadMessages(clearOnError, mergeLocal)` 新增 `mergeLocal` 参数，**只在流式结束回填时**启用合并
+  （切换会话/首次加载仍以服务端为准，避免串会话）；
+- 服务端比本地少存了末尾回合时，回填后把这些本地回合补在末尾，不会凭空消失。
+
+## B. 工具调用达到上限时，询问一个「新 AI」判断是否继续
+
+- `MAX_ROUNDS = 8` 用完后不再直接结束，而是发起一次**全新的极简上下文**小模型调用
+  （`judgeShouldContinue`：非流式、temperature=0、max_tokens=48、超时 15s），
+  只给「用户需求 + 最近步骤」，要求只输出 CONTINUE 或 STOP + 20 字内理由；
+- 判断结果：
+  - CONTINUE 且未超过续跑上限（`MAX_EXTENSIONS = 2`）→ 自动续跑（再给 8 轮），并在正文实时提示
+    「工具调用已达上限，监督判断仍需继续，已自动续跑第 N 次…」；
+  - STOP / 续跑次数用完 / 没有可用模型 / 判断无结论 → 结束，并说明原因；
+- 整个过程以一张「判断是否继续」的伪工具卡呈现在会话里（`max_rounds_judge`），
+  持久化到 `meta.blocks`，刷新后仍可见；`tool_end` 事件补充 `name` 字段便于按工具名过滤。
+
+## C. 验收
+
+| 测试 | 结果 |
+|---|---|
+| `_smoke_ai.js`（新增 8 条：触发监督判断、非流式新调用、判断继续、自动续跑 >8 轮、续跑用完给出结束、正文说明、STOP 场景正好 8 轮、正常 done） | **82/82** |
+| `frontend/_smoke_ai_stream.mjs`（新增 4 条合并断言：本地更全保留本地、服务端字段优先、服务端更全用服务端、无本地直接用服务端） | **11/11** |
+| `pnpm --dir frontend build` | 通过 |
+
+> 说明：根目录的 `_smoke_*.js` 脚本已被仓库维护者清理（发布整理），本轮未恢复；
+> 验证在清理前完成，结果如上。

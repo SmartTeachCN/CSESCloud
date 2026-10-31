@@ -646,6 +646,8 @@ function argsSummary(args) {
 // ─────────────────────────── 运行态 ───────────────────────────
 
 const MAX_ROUNDS = 8;
+/** 达到上限后允许「监督 AI 判断继续」的最大续跑次数 */
+const MAX_EXTENSIONS = 2;
 
 /** 构造历史消息（仅文本；工具结构只在当前轮内部流转） */
 function buildHistoryMessages(history, toolsEnabled) {
@@ -723,6 +725,9 @@ async function startTurn(opts) {
     editorContext,
     hasEditor: !!opts.hasEditor,
     round: 0,
+    // 工具调用轮次预算：达到后由监督 AI 判断是否续跑（最多 MAX_EXTENSIONS 次）
+    maxRounds: MAX_ROUNDS,
+    extensions: 0,
     messages: [],
     pendingCalls: [],
     cursor: 0,
@@ -794,6 +799,9 @@ async function resumeTurn(opts) {
     return { suspended: false, reply: '', blocks: [], interrupted: true, error: 'run-expired', missing: true };
   }
   const state = found.state;
+  // 兼容旧断点：补齐监督判断所需的轮次预算字段
+  if (!(Number(state.maxRounds) > 0)) state.maxRounds = MAX_ROUNDS;
+  state.extensions = Number(state.extensions) || 0;
   const model = resolveModel(opts.ownerKey, state.modelName);
   if (!model || phpEmpty(model.api_key)) {
     await sse.write({ type: 'error', message: '模型配置已失效，请重新发送消息。' });
@@ -852,6 +860,7 @@ async function applyClientResult(state, result, sse) {
   await sse.write({
     type: 'tool_end',
     id: current.id,
+    name: current.name,
     ok,
     summary: truncateSummary(summary),
     result: truncate(result.result, 4000),
@@ -944,7 +953,72 @@ function pushNote(state, text) {
   appendText(state, (state.reply ? '\n\n' : '') + text);
 }
 
+/** 同 pushNote，但同时把这段提示实时推给前端（用于「已达上限、正在判断」这类状态说明） */
+async function pushNoteLive(state, sse, text) {
+  const delta = (state.reply ? '\n\n' : '') + text;
+  appendText(state, delta);
+  await sse.write({ type: 'text', delta, token: delta });
+}
+
 // ─────────────────────────── 主循环 ───────────────────────────
+
+/**
+ * 工具调用达到上限时的「监督判断」：用一次全新的、极简上下文的小模型调用，
+ * 独立判断任务是否还需要继续（避免主模型自己找理由无限续跑）。
+ * 拿不到模型/解析不出结论时保守返回 stop。
+ * @returns {Promise<{decision:'continue'|'stop', reason:string}>}
+ */
+async function judgeShouldContinue(state, model) {
+  if (!model || phpEmpty(model.api_key)) {
+    return { decision: 'stop', reason: '未配置可用模型，无法判断是否继续' };
+  }
+  const steps = [];
+  const blocks = Array.isArray(state.blocks) ? state.blocks : [];
+  for (let i = Math.max(0, blocks.length - 14); i < blocks.length; i += 1) {
+    const b = blocks[i];
+    if (!b) continue;
+    if (b.type === 'tool') {
+      steps.push('- 调用 ' + b.name + '（' + b.status + '）：' + truncate(String(b.summary || ''), 120));
+    } else if (b.type === 'text' && b.text) {
+      steps.push('- 已输出：' + truncate(String(b.text), 200));
+    }
+  }
+  const messages = [
+    {
+      role: 'system',
+      content: '你是任务监督者，只做一件事：判断另一个 AI 助理是否还需要继续调用工具来完成用户任务。\n'
+        + '判断规则：\n'
+        + '- 如果还有明确未完成的必要步骤（文件没写完、配置没校验通过、用户要求的操作没做完）→ 输出 CONTINUE；\n'
+        + '- 如果任务已完成、已经失败且无法继续、或必须等用户补充信息/确认 → 输出 STOP。\n'
+        + '只输出一行：CONTINUE 或 STOP，可附不超过 20 字的理由。不要输出其它内容。',
+    },
+    {
+      role: 'user',
+      content: '对话标题：' + (state.sessionTitle || '（无）')
+        + '\n用户需求：' + truncate(String(state.question || ''), 600)
+        + '\n最近执行步骤：\n' + (steps.join('\n') || '（无）')
+        + '\n\n请判断是否继续。',
+    },
+  ];
+  let raw = '';
+  try {
+    raw = await completeText(model, messages, { maxTokens: 48, temperature: 0, timeoutMs: 15000 });
+  } catch (_) {
+    raw = '';
+  }
+  const text = String(raw || '').trim();
+  if (!text) return { decision: 'stop', reason: '监督判断没有返回结论，按结束处理' };
+  const hasContinue = /CONTINUE|继续/i.test(text);
+  const hasStop = /STOP|停止|结束/i.test(text);
+  // 两者都出现时以第一个出现的为准（模型偶尔会写「CONTINUE 但…STOP」）
+  let decision = 'stop';
+  if (hasContinue && hasStop) {
+    decision = text.search(/CONTINUE|继续/i) < text.search(/STOP|停止|结束/i) ? 'continue' : 'stop';
+  } else if (hasContinue) {
+    decision = 'continue';
+  }
+  return { decision, reason: text.replace(/\s+/g, ' ').slice(0, 120) };
+}
 
 /**
  * 继续 ReAct 循环（模型 → 工具 → 模型 …）
@@ -959,7 +1033,7 @@ async function continueLoop(state, { model, sse, clientToolsEnabled }) {
   let interrupted = false;
   let lastError = '';
 
-  while (state.round < MAX_ROUNDS) {
+  while (state.round < state.maxRounds) {
     if (sse.closed) { interrupted = true; break; }
     state.round += 1;
     closeReasoning(state);
@@ -1112,8 +1186,37 @@ async function continueLoop(state, { model, sse, clientToolsEnabled }) {
     state.cursor = 0;
   }
 
-  if (state.round >= MAX_ROUNDS) {
-    pushNote(state, '\n\n（已达到单轮工具调用上限，先停在这里。需要继续请告诉我。）');
+  // ── 达到本轮工具调用上限：请一个「新 AI」独立判断是否还需要继续 ──
+  if (state.round >= state.maxRounds) {
+    const canExtend = state.extensions < MAX_EXTENSIONS && !sse.closed;
+    const judgeCallId = 'call_judge_' + crypto.randomUUID().slice(0, 8);
+    const judgeArgs = { rounds: state.round, extensions: state.extensions };
+    upsertToolBlock(state, judgeCallId, {
+      type: 'tool', id: judgeCallId, name: 'max_rounds_judge', label: '判断是否继续',
+      args: judgeArgs, scope: 'server', risk: 'read', status: 'running',
+    });
+    await sse.write({
+      type: 'tool_start', id: judgeCallId, name: 'max_rounds_judge', label: '判断是否继续',
+      args: judgeArgs, scope: 'server', risk: 'read',
+    });
+
+    const decision = canExtend
+      ? await judgeShouldContinue(state, model)
+      : { decision: 'stop', reason: '已达到最大续跑次数（' + MAX_EXTENSIONS + ' 次）' };
+    const summary = decision.decision === 'continue' ? '判断：继续执行' : '判断：结束任务';
+    const resultText = String(decision.reason || '').slice(0, 200);
+    upsertToolBlock(state, judgeCallId, { status: 'done', summary, result: resultText });
+    await sse.write({ type: 'tool_end', id: judgeCallId, name: 'max_rounds_judge', ok: true, summary, result: resultText });
+
+    if (decision.decision === 'continue' && canExtend) {
+      state.extensions += 1;
+      state.maxRounds += MAX_ROUNDS;
+      await pushNoteLive(state, sse, '（工具调用已达上限，监督判断仍需继续，已自动续跑第 ' + state.extensions + ' 次…）');
+      return continueLoop(state, { model, sse, clientToolsEnabled });
+    }
+    await pushNoteLive(state, sse, '（已达到单轮工具调用上限，' +
+      (decision.decision === 'continue' ? '且续跑次数已用完' : '监督判断认为任务已可结束') +
+      '，先停在这里。需要继续请告诉我。）');
   }
   return finalize(state, { interrupted, error: lastError });
 }
@@ -1154,7 +1257,7 @@ async function runPendingCalls(state, { model, sse, clientToolsEnabled, toolDefs
       await sse.write({ type: 'tool_start', id: call.id, name, label, args: {}, scope: 'server', risk: def ? def.risk : 'read' });
       state.messages.push({ role: 'tool', tool_call_id: call.id, content: '执行失败：' + result });
       upsertToolBlock(state, call.id, { status: 'error', summary, result });
-      await sse.write({ type: 'tool_end', id: call.id, ok: false, summary, result });
+      await sse.write({ type: 'tool_end', id: call.id, name, ok: false, summary, result });
       state.cursor += 1;
       continue;
     }
@@ -1273,6 +1376,7 @@ async function runPendingCalls(state, { model, sse, clientToolsEnabled, toolDefs
     await sse.write({
       type: 'tool_end',
       id: call.id,
+      name,
       ok: !!result.ok,
       summary,
       result: truncate(result.result, 4000),

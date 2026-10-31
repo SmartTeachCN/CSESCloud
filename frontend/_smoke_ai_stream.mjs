@@ -190,11 +190,46 @@ async function case4() {
   record('等待回答时 stop() 不会悬挂', raced === 'resolved', { raced });
 }
 
+// ── 用例 5：历史回填时保留本地更完整的块（避免工具卡/思考块被回填删掉） ──
+async function case5() {
+  const { pickRicherTurn } = await import('./src/composables/useAiStream.ts');
+  const localRicher = {
+    id: 'turn_x', role: 'assistant', status: 'done', startedAt: 1000, finishedAt: 5000,
+    blocks: [
+      { type: 'reasoning', text: '思考', done: true },
+      { type: 'tool', id: 'c1', name: 'list_cloud_files', label: '列出云文件', args: {}, scope: 'server', risk: 'read', status: 'done', summary: '3 个文件' },
+      { type: 'tool', id: 'c2', name: 'read_cloud_file', label: '读文件', args: {}, scope: 'server', risk: 'read', status: 'done', summary: 'ok' },
+      { type: 'text', text: '最终回答' },
+    ],
+    messageId: null,
+  };
+  const storedPoorer = {
+    id: 'turn_stored', role: 'assistant', status: 'done', startedAt: 0,
+    blocks: [{ type: 'text', text: '最终回答' }],
+    messageId: 42, usage: { prompt_tokens: 10, completion_tokens: 5 },
+    alternatives: [{ message_id: 41, content: '旧版', blocks: [{ type: 'text', text: '旧版' }] }],
+  };
+  const merged = pickRicherTurn(localRicher, storedPoorer);
+  record('回填合并：保留本地更完整的块', merged.blocks.length === 4 && merged.blocks.some((b) => b.type === 'tool'), { blocks: merged.blocks.length });
+  record('回填合并：messageId/usage/alternatives 取服务端', merged.messageId === 42 && merged.usage && merged.usage.prompt_tokens === 10 && merged.alternatives.length === 1,
+    { messageId: merged.messageId, usage: merged.usage, alts: (merged.alternatives || []).length });
+  const storedRicher = {
+    id: 'turn_s2', role: 'assistant', status: 'done', startedAt: 0,
+    blocks: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }],
+    messageId: 7,
+  };
+  const merged2 = pickRicherTurn({ ...localRicher, blocks: [{ type: 'text', text: 'a' }] }, storedRicher);
+  record('回填合并：服务端更完整时用服务端块', merged2.blocks.length === 2, { blocks: merged2.blocks.length });
+  const merged3 = pickRicherTurn(null, storedRicher);
+  record('回填合并：无本地回合时直接用服务端', merged3.blocks.length === 2 && merged3.messageId === 7);
+}
+
 try {
   await case1();
   await case2();
   await case3();
   await case4();
+  await case5();
 } catch (e) {
   record('用例执行异常', false, { error: e && e.stack ? String(e.stack).slice(0, 500) : String(e) });
 }

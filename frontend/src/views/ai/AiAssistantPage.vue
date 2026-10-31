@@ -413,7 +413,7 @@ import ModelPicker, { loadModelPrefs } from '../../components/ai/ModelPicker.vue
 import SessionContextMenu, { type ContextMenuItem } from '../../components/ai/SessionContextMenu.vue';
 import CustomSelect from '../../components/CustomSelect.vue';
 import { aiApi } from '../../api';
-import { useAiStream, parseStoredMessage } from '../../composables/useAiStream';
+import { useAiStream, parseStoredMessage, pickRicherTurn } from '../../composables/useAiStream';
 
 const route = useRoute();
 
@@ -821,14 +821,24 @@ async function loadSessions() {
   }
 }
 
-async function loadMessages(clearOnError = true) {
+/**
+ * 拉取会话消息。
+ * @param clearOnError 失败时是否清空（静默刷新传 false）
+ * @param mergeLocal   是否与本地已展示的回合合并（流式结束后的回填传 true）：
+ *                     服务端块比本地少时保留本地块，避免「AI 操作过程（工具卡/思考块）在回复完毕后消失」。
+ */
+async function loadMessages(clearOnError = true, mergeLocal = false) {
   if (!currentSessionId.value) {
     entries.value = [];
     return;
   }
   try {
     const list = await aiApi.listMessages(currentSessionId.value);
+    const localTurns = mergeLocal
+      ? entries.value.filter((e) => e.kind === 'turn').map((e) => (e as any).turn)
+      : [];
     const next: ChatEntry[] = [];
+    let assistantCursor = 0;
     for (const row of list || []) {
       if (!row) continue;
       if (row.role === 'user') {
@@ -844,7 +854,22 @@ async function loadMessages(clearOnError = true) {
           attachments: rowAttachments && rowAttachments.length ? rowAttachments : undefined,
         });
       } else {
-        next.push({ kind: 'turn', key: `turn-${row.id}`, turn: parseStoredMessage(row) });
+        const stored = parseStoredMessage(row);
+        const local = localTurns[assistantCursor] || null;
+        assistantCursor += 1;
+        next.push({
+          kind: 'turn',
+          key: `turn-${row.id}`,
+          turn: mergeLocal ? pickRicherTurn(local, stored) : stored,
+        });
+      }
+    }
+    // 服务端少存了末尾的回合（例如空回复被跳过）：保留本地这些回合，避免直接消失
+    if (mergeLocal && localTurns.length > assistantCursor) {
+      for (let i = assistantCursor; i < localTurns.length; i += 1) {
+        const t = localTurns[i];
+        if (!t) continue;
+        next.push({ kind: 'turn', key: `turn-local-${t.id}`, turn: t });
       }
     }
     entries.value = next;
@@ -1315,7 +1340,8 @@ async function refreshMessagesAfterRun(sessionId: number | null) {
   const activeSessionId = currentSessionId.value;
   if (!activeSessionId) return;
   if (sessionId != null && activeSessionId !== sessionId) return;
-  await loadMessages(false);
+  // mergeLocal=true：服务端块比本地少时保留本地块，避免刚看到的工具卡/思考块被回填冲掉
+  await loadMessages(false, true);
 }
 
 async function sendMessage() {
