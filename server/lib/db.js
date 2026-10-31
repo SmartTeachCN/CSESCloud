@@ -162,6 +162,15 @@ function ensureSchema() {
   ]) {
     try { db.exec('DROP TABLE IF EXISTS ' + obsolete); } catch (_) { /* 忽略清理失败 */ }
   }
+
+  // 帮助中心内置文档：仅当 help_content 为空时写入（幂等 seed，不覆盖管理员编辑过的内容）。
+  // require 放在函数内（惰性）避免模块加载期循环依赖；任何异常只告警，不影响启动。
+  try {
+    const { ensureHelpContent } = require('./seed-help');
+    ensureHelpContent(db);
+  } catch (err) {
+    console.warn('[db] 初始化帮助中心文档失败:', err && err.message ? err.message : err);
+  }
 }
 
 /** 为表添加缺失的列（SQLite 不支持 IF NOT EXISTS，用 try-catch） */

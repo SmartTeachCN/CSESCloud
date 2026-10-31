@@ -772,8 +772,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, computed, onMounted, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import BrandLogo from '../../components/BrandLogo.vue';
 import EditorPane from '../../components/editor/EditorPane.vue';
 import type { TabInfo } from '../../components/editor/EditorPane.vue';
@@ -793,6 +793,7 @@ import { captureElementToDataUrl } from '../../utils/dom-screenshot';
 import { api } from '../../api/client';
 
 const router = useRouter();
+const route = useRoute();
 const { user } = useAuth();
 
 // ===== 侧栏 =====
@@ -3362,12 +3363,84 @@ provideAiEditorBridge(
   }),
 );
 
-onMounted(() => {
+/* ===== 深链：?file=<云文件 id> / ?instance=<配置实例 id> / ?new=file|dir ===== */
+let lastAppliedDeepLinkKey = '';
+
+function queryText(value: unknown): string {
+  if (Array.isArray(value)) return value.length ? String(value[0]) : '';
+  return typeof value === 'string' ? value : '';
+}
+
+async function applyEditorDeepLink(): Promise<void> {
+  const fileParam = queryText(route.query.file);
+  const instanceParam = queryText(route.query.instance);
+  const newParam = queryText(route.query.new);
+  const key = `${fileParam}|${instanceParam}|${newParam}`;
+  if (!key.replace(/\|/g, '').trim()) return;
+  if (key === lastAppliedDeepLinkKey) return;
+  if (!isLoggedIn.value) return;
+  lastAppliedDeepLinkKey = key;
+
+  if (fileParam) {
+    const id = Number(fileParam);
+    if (!Number.isFinite(id) || id <= 0) return;
+    sidebarView.value = 'files';
+    if (!cloudFiles.value.length) await loadCloudFiles();
+    let target = cloudFiles.value.find((file) => Number(file.id) === id);
+    if (!target) {
+      // 缓存列表可能过期（新建 / 改名），兜底刷新一次
+      await loadCloudFiles();
+      target = cloudFiles.value.find((file) => Number(file.id) === id);
+    }
+    if (!target) {
+      console.warn(`[LightEditor] 未找到 file=${id} 对应的云文件`);
+      return;
+    }
+    if (target.is_directory) {
+      currentDir.value = dirRelativePath(target);
+      return;
+    }
+    currentDir.value = target.parent_dir || '';
+    await openCloudFile(target);
+    return;
+  }
+
+  if (instanceParam) {
+    const id = Number(instanceParam);
+    sidebarView.value = 'instances';
+    if (!Number.isFinite(id) || id <= 0) return;
+    if (!distributionOverviewLoaded.value) await loadOverview(true);
+    let inst = instances.value.find((item) => Number(item.id) === id);
+    if (!inst) {
+      await loadOverview(true);
+      inst = instances.value.find((item) => Number(item.id) === id);
+    }
+    if (!inst) {
+      console.warn(`[LightEditor] 未找到 instance=${id} 对应的配置实例`);
+      return;
+    }
+    openInstanceEditor(inst);
+    return;
+  }
+
+  if (newParam === 'file' || newParam === 'dir') {
+    sidebarView.value = 'files';
+    currentDir.value = '';
+    startDraft(newParam);
+  }
+}
+
+watch(
+  () => [route.query.file, route.query.instance, route.query.new],
+  () => { void applyEditorDeepLink(); }
+);
+
+onMounted(async () => {
   loadPlugins();
   if (isLoggedIn.value) {
-    loadCloudFiles();
-    // 配置实例总览：失败静默（实例视图内会展示错误与重试入口）
-    loadOverview(true);
+    // 深链需要等云文件 / 配置实例数据落定后再应用
+    await Promise.all([loadCloudFiles(), loadOverview(true)]);
+    await applyEditorDeepLink();
   }
 });
 </script>

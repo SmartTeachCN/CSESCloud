@@ -4,8 +4,9 @@
 module.exports = {
   temp_admin: {
     enabled: true,
-    username: 'temp_admin',
-    password_hash: '$2y$12$RleQfEL0Gr0Vj4f9mcesKOKsNqq0QylpLBMQj19XaFEfnmWkZ1aMi',
+    // 临时管理员账密（默认 admin / admin，部署后请尽快在管理后台改密或禁用临时管理员模式）
+    username: 'admin',
+    password_hash: '$2b$12$ZCqkUL08rusjE0qBJDamxeeq3eju1ClEYqdAxcEYLTuCpQHFeyD2e',
   },
   ai: {
     default_model: 'DeepSeek',

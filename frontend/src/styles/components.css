@@ -171,6 +171,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* 建立定位上下文：供内部 .badge 等绝对定位元素贴合按钮右上角 */
+  position: relative;
   width: 36px;
   height: 36px;
   border: none;
@@ -356,11 +358,15 @@
   border-radius: var(--radius-full);
 }
 
-/* 通知标记 */
+/* 通知标记（依赖已定位的父级 .icon-btn） */
 .badge {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: -2px;
+  right: -2px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
@@ -368,11 +374,12 @@
   color: white;
   font-size: 10px;
   font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
   border-radius: var(--radius-full);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid var(--app-bg);
+  /* 描边贴合顶栏背景，避免角标与按钮边缘黏连 */
+  border: 2px solid var(--layer-default);
+  pointer-events: none;
 }
 
 /* 返回按钮 */

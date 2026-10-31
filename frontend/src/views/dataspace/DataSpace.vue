@@ -439,7 +439,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useAuth } from '../../composables/useAuth';
 import { useTabContextMenu } from '../../composables/useTabContextMenu';
 import { dataSpaceApi } from '../../api';
@@ -453,6 +453,7 @@ import WorkspaceConfig from '../../components/editor/panels/WorkspaceConfig.vue'
 import ShareDialog from '../../components/editor/panels/ShareDialog.vue';
 
 const router = useRouter();
+const route = useRoute();
 const { user } = useAuth();
 const isAlliance = computed(() => user.value?.type === 'alliance');
 const showShareDialog = ref(false);
@@ -1235,6 +1236,87 @@ function showToast(type: string, message: string) {
   setTimeout(() => { toast.value = null; }, 3000);
 }
 
+/* ===== 深链：?path=<节点 path> / ?space=<网页空间 id> ===== */
+let lastAppliedDeepLinkKey = '';
+
+function queryText(value: unknown): string {
+  if (Array.isArray(value)) return value.length ? String(value[0]) : '';
+  return typeof value === 'string' ? value : '';
+}
+
+function findNodeByPath(nodes: any[], targetPath: string): any {
+  for (const node of nodes || []) {
+    if (!node) continue;
+    if (node.path === targetPath) return node;
+    if (node.children) {
+      const found = findNodeByPath(node.children, targetPath);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function findWebSpaceNode(nodes: any[], spaceId: number): any {
+  if (!Number.isFinite(spaceId)) return null;
+  for (const node of nodes || []) {
+    if (!node) continue;
+    if (node.source === 'webspace' && Number(node.space_id) === spaceId) return node;
+    if (node.children) {
+      const found = findWebSpaceNode(node.children, spaceId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// 目标节点的祖先目录路径（用于自动展开），找不到返回 null
+function findAncestorPaths(nodes: any[], targetPath: string, trail: string[] = []): string[] | null {
+  for (const node of nodes || []) {
+    if (!node) continue;
+    if (node.path === targetPath) return trail;
+    if (node.children) {
+      const found = findAncestorPaths(node.children, targetPath, [...trail, node.path]);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+async function applyDataSpaceDeepLink(): Promise<void> {
+  const pathParam = queryText(route.query.path);
+  const spaceParam = queryText(route.query.space);
+  const key = `${pathParam}|${spaceParam}`;
+  if (!key.replace(/\|/g, '').trim()) return;
+  if (key === lastAppliedDeepLinkKey) return;
+  if (!treeData.value.length) return;
+  lastAppliedDeepLinkKey = key;
+
+  const findTarget = (): any => (pathParam
+    ? findNodeByPath(treeData.value, pathParam)
+    : findWebSpaceNode(treeData.value, Number(spaceParam)));
+
+  let target = findTarget();
+  if (!target) {
+    // 缓存的树可能已过期（新增文件 / 空间），刷新一次再定位
+    await refreshTree();
+    target = findTarget();
+  }
+  if (!target) return; // 找不到静默忽略
+
+  const ancestors = findAncestorPaths(treeData.value, target.path) || [];
+  const nextExpanded = new Set(expandedDirs.value);
+  for (const ancestor of ancestors) nextExpanded.add(ancestor);
+  if (target.is_directory) nextExpanded.add(target.path);
+  expandedDirs.value = nextExpanded;
+  selectedDir.value = target.path;
+  if (!target.is_directory) void openFile(target);
+}
+
+watch(
+  () => [route.query.path, route.query.space],
+  () => { void applyDataSpaceDeepLink(); }
+);
+
 // ===== 初始化 =====
 onMounted(async () => {
   if (!isAlliance.value) {
@@ -1242,6 +1324,7 @@ onMounted(async () => {
     return;
   }
   await Promise.all([refreshTree(), loadUsage()]);
+  await applyDataSpaceDeepLink();
 });
 </script>
 

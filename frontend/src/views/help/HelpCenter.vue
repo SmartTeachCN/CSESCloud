@@ -12,8 +12,10 @@
           v-model="searchQuery"
           type="text"
           placeholder="搜索文档..."
+          aria-label="搜索帮助文档"
+          @input="onSearchInput"
         />
-        <button v-if="searchQuery" class="doc-search-clear" @click="searchQuery = ''" title="清除">
+        <button v-if="searchQuery" class="doc-search-clear" @click="clearSearch" title="清除">
           <Icon icon="ri-close-line" :size="14" />
         </button>
       </div>
@@ -168,7 +170,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { marked } from 'marked';
 import { helpApi } from '../../api';
 
@@ -182,6 +185,9 @@ interface HelpCategory {
   article_count: number;
   articles: { id: number; title: string; sort_order: number }[];
 }
+
+const route = useRoute();
+const router = useRouter();
 
 const searchQuery = ref('');
 const categories = ref<HelpCategory[]>([]);
@@ -225,22 +231,25 @@ async function loadTree() {
   }
 }
 
-function selectCategory(cat: HelpCategory) {
+function selectCategory(cat: HelpCategory, syncUrl = true) {
   activeCategory.value = cat;
   activeArticle.value = null;
   feedback.value = false;
+  if (syncUrl) syncDocQuery();
 }
 
 function goBackToCategories() {
   activeCategory.value = null;
   activeArticle.value = null;
   feedback.value = false;
+  syncDocQuery();
 }
 
-async function selectArticle(art: { id: number; title: string }) {
+async function selectArticle(art: { id: number; title: string }, syncUrl = true) {
   activeArticle.value = { id: art.id, title: art.title, content: '', updated_at: '' };
   articleLoading.value = true;
   feedback.value = false;
+  if (syncUrl) syncDocQuery();
   try {
     const detail = await helpApi.get(art.id);
     activeArticle.value = { ...detail };
@@ -252,11 +261,116 @@ async function selectArticle(art: { id: number; title: string }) {
   }
 }
 
-watch(searchQuery, () => {
-  if (activeCategory.value) activeArticle.value = null;
-});
+/* ===== URL 深链（?doc=<id> / ?q=<关键词>） ===== */
 
-loadTree();
+function queryText(value: unknown): string {
+  if (Array.isArray(value)) return value.length ? String(value[0]) : '';
+  return typeof value === 'string' ? value : '';
+}
+
+function queryDocId(): number {
+  const id = Number.parseInt(queryText(route.query.doc), 10);
+  return Number.isFinite(id) && id > 0 ? id : 0;
+}
+
+// 当前展示节点的 ID（文章优先，其次一级目录），用于同步 ?doc=
+function currentDocId(): number {
+  const articleId = Number(activeArticle.value?.id);
+  if (Number.isFinite(articleId) && articleId > 0) return articleId;
+  const categoryId = Number(activeCategory.value?.id);
+  return Number.isFinite(categoryId) && categoryId > 0 ? categoryId : 0;
+}
+
+// 把当前打开的分类/文章写回 URL，保证刷新与复制链接都能还原
+function syncDocQuery() {
+  const target = currentDocId();
+  if (queryDocId() === target) return;
+  const nextQuery = { ...route.query };
+  if (target) nextQuery.doc = String(target);
+  else delete nextQuery.doc;
+  router.replace({ path: route.path, query: nextQuery }).catch(() => {
+    // 重复导航等错误无需提示
+  });
+}
+
+// 按 ID 打开文档：先按文章 ID 匹配，未命中再回退为一级目录 ID
+function openDocById(id: number): boolean {
+  if (!id) return false;
+  for (const cat of categories.value) {
+    const article = (cat.articles || []).find((item) => item.id === id);
+    if (article) {
+      if (Number(activeArticle.value?.id) === id) return true;
+      selectCategory(cat, false);
+      selectArticle(article, false);
+      return true;
+    }
+  }
+  const category = categories.value.find((cat) => cat.id === id);
+  if (category) {
+    const alreadyOpen = activeCategory.value?.id === category.id && !activeArticle.value;
+    if (!alreadyOpen) selectCategory(category, false);
+    return true;
+  }
+  return false;
+}
+
+// 读取路由上的 q / doc 查询参数（直接访问与刷新都会走到这里）
+function applyRouteQuery() {
+  const keyword = queryText(route.query.q);
+  if (keyword && keyword !== searchQuery.value) searchQuery.value = keyword;
+  const docId = queryDocId();
+  if (docId && !openDocById(docId)) {
+    console.warn(`[HelpCenter] 未找到 doc=${docId} 对应的帮助文档`);
+  }
+}
+
+// 手动输入搜索词时回到列表视图，避免文章内容与筛选结果不一致
+function onSearchInput() {
+  if (activeCategory.value && activeArticle.value) {
+    activeArticle.value = null;
+    syncDocQuery();
+  }
+}
+
+function clearSearch() {
+  searchQuery.value = '';
+  if (activeCategory.value) {
+    activeArticle.value = null;
+    syncDocQuery();
+  }
+}
+
+// 顶栏搜索在帮助页内跳转时只有 query 变化，同样要打开对应文档
+watch(
+  () => route.query.doc,
+  () => {
+    if (!categories.value.length) return;
+    const docId = queryDocId();
+    if (docId) {
+      openDocById(docId);
+      return;
+    }
+    // doc 被移除（例如从顶栏跳到帮助首页）时回到目录视图
+    if (activeArticle.value || activeCategory.value) {
+      activeArticle.value = null;
+      activeCategory.value = null;
+      feedback.value = false;
+    }
+  }
+);
+
+watch(
+  () => route.query.q,
+  (value) => {
+    const keyword = queryText(value);
+    if (keyword !== searchQuery.value) searchQuery.value = keyword;
+  }
+);
+
+onMounted(async () => {
+  await loadTree();
+  applyRouteQuery();
+});
 </script>
 
 <style scoped>
