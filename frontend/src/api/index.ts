@@ -33,6 +33,9 @@ export const aiApi = {
   /** 置顶 / 取消置顶 */
   pinSession: (sessionId: number, pinned: boolean) =>
     api.post<any>('/ai/chat?action=pin', { session_id: sessionId, pinned }),
+  /** 拖拽排序：按给定顺序保存会话（同一置顶分组内） */
+  reorderSessions: (ids: number[]) =>
+    api.post<any>('/ai/chat?action=reorder', { ids }),
   /** 让 AI 重新生成会话标题 */
   generateTitle: (sessionId: number) =>
     api.post<any>('/ai/chat?action=generate-title', { session_id: sessionId }),

@@ -224,12 +224,26 @@ async function case5() {
   record('回填合并：无本地回合时直接用服务端', merged3.blocks.length === 2 && merged3.messageId === 7);
 }
 
+// ── 用例 6：会话拖拽排序的纯函数 ──
+async function case6() {
+  const { moveItem } = await import('./src/utils/reorder.ts');
+  const list = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
+  const ids = (arr) => arr.map((x) => x.id).join(',');
+  record('拖拽：向下移动（4 放到 2 之前）', ids(moveItem(list, 4, 2, 'before')) === '1,4,2,3', { got: ids(moveItem(list, 4, 2, 'before')) });
+  record('拖拽：向上移动（1 放到 3 之后）', ids(moveItem(list, 1, 3, 'after')) === '2,3,1,4', { got: ids(moveItem(list, 1, 3, 'after')) });
+  record('拖拽：相邻位置无变化', ids(moveItem(list, 2, 3, 'before')) === '1,2,3,4', { got: ids(moveItem(list, 2, 3, 'before')) });
+  record('拖拽：目标不存在时保持原顺序', ids(moveItem(list, 1, 999, 'before')) === '1,2,3,4', { got: ids(moveItem(list, 1, 999, 'before')) });
+  record('拖拽：拖动项不存在时保持原顺序', ids(moveItem(list, 999, 2, 'before')) === '1,2,3,4');
+  record('拖拽：不修改入参数组', ids(list) === '1,2,3,4', { got: ids(list) });
+}
+
 try {
   await case1();
   await case2();
   await case3();
   await case4();
   await case5();
+  await case6();
 } catch (e) {
   record('用例执行异常', false, { error: e && e.stack ? String(e.stack).slice(0, 500) : String(e) });
 }

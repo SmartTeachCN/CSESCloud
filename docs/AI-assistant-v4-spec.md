@@ -641,3 +641,34 @@ POST /api/ai/chat?action=stream
 
 > 说明：根目录的 `_smoke_*.js` 脚本已被仓库维护者清理（发布整理），本轮未恢复；
 > 验证在清理前完成，结果如上。
+
+
+---
+
+# v4.7 会话列表支持拖拽排序
+
+## 实现
+
+- **数据**：`ai_chat_sessions` 新增 `sort_order INTEGER NOT NULL DEFAULT 0`（`ensureAiTables` 里
+  `addMissingColumn` 自动迁移，无需改 schema.sql）。0 表示「未手动排序」，回落 `pinned_at / updated_at`。
+- **接口**：新增 `POST /api/ai/chat?action=reorder { ids: number[] }`
+  —— 按数组顺序给会话写 `sort_order = index + 1`，只更新当前用户名下的会话；
+  拖动期间被删除的会话会被过滤，不整体失败；少于 2 个 id 视为无效请求。
+- **列表排序**：`ORDER BY pinned DESC, sort_order ASC, COALESCE(pinned_at,'') DESC, updated_at DESC, id DESC`。
+  置顶组仍在最前；组内先按手动顺序，未手动排序的（含新建会话）按时间排在手动排序项之前。
+- **前端**：
+  - 会话项 `draggable`，拖到目标项的上半部分 = 插到前面、下半部分 = 插到后面，蓝色插入线提示；
+  - **只允许同组拖动**（置顶组 ↔ 最近组不互通，跨组等于改置顶状态，容易误操作）；
+  - 搜索过滤时禁用拖拽（此时列表不是完整分组，排序会打乱其它会话）；
+  - 拖完抑制一次 click，避免顺带切换会话；拖动项半透明、目标项显示插入位置；
+  - 乐观更新本地 `sort_order`，接口失败时提示并回滚（重新拉列表）；
+  - 排序逻辑抽成纯函数 `frontend/src/utils/reorder.ts#moveItem`，便于单测。
+
+## 验收
+
+| 测试 | 结果 |
+|---|---|
+| 接口/排序（默认顺序、手动顺序持久化、部分排序、非法输入、新建会话位置、置顶组内排序） | **11/11** |
+| `moveItem` 纯函数（向下/向上/相邻无变化/目标不存在/拖动项不存在/不修改入参） | **6/6** |
+| `frontend/_smoke_ai_stream.mjs` 合计 | **17/17** |
+| `pnpm --dir frontend build` | 通过 |

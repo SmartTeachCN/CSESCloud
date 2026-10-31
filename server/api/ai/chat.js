@@ -113,6 +113,8 @@ function ensureAiTables() {
     ['title_generated', 'INTEGER NOT NULL DEFAULT 0'],
     ['model', 'TEXT'],
     ['reasoning', 'TEXT'],
+    // 会话列表手动排序（0 = 未手动排序，回落到 pinned_at / updated_at）
+    ['sort_order', 'INTEGER NOT NULL DEFAULT 0'],
   ]) {
     DB.addMissingColumn('ai_chat_sessions', col, type);
   }
@@ -345,15 +347,38 @@ module.exports = async (ctx) => {
   // ── 列出会话 ──
   if (method === 'GET' && action === 'sessions') {
     const scope = query.scope ?? null;
-    let sql = 'SELECT id, owner_key, scope, scope_ref, title, pinned, pinned_at, title_generated, model, reasoning, created_at, updated_at'
+    let sql = 'SELECT id, owner_key, scope, scope_ref, title, pinned, pinned_at, title_generated, model, reasoning, sort_order, created_at, updated_at'
       + ' FROM ai_chat_sessions WHERE owner_key = ?';
     const params = [ownerKey];
     if (!phpEmpty(scope)) {
       sql += ' AND scope = ?';
       params.push(scope);
     }
-    sql += ' ORDER BY pinned DESC, COALESCE(pinned_at, \'\') DESC, updated_at DESC, id DESC LIMIT 100';
+    // 置顶组在前；组内先按手动排序（sort_order>0 优先），未手动排序的回落 pinned_at / updated_at
+    sql += " ORDER BY pinned DESC, sort_order ASC, COALESCE(pinned_at, '') DESC, updated_at DESC, id DESC LIMIT 200";
     Response.success(DB.all(sql, params));
+  }
+
+  // ── 会话列表拖拽排序 ──
+  if (method === 'POST' && action === 'reorder') {
+    const rawIds = Array.isArray(body.ids) ? body.ids : [];
+    const ids = [];
+    for (const raw of rawIds.slice(0, 200)) {
+      const id = parseInt(raw, 10) || 0;
+      if (id > 0 && !ids.includes(id)) ids.push(id);
+    }
+    if (ids.length < 2) Response.error('至少需要两个会话才能排序');
+    const owned = new Set(
+      DB.all('SELECT id FROM ai_chat_sessions WHERE owner_key = ?', [ownerKey]).map((r) => Number(r.id))
+    );
+    const valid = ids.filter((id) => owned.has(id));
+    // 会话可能在拖动期间被删除：过滤掉无效 id 后，剩余的照常保存（不整体失败）
+    if (!valid.length) Response.error('会话不存在或无权限', 403, 403);
+    // 只更新属于当前用户、且顺序有变化的会话
+    valid.forEach((id, index) => {
+      DB.update('ai_chat_sessions', { sort_order: index + 1 }, 'id = ? AND owner_key = ?', [id, ownerKey]);
+    });
+    Response.success({ updated: valid.length, order: valid });
   }
 
   // ── 列出消息 ──

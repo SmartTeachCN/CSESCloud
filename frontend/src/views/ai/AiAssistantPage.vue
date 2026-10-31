@@ -37,9 +37,23 @@
           <div
             v-else
             class="session-item"
-            :class="{ active: currentSessionId === row.session.id, pinned: !!row.session.pinned }"
-            @click="switchSession(row.session.id)"
+            :class="{
+              active: currentSessionId === row.session.id,
+              pinned: !!row.session.pinned,
+              dragging: dragSessionId === row.session.id,
+              'drop-before': dragOverKey === row.key && dragOverPos === 'before',
+              'drop-after': dragOverKey === row.key && dragOverPos === 'after',
+              'can-drag': !searchQuery.trim(),
+            }"
+            :draggable="!searchQuery.trim()"
+            :title="searchQuery.trim() ? '' : '拖动可调整会话顺序'"
+            @click="onSessionClick(row.session)"
             @contextmenu.prevent.stop="onSessionContextMenu($event, row.session)"
+            @dragstart="onSessionDragStart($event, row.session)"
+            @dragover="onSessionDragOver($event, row.session)"
+            @dragleave="onSessionDragLeave(row)"
+            @drop="onSessionDrop($event, row.session)"
+            @dragend="onSessionDragEnd"
           >
             <div class="session-icon">
               <Icon
@@ -239,7 +253,7 @@
                 type="file"
                 ref="fileInput"
                 class="hidden-file-input"
-                accept=".docx,.xlsx,.pptx,.md,.markdown,.txt,.csv,.tsv,.json,.yaml,.yml,.xml,.html,.htm,.css,.js,.ts,.vue,.py,.java,.c,.cpp,.cs,.go,.rs,.php,.sql,.ini,.toml,.log"
+                accept=".docx,.xlsx,.pptx,.md,.markdown,.txt,.csv,.tsv,.json,.yaml,.yml,.xml,.html,.htm,.css,.js,.ts,.vue,.py,.java,.c,.cpp,.cs,.go,.rs,.php,.sql,.ini,.toml,.log,.ckv"
                 @change="handleFileUpload"
                 multiple
               />
@@ -414,6 +428,7 @@ import SessionContextMenu, { type ContextMenuItem } from '../../components/ai/Se
 import CustomSelect from '../../components/CustomSelect.vue';
 import { aiApi } from '../../api';
 import { useAiStream, parseStoredMessage, pickRicherTurn } from '../../composables/useAiStream';
+import { moveItem } from '../../utils/reorder';
 
 const route = useRoute();
 
@@ -548,14 +563,19 @@ function byUpdatedDesc(a: any, b: any): number {
   return String(b.updated_at || '').localeCompare(String(a.updated_at || ''));
 }
 
+/** 手动排序优先（sort_order>0），未手动排序的按时间回落到组内默认顺序 —— 与服务端 ORDER BY 保持一致 */
+function bySortOrderThen(a: any, b: any, fallback: (x: any, y: any) => number): number {
+  const diff = (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0);
+  if (diff !== 0) return diff;
+  return fallback(a, b);
+}
+
 const pinnedSessions = computed(() =>
-  filteredSessions.value.filter(s => !!s.pinned).sort((a, b) => {
-    const pa = String(b.pinned_at || b.updated_at || '');
-    const pb = String(a.pinned_at || a.updated_at || '');
-    return pa.localeCompare(pb);
-  }),
+  filteredSessions.value.filter(s => !!s.pinned).sort((a, b) =>
+    bySortOrderThen(a, b, (x, y) => String(y.pinned_at || y.updated_at || '').localeCompare(String(x.pinned_at || x.updated_at || ''))),
+  ),
 );
-const recentSessions = computed(() => filteredSessions.value.filter(s => !s.pinned).sort(byUpdatedDesc));
+const recentSessions = computed(() => filteredSessions.value.filter(s => !s.pinned).sort((a, b) => bySortOrderThen(a, b, byUpdatedDesc)));
 
 interface SessionRow {
   type: 'group' | 'session';
@@ -576,6 +596,102 @@ const sessionRows = computed<SessionRow[]>(() => {
   }
   return rows;
 });
+
+// ===== 会话拖拽排序 =====
+/** 正在拖动的会话 id */
+const dragSessionId = ref<number | null>(null);
+/** 拖动源所在分组：置顶组和最近组不能互相拖（跨组等于改置顶状态，容易误操作） */
+const dragGroup = ref<'pinned' | 'recent' | ''>('');
+/** 当前悬停的目标行 key（与 sessionRows 的 key 一致）与插入位置 */
+const dragOverKey = ref('');
+const dragOverPos = ref<'before' | 'after'>('before');
+/** 拖动刚结束时抑制一次 click，避免拖完顺带切换会话 */
+let suppressClickAfterDrag = false;
+
+function sessionGroupOf(session: any): 'pinned' | 'recent' {
+  return session && session.pinned ? 'pinned' : 'recent';
+}
+
+function resetDragState() {
+  dragSessionId.value = null;
+  dragGroup.value = '';
+  dragOverKey.value = '';
+  dragOverPos.value = 'before';
+}
+
+function onSessionClick(session: any) {
+  if (suppressClickAfterDrag) {
+    suppressClickAfterDrag = false;
+    return;
+  }
+  switchSession(session.id);
+}
+
+function onSessionDragStart(event: DragEvent, session: any) {
+  // 搜索过滤时顺序不是完整分组，禁止拖拽以免打乱其它会话
+  if (searchQuery.value.trim()) {
+    event.preventDefault();
+    return;
+  }
+  dragSessionId.value = Number(session.id);
+  dragGroup.value = sessionGroupOf(session);
+  suppressClickAfterDrag = true;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    try { event.dataTransfer.setData('text/plain', String(session.id)); } catch (_) { /* ignore */ }
+  }
+}
+
+function onSessionDragOver(event: DragEvent, session: any) {
+  if (!dragSessionId.value) return;
+  if (sessionGroupOf(session) !== dragGroup.value || Number(session.id) === dragSessionId.value) {
+    dragOverKey.value = '';
+    return;
+  }
+  const el = event.currentTarget as HTMLElement;
+  const rect = el.getBoundingClientRect();
+  dragOverPos.value = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+  dragOverKey.value = 'session-' + session.id;
+  // 必须 preventDefault 才允许 drop
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+}
+
+function onSessionDragLeave(row: SessionRow) {
+  if (dragOverKey.value === row.key) dragOverKey.value = '';
+}
+
+async function onSessionDrop(event: DragEvent, target: any) {
+  event.preventDefault();
+  const draggedId = dragSessionId.value;
+  const pos = dragOverPos.value;
+  const group = dragGroup.value;
+  resetDragState();
+  if (!draggedId || !group) return;
+  if (Number(target.id) === Number(draggedId)) return;
+  if (sessionGroupOf(target) !== group) return;
+
+  const list = (group === 'pinned' ? pinnedSessions.value : recentSessions.value).slice();
+  const fromIndex = list.findIndex((s) => Number(s.id) === Number(draggedId));
+  if (fromIndex < 0) return;
+  const reordered = moveItem(list, draggedId, target.id, pos);
+  if (!reordered.length) return;
+
+  // 乐观更新：本地 sort_order 立即生效，服务端失败再回滚
+  reordered.forEach((s, index) => { s.sort_order = index + 1; });
+  try {
+    await aiApi.reorderSessions(reordered.map((s) => Number(s.id)));
+  } catch (err: any) {
+    showHint('会话排序保存失败：' + (err?.message || '网络错误'));
+    await loadSessions();
+  }
+}
+
+function onSessionDragEnd() {
+  resetDragState();
+  // click 可能紧跟 dragend 触发，延后一帧再恢复
+  window.setTimeout(() => { suppressClickAfterDrag = false; }, 0);
+}
 
 // ===== 右键菜单 =====
 type MenuMode = 'none' | 'session' | 'blank' | 'message';
@@ -1463,7 +1579,7 @@ function triggerFileUpload() {
 /** 支持的附件类型提示（与服务端抽取能力一致） */
 const ATTACHMENT_EXTS = [
   'docx', 'xlsx', 'pptx', 'md', 'markdown', 'txt', 'csv', 'tsv', 'json', 'yaml', 'yml', 'xml',
-  'html', 'htm', 'css', 'js', 'ts', 'vue', 'py', 'java', 'c', 'cpp', 'cs', 'go', 'rs', 'php', 'sql',
+  'html', 'htm', 'css', 'js', 'ts', 'vue', 'py', 'java', 'c', 'cpp', 'cs', 'go', 'rs', 'php', 'sql', 'ckv',
 ];
 
 function attachmentIcon(ext: string): string {
@@ -1475,7 +1591,7 @@ function attachmentIcon(ext: string): string {
   if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'ri-file-zip-line';
   if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(ext)) return 'ri-image-line';
   if (['mp4', 'mov', 'avi', 'webm'].includes(ext)) return 'ri-video-line';
-  if (['html', 'htm', 'css', 'js', 'ts', 'json', 'xml', 'yml', 'yaml', 'vue', 'py', 'java', 'cpp', 'c', 'go', 'rs', 'php', 'sql'].includes(ext)) {
+  if (['html', 'htm', 'css', 'js', 'ts', 'json', 'xml', 'yml', 'yaml', 'vue', 'py', 'java', 'cpp', 'c', 'go', 'rs', 'php', 'sql', 'ckv'].includes(ext)) {
     return 'ri-code-line';
   }
   return 'ri-file-2-line';
@@ -3185,5 +3301,38 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* ===== 会话拖拽排序 ===== */
+.session-item {
+  position: relative;
+}
+
+.session-item.can-drag {
+  cursor: grab;
+}
+
+.session-item.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+.session-item.drop-before::before,
+.session-item.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--primary, #0067c0);
+  pointer-events: none;
+}
+
+.session-item.drop-before::before {
+  top: -1px;
+}
+
+.session-item.drop-after::after {
+  bottom: -1px;
 }
 </style>
