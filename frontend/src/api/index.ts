@@ -1,4 +1,4 @@
-import { api } from './client';
+import { api, request } from './client';
 
 export const authApi = {
   me: () => api.get<any>('/auth/me'),
@@ -52,6 +52,19 @@ export const aiApi = {
   /** 上传编辑器截图（客户端工具结果），返回 { url } */
   uploadShot: (dataUrl: string) =>
     api.post<any>('/ai/chat?action=upload-shot', { data_url: dataUrl }),
+  /**
+   * 上传对话附件（docx / xlsx / pptx / md / txt / csv …），服务端抽取文本，
+   * 返回 { id, name, chars, truncated, kind }，发送消息时把 id 放进 attachments。
+   */
+  uploadAttachment: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return request<any>('/ai/chat?action=upload-attachment', {
+      method: 'POST',
+      body: form,
+      headers: {} as any,
+    });
+  },
 
   /**
    * 统一流式请求入口（供 useAiStream 使用）

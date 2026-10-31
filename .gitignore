@@ -24,3 +24,5 @@ frontend/node_modules/
 Thumbs.db
 # AI assistant editor screenshots (runtime)
 data/ai-shots/
+# AI assistant uploaded attachments (runtime)
+data/ai-uploads/

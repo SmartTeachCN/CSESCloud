@@ -150,6 +150,12 @@
               <Icon icon="ri-user-line" :size="18" />
             </div>
             <div class="message-content">
+              <div v-if="entry.attachments && entry.attachments.length" class="message-attachments">
+                <span v-for="(att, ai) in entry.attachments" :key="ai" class="message-attachment" :title="att.name">
+                  <Icon icon="ri-attachment-2" :size="12" />
+                  <span class="attachment-name">{{ att.name }}</span>
+                </span>
+              </div>
               <div class="message-bubble user-text">{{ entry.content }}</div>
               <div class="msg-hover-actions">
                 <button class="msg-action-btn" title="编辑该消息" @click.stop="startEdit(entry, index)">
@@ -233,6 +239,7 @@
                 type="file"
                 ref="fileInput"
                 class="hidden-file-input"
+                accept=".docx,.xlsx,.pptx,.md,.markdown,.txt,.csv,.tsv,.json,.yaml,.yml,.xml,.html,.htm,.css,.js,.ts,.vue,.py,.java,.c,.cpp,.cs,.go,.rs,.php,.sql,.ini,.toml,.log"
                 @change="handleFileUpload"
                 multiple
               />
@@ -432,6 +439,8 @@ interface UserEntry {
   content: string;
   /** 服务端消息 id（本地乐观插入的条目为 null） */
   messageId: number | null;
+  /** 该消息携带的上传附件（历史回显用） */
+  attachments?: Array<{ id?: number; name: string; chars?: number }>;
 }
 interface TurnEntry {
   kind: 'turn';
@@ -487,6 +496,13 @@ interface AttachedTag {
   icon: string;
   name: string;
   file?: File;
+  /** 服务端附件 id（上传成功才有）；发送消息时带上 */
+  attachmentId?: number;
+  /** 抽取出的字符数 */
+  chars?: number;
+  /** 上传状态 */
+  status?: 'uploading' | 'ready' | 'error';
+  error?: string;
 }
 const attachedTags = ref<AttachedTag[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -816,11 +832,16 @@ async function loadMessages(clearOnError = true) {
     for (const row of list || []) {
       if (!row) continue;
       if (row.role === 'user') {
+        const meta = row.meta || {};
+        const rowAttachments = Array.isArray(meta.attachments)
+          ? meta.attachments.map((a: any) => ({ id: a && a.id, name: String((a && a.name) || '附件'), size: a && a.size }))
+          : undefined;
         next.push({
           kind: 'user',
           key: `user-${row.id}`,
           content: row.content || '',
           messageId: row.id != null ? Number(row.id) : null,
+          attachments: rowAttachments && rowAttachments.length ? rowAttachments : undefined,
         });
       } else {
         next.push({ kind: 'turn', key: `turn-${row.id}`, turn: parseStoredMessage(row) });
@@ -1303,6 +1324,20 @@ async function sendMessage() {
 
   const sessionId = currentSessionId.value;
 
+  // 附件必须都上传完成（抽取到文本）才能发；失败的可移除后重试
+  const uploading = attachedTags.value.filter((t) => t.status === 'uploading');
+  if (uploading.length) {
+    showHint('附件还在解析中，请稍候…');
+    return;
+  }
+  const attachments = attachedTags.value
+    .filter((t) => t.attachmentId)
+    .map((t) => ({ id: t.attachmentId as number, name: t.name, chars: t.chars }));
+  const failedTags = attachedTags.value.filter((t) => t.status === 'error');
+  if (failedTags.length) {
+    showHint('有附件解析失败，已忽略：' + failedTags.map((t) => t.name).join('、'));
+  }
+
   // 编辑历史消息：先撤回到该消息（含自身），刷新后再按普通消息发送
   if (editing.value.active && editing.value.messageId && sessionId) {
     try {
@@ -1317,8 +1352,16 @@ async function sendMessage() {
     commitPendingTurn();
   }
 
-  entries.value.push({ kind: 'user', key: `user-${Date.now()}`, content, messageId: null });
+  entries.value.push({
+    kind: 'user',
+    key: `user-${Date.now()}`,
+    content,
+    messageId: null,
+    attachments: attachments.length ? attachments.map((a) => ({ id: a.id, name: a.name, chars: a.chars })) : undefined,
+  });
   clearEditor();
+  attachedTags.value = [];
+  renderResourceChips();
   scrollToBottom();
 
   try {
@@ -1327,6 +1370,7 @@ async function sendMessage() {
       model: effectiveModel.value,
       reasoning: effectiveReasoning.value,
       session_id: sessionId,
+      attachments: attachments.length ? attachments.map((a) => ({ id: a.id, name: a.name })) : undefined,
     });
   } catch (e: any) {
     // 流内错误已落到 turn.error / stream.error，这里只兜底日志
@@ -1390,29 +1434,83 @@ function triggerFileUpload() {
   showResourceSelector.value = false;
 }
 
+/** 支持的附件类型提示（与服务端抽取能力一致） */
+const ATTACHMENT_EXTS = [
+  'docx', 'xlsx', 'pptx', 'md', 'markdown', 'txt', 'csv', 'tsv', 'json', 'yaml', 'yml', 'xml',
+  'html', 'htm', 'css', 'js', 'ts', 'vue', 'py', 'java', 'c', 'cpp', 'cs', 'go', 'rs', 'php', 'sql',
+];
+
+function attachmentIcon(ext: string): string {
+  if (['docx', 'doc'].includes(ext)) return 'ri-file-word-2-line';
+  if (['xlsx', 'xls', 'csv', 'tsv'].includes(ext)) return 'ri-file-excel-2-line';
+  if (['pptx', 'ppt'].includes(ext)) return 'ri-file-ppt-2-line';
+  if (['md', 'markdown'].includes(ext)) return 'ri-markdown-line';
+  if (['pdf'].includes(ext)) return 'ri-file-pdf-2-line';
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'ri-file-zip-line';
+  if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(ext)) return 'ri-image-line';
+  if (['mp4', 'mov', 'avi', 'webm'].includes(ext)) return 'ri-video-line';
+  if (['html', 'htm', 'css', 'js', 'ts', 'json', 'xml', 'yml', 'yaml', 'vue', 'py', 'java', 'cpp', 'c', 'go', 'rs', 'php', 'sql'].includes(ext)) {
+    return 'ri-code-line';
+  }
+  return 'ri-file-2-line';
+}
+
+/** 上传单个附件到服务端做文本抽取（docx/xlsx/pptx/md/txt…） */
+async function uploadAttachmentTag(tag: AttachedTag) {
+  if (!tag.file) return;
+  tag.status = 'uploading';
+  try {
+    const res = await aiApi.uploadAttachment(tag.file);
+    tag.attachmentId = Number(res?.id) || undefined;
+    tag.chars = Number(res?.chars) || 0;
+    tag.status = 'ready';
+    if (res?.truncated) showHint(`「${tag.name}」内容较长，已截断后提供给 AI`);
+  } catch (e: any) {
+    tag.status = 'error';
+    tag.error = e?.message || '上传失败';
+    // 不支持的类型直接移除标签并提示，避免用户以为已附加
+    if (/不支持|PDF|文件过大|解析失败/.test(String(tag.error))) {
+      showHint(`「${tag.name}」无法解析：${tag.error}`);
+    }
+  }
+  renderResourceChips();
+}
+
 function handleFileUpload(event: Event) {
   const target = event.target as HTMLInputElement;
   const files = target.files;
   if (!files) return;
+  const added: AttachedTag[] = [];
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     const ext = file.name.split('.').pop()?.toLowerCase() || '';
-    let icon = 'ri-file-2-line';
-    if (['jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'].includes(ext)) icon = 'ri-image-line';
-    else if (['mp4', 'mov', 'avi', 'webm'].includes(ext)) icon = 'ri-video-line';
-    else if (['pdf'].includes(ext)) icon = 'ri-file-pdf-2-line';
-    else if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) icon = 'ri-file-zip-line';
-    else if (['doc', 'docx'].includes(ext)) icon = 'ri-file-word-2-line';
-    else if (['xls', 'xlsx', 'csv'].includes(ext)) icon = 'ri-file-excel-2-line';
-    else if (
-      ['js', 'ts', 'jsx', 'tsx', 'vue', 'py', 'java', 'cpp', 'c', 'h', 'html', 'css', 'json', 'xml', 'yml', 'yaml', 'toml', 'php'].includes(ext)
-    )
-      icon = 'ri-code-line';
-    attachedTags.value.push({ type: 'file', icon, name: file.name, file });
+    if (file.size > 10 * 1024 * 1024) {
+      showHint(`「${file.name}」超过 10MB 上限，未添加`);
+      continue;
+    }
+    if (ext === 'pdf') {
+      showHint(`暂不支持 PDF：请把「${file.name}」另存为 docx/txt/md 后再上传`);
+      continue;
+    }
+    if (!ATTACHMENT_EXTS.includes(ext)) {
+      showHint(`不支持的文件类型：.${ext || '未知'}（支持 docx/xlsx/pptx/md/txt/csv/json/yaml/html/代码文件）`);
+      continue;
+    }
+    const tag: AttachedTag = {
+      type: 'file',
+      icon: attachmentIcon(ext),
+      name: file.name,
+      file,
+      status: 'uploading',
+    };
+    attachedTags.value.push(tag);
+    added.push(tag);
   }
   // 重置 input 以便可以重复选择同一文件
   target.value = '';
   renderResourceChips();
+  // 并行上传，上传完各自更新标签状态
+  added.forEach((tag) => { void uploadAttachmentTag(tag); });
 }
 
 // ===== 语音输入切换 =====
@@ -3032,5 +3130,34 @@ onBeforeUnmount(() => {
 .page-toast-leave-to {
   opacity: 0;
   transform: translateX(-50%) translateY(6px);
+}
+
+/* ===== 消息附件（上传文档）===== */
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+
+.message-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--subtle-secondary);
+  border: 1px solid var(--divider-stroke);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.message-attachment .attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

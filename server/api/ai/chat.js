@@ -57,6 +57,23 @@ function ownerHash(ownerKey) {
   return crypto.createHash('sha1').update(String(ownerKey || '')).digest('hex').slice(0, 16);
 }
 
+/**
+ * 从请求推导站点 base URL（用于给用户生成可点开的完整链接）。
+ * 支持反向代理的 X-Forwarded-* 头；拿不到时返回空串（退化为相对路径）。
+ */
+function requestBaseUrl(req) {
+  try {
+    const proto = String((req.headers['x-forwarded-proto'] || '') || (req.secure ? 'https' : 'http'))
+      .split(',')[0].trim() || 'http';
+    const host = String((req.headers['x-forwarded-host'] || '') || req.headers.host || '')
+      .split(',')[0].trim();
+    if (!host) return '';
+    return proto + '://' + host;
+  } catch (_) {
+    return '';
+  }
+}
+
 /** 确保 AI 相关表存在（老库升级兜底） */
 function ensureAiTables() {
   DB.pdo().exec(`CREATE TABLE IF NOT EXISTS ai_chat_sessions (
@@ -100,6 +117,30 @@ function ensureAiTables() {
     DB.addMissingColumn('ai_chat_sessions', col, type);
   }
   DB.addMissingColumn('ai_chat_messages', 'meta', 'TEXT');
+  // v4.5：用户上传附件（文本抽取结果存 text，原文件落盘）
+  DB.pdo().exec(`CREATE TABLE IF NOT EXISTS ai_attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_key TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        mime TEXT,
+        size INTEGER NOT NULL DEFAULT 0,
+        text TEXT,
+        stored_path TEXT,
+        truncated INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+    )`);
+  try { DB.pdo().exec('CREATE INDEX IF NOT EXISTS idx_ai_attachments_owner ON ai_attachments(owner_key)'); } catch (_) { /* ignore */ }
+  // 懒清理：7 天前的附件记录（原文件一并清掉）
+  try {
+    const stale = DB.all("SELECT id, stored_path FROM ai_attachments WHERE created_at < datetime('now', '-7 days')");
+    const AI = require('../../lib/ai-attachments');
+    for (const row of stale) {
+      if (row.stored_path) {
+        try { fs.unlinkSync(path.join(AI.UPLOAD_DIR, row.stored_path)); } catch (_) { /* ignore */ }
+      }
+      DB.delete('ai_attachments', 'id = ?', [row.id]);
+    }
+  } catch (_) { /* ignore */ }
 }
 
 /** 取会话（校验归属） */
@@ -422,6 +463,23 @@ module.exports = async (ctx) => {
     Response.success({ id, url: '/api/ai/chat?action=shot&id=' + encodeURIComponent(id), size: buf.length });
   }
 
+  // ── 上传附件（docx / xlsx / pptx / md / txt / csv / json …）──
+  if (method === 'POST' && action === 'upload-attachment') {
+    const AIAttach = require('../../lib/ai-attachments');
+    const file = ctx.files && (ctx.files.file || Object.values(ctx.files)[0]);
+    if (!file || !Buffer.isBuffer(file.tmp_name)) {
+      Response.error('没有收到文件（请用 multipart/form-data，字段名 file）');
+    }
+    const saved = AIAttach.saveAttachment({
+      DB,
+      ownerKey,
+      ownerHash: ownerHash(ownerKey),
+      file: { name: file.name, buffer: file.tmp_name, size: file.size, mime: file.type },
+    });
+    if (!saved.ok) Response.error(saved.error || '附件解析失败');
+    Response.success(saved);
+  }
+
   // ── 流式发送（普通发送 / 重试指定 AI 消息） ──
   if (method === 'POST' && action === 'stream') {
     const retryMessageId = parseInt(body.retry_message_id ?? 0, 10) || 0;
@@ -462,6 +520,9 @@ module.exports = async (ctx) => {
       const editorContext = lastUserMeta.editor_context && typeof lastUserMeta.editor_context === 'object'
         ? lastUserMeta.editor_context
         : null;
+      // 重试时沿用原消息的上传附件
+      const AIAttachR = require('../../lib/ai-attachments');
+      const retryAttachments = AIAttachR.loadAttachments(DB, ownerKey, (lastUserMeta.attachments || []).map((a) => a && a.id));
       const history = loadHistoryBefore(sessionId, lastUser.id, 20);
       if (body.model) model = String(body.model);
       if (body.reasoning) reasoning = String(body.reasoning);
@@ -477,6 +538,8 @@ module.exports = async (ctx) => {
           sse: sseRetry,
           editorContext,
           hasEditor,
+          baseUrl: requestBaseUrl(req),
+          attachmentRows: retryAttachments,
         });
       } catch (e) {
         console.error('[ai] retry startTurn 异常:', e);
@@ -517,13 +580,24 @@ module.exports = async (ctx) => {
       if (!session) Response.error('会话不存在或无权限', 403, 403);
     }
 
+    // 上传附件：只取当前用户名下、本消息引用的那几个
+    const AIAttach = require('../../lib/ai-attachments');
+    const attachmentIds = Array.isArray(body.attachments)
+      ? body.attachments.map((a) => (a && typeof a === 'object' ? a.id : a))
+      : [];
+    const attachmentRows = AIAttach.loadAttachments(DB, ownerKey, attachmentIds);
+    const attachmentMeta = attachmentRows.map((r) => ({ id: r.id, name: r.file_name, size: r.size, truncated: !!r.truncated }));
+
     // 保存用户消息 + 更新会话
     // 注意：只存「用户真正问的话」，[编辑器上下文] 片段（可能含整份文件内容）放进 meta，
     // 否则会话历史与聊天气泡里会出现一大段上下文/系统提示词。
     const now = nowStr();
     const userQuestion = cleanUserText(content);
+    const userMeta = {};
+    if (editorContext) userMeta.editor_context = editorContext;
+    if (attachmentMeta.length) userMeta.attachments = attachmentMeta;
     saveMessage(sessionId, 'user', userQuestion !== '' ? userQuestion : '（本轮只提供了编辑器上下文）',
-      editorContext ? { editor_context: editorContext } : null);
+      Object.keys(userMeta).length ? userMeta : null);
     DB.update('ai_chat_sessions', { updated_at: now, model, reasoning }, 'id = ?', [sessionId]);
 
     // 历史里最后一条就是刚存的用户消息（已清洗），去掉它；本轮问题单独用原始 content 交给 Agent
@@ -543,6 +617,8 @@ module.exports = async (ctx) => {
         sse,
         editorContext,
         hasEditor,
+        baseUrl: requestBaseUrl(req),
+        attachmentRows,
       });
     } catch (e) {
       console.error('[ai] startTurn 异常:', e);

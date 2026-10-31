@@ -112,6 +112,11 @@ export interface AiStreamOptions {
   hasEditor?: () => boolean;
 }
 
+export interface AiAttachmentRef {
+  id: number;
+  name?: string;
+}
+
 export interface AiRunBody {
   content: string;
   model?: string;
@@ -121,6 +126,8 @@ export interface AiRunBody {
   scope_ref?: number | null;
   /** 传了就进入「重试」模式：服务端会删掉该 AI 回复及其后文，用上一条用户消息重新生成 */
   retry_message_id?: number | null;
+  /** 上传附件（服务端已解析过文本的 id 列表） */
+  attachments?: AiAttachmentRef[];
 }
 
 export interface AiStreamApi {
@@ -571,6 +578,9 @@ export function useAiStream(opts: AiStreamOptions): AiStreamApi {
       has_editor: !!opts.hasEditor?.(),
     };
     if (body.retry_message_id) reqBody.retry_message_id = body.retry_message_id;
+    if (Array.isArray(body.attachments) && body.attachments.length) {
+      reqBody.attachments = body.attachments.map((a) => ({ id: a.id, name: a.name || '' }));
+    }
 
     try {
       for (;;) {
