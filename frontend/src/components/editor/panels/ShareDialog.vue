@@ -40,15 +40,12 @@
             <!-- 有效期 -->
             <div class="form-group">
               <label class="form-label">有效期</label>
-              <select v-model="expiryDays" class="form-select">
-                <option :value="1">1 天</option>
-                <option :value="3">3 天</option>
-                <option :value="7">7 天</option>
-                <option :value="14">14 天</option>
-                <option :value="30">1 个月</option>
-                <option :value="60">2 个月</option>
-                <option :value="90">3 个月</option>
-              </select>
+              <CustomSelect
+                v-model="expiryDays"
+                :options="expiryOptions"
+                class="form-select"
+                height="32px"
+              />
             </div>
 
             <!-- 默认权限（四档） -->
@@ -108,9 +105,13 @@
                   <span class="selected-user-username">@{{ su.username }}</span>
                 </div>
                 <div class="selected-user-actions">
-                  <select v-model="su.permission" class="perm-select">
-                    <option v-for="opt in SHARE_PERMISSIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-                  </select>
+                  <CustomSelect
+                    v-model="su.permission"
+                    :options="permissionOptions"
+                    class="perm-select"
+                    inline
+                    height="24px"
+                  />
                   <button class="remove-user-btn" @click="removeUser(idx)" title="移除">
                     <Icon icon="ri-close-line" :size="12" />
                   </button>
@@ -118,11 +119,32 @@
               </div>
             </div>
 
-            <!-- 预览链接 -->
+            <!-- 分享链接 -->
             <div class="form-group">
               <label class="checkbox-item">
-                <input type="checkbox" v-model="enablePreviewLink" />
-                <span class="checkbox-label">创建预览链接（持有链接的人均可查看）</span>
+                <input type="checkbox" v-model="enableShareLink" />
+                <span class="checkbox-label">创建分享链接（持有链接的人可按下方设置查看）</span>
+              </label>
+            </div>
+
+            <!-- 分享链接设置（创建时） -->
+            <div v-if="enableShareLink" class="link-settings">
+              <div class="link-settings-title">分享链接设置</div>
+              <label class="checkbox-item setting-item">
+                <input type="checkbox" v-model="requireLogin" :disabled="allowGuestEdit" />
+                <span class="checkbox-label">仅允许已登录用户查看</span>
+              </label>
+              <label class="checkbox-item setting-item">
+                <input type="checkbox" v-model="previewOnly" />
+                <span class="checkbox-label">链接仅用作预览（不可接收、不可编辑）</span>
+              </label>
+              <label class="checkbox-item setting-item">
+                <input type="checkbox" v-model="allowAccept" :disabled="previewOnly" />
+                <span class="checkbox-label">允许通过链接接收此文件</span>
+              </label>
+              <label class="checkbox-item setting-item">
+                <input type="checkbox" v-model="allowGuestEdit" :disabled="previewOnly" />
+                <span class="checkbox-label">允许未登录用户编辑（将自动关闭「仅允许已登录用户查看」）</span>
               </label>
             </div>
 
@@ -136,8 +158,8 @@
                 <Icon icon="ri-check-line" :size="14" />
                 <span>{{ shareResultMessage }}</span>
               </div>
-              <div v-if="shareResult.preview_link" class="result-link-row">
-                <input :value="shareResult.preview_link" readonly class="result-link" ref="linkInput" />
+              <div v-if="createdShareLink" class="result-link-row">
+                <input :value="createdShareLink" readonly class="result-link" ref="linkInput" />
                 <button class="copy-btn" @click="copyLink">
                   <Icon :icon="copied ? 'ri-check-line' : 'ri-file-copy-line'" :size="14" />
                   <span>{{ copied ? '已复制' : '复制' }}</span>
@@ -148,27 +170,66 @@
 
           <!-- 详情模式 -->
           <template v-if="mode === 'detail' && shareDetail">
-            <!-- 预览链接状态 -->
+            <!-- 分享链接状态 -->
             <div class="detail-section">
               <div class="detail-section-header">
                 <Icon icon="ri-link" :size="14" />
-                <span>预览链接</span>
+                <span>分享链接</span>
               </div>
               <div class="preview-link-row">
                 <div class="preview-link-status">
-                  <span class="toggle-label">{{ shareDetail.preview_enabled ? '已开启' : '已关闭' }}</span>
-                  <button class="toggle-btn" :class="{ on: shareDetail.preview_enabled }" @click="togglePreviewLink">
+                  <span class="toggle-label">{{ shareLinkEnabled ? '已开启' : '已关闭' }}</span>
+                  <button class="toggle-btn" :class="{ on: shareLinkEnabled }" @click="toggleShareLink">
                     <span class="toggle-knob"></span>
                   </button>
                 </div>
-                <template v-if="shareDetail.preview_enabled && shareDetail.preview_link">
+                <template v-if="shareLinkEnabled && shareLinkUrl">
                   <div class="preview-link-copy">
-                    <input :value="shareDetail.preview_link" readonly class="preview-link-input" />
-                    <button class="link-copy-btn" @click="copyPreviewLink">
+                    <input :value="shareLinkUrl" readonly class="preview-link-input" />
+                    <button class="link-copy-btn" @click="copyDetailShareLink">
                       <Icon :icon="previewCopied ? 'ri-check-line' : 'ri-file-copy-line'" :size="12" />
                     </button>
                   </div>
                 </template>
+              </div>
+              <div v-if="shareLinkEnabled" class="link-settings detail-link-settings">
+                <label class="checkbox-item setting-item">
+                  <input
+                    type="checkbox"
+                    v-model="requireLogin"
+                    :disabled="allowGuestEdit || updatingLinkSettings"
+                    @change="onDetailSettingChange"
+                  />
+                  <span class="checkbox-label">仅允许已登录用户查看</span>
+                </label>
+                <label class="checkbox-item setting-item">
+                  <input
+                    type="checkbox"
+                    v-model="previewOnly"
+                    :disabled="updatingLinkSettings"
+                    @change="onDetailSettingChange"
+                  />
+                  <span class="checkbox-label">链接仅用作预览（不可接收、不可编辑）</span>
+                </label>
+                <label class="checkbox-item setting-item">
+                  <input
+                    type="checkbox"
+                    v-model="allowAccept"
+                    :disabled="previewOnly || updatingLinkSettings"
+                    @change="onDetailSettingChange"
+                  />
+                  <span class="checkbox-label">允许通过链接接收此文件</span>
+                </label>
+                <label class="checkbox-item setting-item">
+                  <input
+                    type="checkbox"
+                    v-model="allowGuestEdit"
+                    :disabled="previewOnly || updatingLinkSettings"
+                    @change="onDetailSettingChange"
+                  />
+                  <span class="checkbox-label">允许未登录用户编辑（将自动关闭「仅允许已登录用户查看」）</span>
+                </label>
+                <p class="link-settings-hint">改动会立即保存；「仅用作预览」时不可接收、不可编辑。</p>
               </div>
             </div>
 
@@ -188,18 +249,15 @@
                     </span>
                   </div>
                   <div class="auth-user-actions" v-if="perm.status !== 'rejected'">
-                    <select
-                      :value="normalizePermission(perm.permission)"
-                      @change="updateUserPermission(perm.id, ($event.target as HTMLSelectElement).value)"
+                    <CustomSelect
+                      :model-value="normalizePermission(perm.permission)"
+                      :options="permissionOptions"
                       class="perm-select"
+                      inline
+                      height="24px"
                       :title="'该用户的分享权限（当前：' + permissionLabel(perm.permission) + '）'"
-                    >
-                      <option
-                        v-for="opt in SHARE_PERMISSIONS"
-                        :key="opt.value"
-                        :value="opt.value"
-                      >{{ opt.label }}</option>
-                    </select>
+                      @change="(v) => updateUserPermission(perm.id, String(v))"
+                    />
                     <button class="stop-share-btn" @click="stopSharingUser(perm)" title="停止分享给该用户">
                       <Icon icon="ri-user-unfollow-line" :size="12" />
                       <span>停止分享</span>
@@ -297,7 +355,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
+import CustomSelect from '../../../components/CustomSelect.vue';
 import { api } from '../../../api/client';
 
 /** 分享权限：四档（后端兼容旧 view/edit，并自动归一化） */
@@ -309,6 +368,18 @@ const SHARE_PERMISSIONS: Array<{ value: SharePermission; label: string; desc: st
   { value: 'edit_file', label: '编辑文件', desc: '可查看并编辑文件内容' },
   { value: 'edit_instance', label: '编辑实例', desc: '可编辑文件并管理分发实例' },
 ];
+
+/** CustomSelect 选项：有效期 / 权限 */
+const expiryOptions = [
+  { value: 1, label: '1 天' },
+  { value: 3, label: '3 天' },
+  { value: 7, label: '7 天' },
+  { value: 14, label: '14 天' },
+  { value: 30, label: '1 个月' },
+  { value: 60, label: '2 个月' },
+  { value: 90, label: '3 个月' },
+];
+const permissionOptions = SHARE_PERMISSIONS.map((p) => ({ value: p.value, label: p.label }));
 
 /** 旧值/未知值归一化为四档；view→view_file，edit→edit_file */
 function normalizePermission(raw: unknown): SharePermission {
@@ -346,11 +417,84 @@ const mode = ref<'create' | 'detail'>('create');
 // 表单数据
 const expiryDays = ref(7);
 const defaultPermission = ref<SharePermission>('view_file');
-const enablePreviewLink = ref(false);
+const enableShareLink = ref(false);
 const userSearchKeyword = ref('');
 const userSearching = ref(false);
 const userSearchResults = ref<any[]>([]);
 const selectedUsers = ref<{ username: string; display_name: string; permission: string }[]>([]);
+
+// 分享链接设置（创建与详情共用同一份状态）
+interface LinkSettings {
+  require_login: boolean;
+  preview_only: boolean;
+  allow_accept: boolean;
+  allow_guest_edit: boolean;
+}
+const requireLogin = ref(true);
+const previewOnly = ref(false);
+const allowAccept = ref(true);
+const allowGuestEdit = ref(false);
+const updatingLinkSettings = ref(false);
+
+/** 归一化分享链接设置并强制约束：仅预览→不可接收/不可编辑；可游客编辑→不需要登录 */
+function normalizedLinkSettings(): LinkSettings {
+  const isPreviewOnly = !!previewOnly.value;
+  const guestEdit = isPreviewOnly ? false : !!allowGuestEdit.value;
+  const canAccept = isPreviewOnly ? false : !!allowAccept.value;
+  const needLogin = guestEdit ? false : !!requireLogin.value;
+  return {
+    require_login: needLogin,
+    preview_only: isPreviewOnly,
+    allow_accept: canAccept,
+    allow_guest_edit: guestEdit,
+  };
+}
+
+function applyLinkSettings(settings: Partial<LinkSettings> | null | undefined) {
+  if (!settings) return;
+  requireLogin.value = settings.require_login !== false;
+  previewOnly.value = settings.preview_only === true;
+  allowAccept.value = settings.allow_accept !== false;
+  allowGuestEdit.value = settings.allow_guest_edit === true;
+}
+
+/** 从接口响应中读取四项设置（share_settings / link_settings / 平铺字段三种形态兼容） */
+function readLinkSettings(source: any): Partial<LinkSettings> & { require_login: boolean; preview_only: boolean; allow_accept: boolean; allow_guest_edit: boolean } {
+  const raw = source?.share_settings || source?.link_settings || source || {};
+  const pick = (key: keyof LinkSettings, fallback: boolean): boolean => {
+    const value = raw?.[key] ?? source?.[key];
+    if (typeof value === 'boolean') return value;
+    if (value === null || value === undefined) return fallback;
+    const num = Number(value);
+    if (Number.isFinite(num)) return num !== 0;
+    return fallback;
+  };
+  return {
+    require_login: pick('require_login', true),
+    preview_only: pick('preview_only', false),
+    allow_accept: pick('allow_accept', true),
+    allow_guest_edit: pick('allow_guest_edit', false),
+  };
+}
+
+/** 分享链接是否已开启（share_enabled 优先，兼容 preview_enabled / 是否已有链接） */
+function readShareEnabled(source: any): boolean {
+  if (!source) return false;
+  if (typeof source.share_enabled === 'boolean') return source.share_enabled;
+  if (typeof source.preview_enabled === 'boolean') return source.preview_enabled;
+  if (Number.isFinite(Number(source.share_enabled))) return Number(source.share_enabled) !== 0;
+  if (Number.isFinite(Number(source.preview_enabled))) return Number(source.preview_enabled) !== 0;
+  return !!(source.share_link || source.preview_link);
+}
+
+function readShareLink(source: any): string {
+  if (!source) return '';
+  return String(source.share_link || source.preview_link || '');
+}
+
+const shareLinkEnabled = computed(() => readShareEnabled(shareDetail.value));
+const shareLinkUrl = computed(() => readShareLink(shareDetail.value));
+const createdShareLink = computed(() => readShareLink(shareResult.value));
 
 // 状态
 const creating = ref(false);
@@ -380,7 +524,12 @@ async function initShare() {
   mode.value = 'create';
   expiryDays.value = 7;
   defaultPermission.value = 'view_file';
-  enablePreviewLink.value = false;
+  enableShareLink.value = false;
+  requireLogin.value = true;
+  previewOnly.value = false;
+  allowAccept.value = true;
+  allowGuestEdit.value = false;
+  updatingLinkSettings.value = false;
   userSearchKeyword.value = '';
   selectedUsers.value = [];
   error.value = '';
@@ -425,11 +574,16 @@ async function loadShareDetail() {
       const detail = await api.get<any>(`/share?action=get-share-detail&share_id=${match.id}`);
       shareDetail.value = detail;
       defaultPermission.value = normalizePermission(detail?.permission);
+      // 分享链接状态与四项设置（新契约优先，旧字段兜底）
+      enableShareLink.value = readShareEnabled(detail || match);
+      applyLinkSettings(readLinkSettings(detail || match));
       mode.value = 'detail';
       await loadBlacklist(detail.id);
     } else {
       shareDetail.value = null;
       blacklist.value = [];
+      enableShareLink.value = false;
+      applyLinkSettings(readLinkSettings(null));
       mode.value = 'create';
     }
   } catch {
@@ -549,8 +703,18 @@ async function createShare() {
       share_type: selectedUsers.value.length > 0 ? 'user' : 'link',
       permission: defaultPermission.value,
       expiry_days: expiryDays.value,
-      enable_preview_link: enablePreviewLink.value,
+      enable_preview_link: enableShareLink.value,
     };
+
+    if (enableShareLink.value) {
+      // 新契约：link_settings 四项；同时平铺一份给只读平铺字段的后端兼容
+      const settings = normalizedLinkSettings();
+      body.link_settings = settings;
+      body.require_login = settings.require_login;
+      body.preview_only = settings.preview_only;
+      body.allow_accept = settings.allow_accept;
+      body.allow_guest_edit = settings.allow_guest_edit;
+    }
 
     if (selectedUsers.value.length > 0) {
       body.target_users = selectedUsers.value.map(su => ({
@@ -618,11 +782,11 @@ async function resendInvite(perm: any) {
   }
 }
 
-async function togglePreviewLink() {
+async function toggleShareLink() {
   if (!shareDetail.value) return;
-  const newState = !shareDetail.value.preview_enabled;
+  const newState = !shareLinkEnabled.value;
   try {
-    const result = await api.post<any>('/share?action=toggle-preview-link', {
+    await api.post<any>('/share?action=toggle-preview-link', {
       share_id: shareDetail.value.id,
       enable: newState,
     });
@@ -631,6 +795,39 @@ async function togglePreviewLink() {
     alert(e.message || '操作失败');
   }
 }
+
+/** 详情模式：切换任意一项设置后立即保存；失败重新拉取详情回滚并提示 */
+async function onDetailSettingChange() {
+  if (!shareDetail.value || updatingLinkSettings.value) return;
+  const settings = normalizedLinkSettings();
+  // 先把约束联动回写到 UI，避免请求期间显示不一致
+  applyLinkSettings(settings);
+  updatingLinkSettings.value = true;
+  try {
+    await api.post('/share?action=update-link-settings', {
+      share_id: shareDetail.value.id,
+      ...settings,
+    });
+    await loadShareDetail();
+  } catch (e: any) {
+    alert(e.message || '更新分享链接设置失败');
+    await loadShareDetail();
+  } finally {
+    updatingLinkSettings.value = false;
+  }
+}
+
+// 约束联动：勾选「仅用作预览」时强制关闭接收与游客编辑；勾选「允许未登录编辑」时取消「仅允许登录查看」
+watch(previewOnly, (value) => {
+  if (!value) return;
+  allowAccept.value = false;
+  allowGuestEdit.value = false;
+});
+
+watch(allowGuestEdit, (value) => {
+  if (!value) return;
+  requireLogin.value = false;
+});
 
 async function deleteShare() {
   if (!shareDetail.value) return;
@@ -660,9 +857,10 @@ function onCancel() {
 }
 
 async function copyLink() {
-  if (!shareResult.value?.preview_link) return;
+  const link = createdShareLink.value;
+  if (!link) return;
   try {
-    await navigator.clipboard.writeText(shareResult.value.preview_link);
+    await navigator.clipboard.writeText(link);
     copied.value = true;
     setTimeout(() => { copied.value = false; }, 2000);
   } catch {
@@ -675,10 +873,11 @@ async function copyLink() {
   }
 }
 
-async function copyPreviewLink() {
-  if (!shareDetail.value?.preview_link) return;
+async function copyDetailShareLink() {
+  const link = shareLinkUrl.value;
+  if (!link) return;
   try {
-    await navigator.clipboard.writeText(shareDetail.value.preview_link);
+    await navigator.clipboard.writeText(link);
     previewCopied.value = true;
     setTimeout(() => { previewCopied.value = false; }, 2000);
   } catch { /* ignore */ }
@@ -870,23 +1069,10 @@ function formatDate(dateStr: string): string {
 
 .form-select {
   width: 100%;
-  height: 32px;
-  padding: 0 8px;
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border-rest);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  color: var(--text-primary);
-  outline: none;
-  cursor: pointer;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='12' height='12' fill='%23666'%3E%3Cpath d='M12 16L6 10h12z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 8px center;
 }
 
-.form-select:focus {
-  border-color: var(--accent-base);
+.form-select :deep(.select-trigger) {
+  font-size: var(--font-size-xs);
 }
 
 .radio-group {
@@ -919,6 +1105,46 @@ function formatDate(dateStr: string): string {
 
 .checkbox-item input[type="checkbox"] {
   accent-color: var(--accent-base);
+}
+
+/* 分享链接设置（创建 / 详情共用） */
+.link-settings {
+  margin: 0 0 var(--spacer-2);
+  padding: var(--spacer-2) var(--spacer-3);
+  background: var(--subtle-secondary);
+  border: 1px solid var(--divider-stroke);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-1);
+}
+
+.link-settings-title {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.setting-item {
+  color: var(--text-secondary);
+}
+
+.setting-item input[type="checkbox"]:disabled + .checkbox-label {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.link-settings-hint {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+.detail-link-settings {
+  margin-top: var(--spacer-2);
+  margin-bottom: 0;
 }
 
 /* 用户搜索 */
@@ -1048,15 +1274,11 @@ function formatDate(dateStr: string): string {
   gap: var(--spacer-1);
 }
 
-.perm-select {
-  height: 24px;
-  padding: 0 4px;
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border-rest);
+.perm-select :deep(.select-trigger) {
+  padding: 0 4px 0 6px;
   border-radius: var(--radius-xs);
   font-size: 10px;
-  color: var(--text-primary);
-  outline: none;
+  gap: 2px;
 }
 
 .remove-user-btn {
@@ -1100,7 +1322,7 @@ function formatDate(dateStr: string): string {
   margin-bottom: var(--spacer-2);
 }
 
-/* 预览链接行 */
+/* 分享链接行 */
 .preview-link-row {
   display: flex;
   flex-direction: column;

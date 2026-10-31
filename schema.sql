@@ -434,12 +434,16 @@ CREATE TABLE IF NOT EXISTS share_user_permissions (
 CREATE INDEX IF NOT EXISTS idx_share_user_perms_share ON share_user_permissions(share_id);
 CREATE INDEX IF NOT EXISTS idx_share_user_perms_user ON share_user_permissions(target_user_id);
 
--- 预览链接表：记录分享的预览链接
+-- 分享链接表（原「预览链接」）：记录分享链接及其可配置策略
 CREATE TABLE IF NOT EXISTS share_preview_links (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     share_id INTEGER NOT NULL,
-    token TEXT NOT NULL UNIQUE,                 -- 预览链接唯一 token
-    is_enabled INTEGER NOT NULL DEFAULT 1,      -- 是否启用预览链接
+    token TEXT NOT NULL UNIQUE,                 -- 分享链接唯一 token
+    is_enabled INTEGER NOT NULL DEFAULT 1,      -- 是否启用分享链接
+    require_login INTEGER NOT NULL DEFAULT 1,   -- 1=仅允许已登录用户查看（0=游客可查看）
+    preview_only INTEGER NOT NULL DEFAULT 0,    -- 1=链接仅用作预览（不可接收、不可编辑）
+    allow_accept INTEGER NOT NULL DEFAULT 1,    -- 1=允许通过链接接收分享
+    allow_guest_edit INTEGER NOT NULL DEFAULT 0,-- 1=允许未登录用户编辑内容
     created_at TEXT NOT NULL,
     FOREIGN KEY (share_id) REFERENCES share_items(id) ON DELETE CASCADE
 );

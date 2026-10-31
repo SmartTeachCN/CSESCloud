@@ -2,24 +2,171 @@
  * 统一分享功能 API
  *
  * 操作：
- *  - POST action=share                    创建分享（按用户或预览链接）
+ *  - POST action=share                    创建分享（按用户或分享链接）
  *  - POST action=update-permission        更新单个被分享用户的权限
  *  - POST action=remove-user              移除被分享用户
  *  - POST action=accept                   接受分享（用户名分享）
  *  - POST action=reject                   拒绝分享（用户名分享）
- *  - POST action=toggle-preview-link      开关预览链接
+ *  - POST action=toggle-preview-link      开关分享链接（原「预览链接」，action 名保留兼容）
+ *  - POST action=update-link-settings     更新分享链接策略（仅 owner）
+ *  - POST action=save-preview             分享链接内容保存（游客编辑，按链接策略）
  *  - GET  action=list-shared-by-me        列出我分享的
  *  - GET  action=list-shared-to-me        列出分享给我的
- *  - GET  action=get-share-detail         获取分享详情（含已授权用户列表）
- *  - GET  action=get-preview              通过预览链接获取分享内容（需登录）
+ *  - GET  action=get-share-detail         获取分享详情（含已授权用户列表与链接策略）
+ *  - GET  action=get-preview              通过分享链接获取分享内容（按链接策略允许游客）
  *  - POST action=accept-preview-link      通过链接接受分享
  *  - POST action=delete-share             删除分享
+ *
+ * 分享链接策略（share_preview_links 四列，响应中同时提供 share_settings 与平铺字段）：
+ *  - require_login    仅允许已登录用户查看（默认 1）
+ *  - preview_only     链接仅用作预览：不可接收、不可编辑（默认 0）
+ *  - allow_accept     允许通过链接接收分享（默认 1）
+ *  - allow_guest_edit 允许未登录用户编辑（默认 0；为 1 时强制 require_login=0）
+ * 约束：preview_only=1 时 allow_accept/allow_guest_edit 强制 0。
  */
 const crypto = require('crypto');
 const { nowStr, dateStr } = require('../lib/response');
 const DB = require('../lib/db');
 const cloudShare = require('../lib/cloud-share');
 const sharePermissions = require('../lib/share-permissions');
+
+// ────────────────────── 分享链接策略（四档开关） ──────────────────────
+
+const LINK_SETTING_KEYS = ['require_login', 'preview_only', 'allow_accept', 'allow_guest_edit'];
+
+/** 默认策略：需登录查看、非仅预览、允许接收、不允许游客编辑（与升级前行为一致）。 */
+const LINK_SETTING_DEFAULTS = Object.freeze({
+  require_login: true,
+  preview_only: false,
+  allow_accept: true,
+  allow_guest_edit: false,
+});
+
+/** 宽松布尔解析：兼容 true/false、1/0、'1'/'0'、'true'/'false'。 */
+function toLinkBool(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  const text = String(value).trim().toLowerCase();
+  if (text === '1' || text === 'true' || text === 'yes' || text === 'on') return true;
+  if (text === '0' || text === 'false' || text === 'no' || text === 'off') return false;
+  return fallback;
+}
+
+/** 从库行 / 已归一化对象读取四档策略（缺失字段回退默认值）。 */
+function readLinkSettings(source) {
+  const row = source && typeof source === 'object' ? source : {};
+  return {
+    require_login: toLinkBool(row.require_login, LINK_SETTING_DEFAULTS.require_login),
+    preview_only: toLinkBool(row.preview_only, LINK_SETTING_DEFAULTS.preview_only),
+    allow_accept: toLinkBool(row.allow_accept, LINK_SETTING_DEFAULTS.allow_accept),
+    allow_guest_edit: toLinkBool(row.allow_guest_edit, LINK_SETTING_DEFAULTS.allow_guest_edit),
+  };
+}
+
+/**
+ * 统一设置归一化：input 覆盖 base，再按联动约束修正。
+ *  - preview_only=true 时强制 allow_accept=false、allow_guest_edit=false（仅预览优先）；
+ *  - allow_guest_edit=true 时强制 require_login=false（游客可编辑必然游客可查看）。
+ */
+function normalizeLinkSettings(input, base) {
+  const raw = input && typeof input === 'object' ? input : {};
+  const prev = readLinkSettings(base);
+  const settings = {};
+  for (const key of LINK_SETTING_KEYS) {
+    settings[key] = Object.prototype.hasOwnProperty.call(raw, key)
+      ? toLinkBool(raw[key], prev[key])
+      : prev[key];
+  }
+  if (settings.preview_only) {
+    settings.allow_accept = false;
+    settings.allow_guest_edit = false;
+  }
+  if (settings.allow_guest_edit) {
+    settings.require_login = false;
+  }
+  return settings;
+}
+
+/** 从请求体提取策略输入：兼容 link_settings 嵌套对象与平铺字段（嵌套优先）。 */
+function pickLinkSettingsInput(body) {
+  const source = body && typeof body === 'object' ? body : {};
+  const input = {};
+  for (const key of LINK_SETTING_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) input[key] = source[key];
+  }
+  const nested = source.link_settings;
+  if (nested && typeof nested === 'object') {
+    for (const key of LINK_SETTING_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(nested, key)) input[key] = nested[key];
+    }
+  }
+  return input;
+}
+
+/** 分享链接 URL（新路由 /share/link，旧 /share/preview 路由仍可用）。 */
+function shareUrlOf(req, token) {
+  const protocol = req.protocol === 'https' ? 'https' : 'http';
+  const host = req.headers.host ?? 'localhost';
+  return `${protocol}://${host}/share/link?token=${encodeURIComponent(token)}`;
+}
+
+/** 链接基础字段：share_* 为正式命名，preview_* 保留作为兼容别名。 */
+function linkPayloadOf(req, token, enabled) {
+  const url = token ? shareUrlOf(req, token) : null;
+  return {
+    share_token: token || null,
+    share_enabled: !!enabled,
+    share_link: url,
+    preview_token: token || null,
+    preview_enabled: !!enabled,
+    preview_link: url,
+  };
+}
+
+/** 策略字段：share_settings / link_settings + 平铺四档。 */
+function settingsPayloadOf(settings) {
+  const value = readLinkSettings(settings);
+  return {
+    share_settings: value,
+    link_settings: value,
+    require_login: value.require_login,
+    preview_only: value.preview_only,
+    allow_accept: value.allow_accept,
+    allow_guest_edit: value.allow_guest_edit,
+  };
+}
+
+/** 由库行构造分享链接完整对外字段（token 缺失时返回关闭态 + 默认策略）。 */
+function linkStatePayloadOf(req, linkRow) {
+  const token = linkRow ? (linkRow.preview_token ?? linkRow.token ?? null) : null;
+  const enabledRaw = linkRow ? (linkRow.preview_enabled ?? linkRow.is_enabled ?? 0) : 0;
+  const enabled = token ? (parseInt(enabledRaw ?? 0, 10) || 0) === 1 : false;
+  return Object.assign(linkPayloadOf(req, token, enabled), settingsPayloadOf(readLinkSettings(linkRow)));
+}
+
+/** 查询启用中的分享链接（按 token），同时带出分享主表字段。 */
+function findShareLinkByToken(token) {
+  return DB.one(
+    `SELECT si.*, spl.token AS link_token, spl.is_enabled AS link_enabled,
+            spl.require_login, spl.preview_only, spl.allow_accept, spl.allow_guest_edit
+     FROM share_preview_links spl
+     JOIN share_items si ON si.id = spl.share_id
+     WHERE spl.token = ? AND spl.is_enabled = 1 AND si.is_deleted = 0`,
+    [token]
+  );
+}
+
+/** 文本化内容（兼容 TEXT / BLOB / Uint8Array）。 */
+function textOfContent(content) {
+  if (content === null || content === undefined) return '';
+  if (Buffer.isBuffer(content)) return content.toString('utf8');
+  if (content instanceof Uint8Array) {
+    return Buffer.from(content.buffer, content.byteOffset, content.byteLength).toString('utf8');
+  }
+  return String(content);
+}
+
 
 /** 文件黑名单检查（按资源 + 用户名）。 */
 function isBlacklisted(DB, resourceType, resourceId, targetUsername) {
@@ -84,39 +231,120 @@ module.exports = async (ctx) => {
   const action = query.action ?? '';
   // $body = Helpers::jsonBody(); → body
 
-  // ===== 通过预览链接获取分享内容（需登录）=====
+  // ===== 通过分享链接获取分享内容（登录/游客按链接策略）=====
   if (method === 'GET' && action === 'get-preview') {
-    Auth.requireLogin();
-    const user = Auth.user();
     const token = String(query.token ?? '').trim();
     if (token === '') Response.error('缺少 token 参数');
 
-    const link = DB.one(
-      `SELECT spl.*, si.* FROM share_preview_links spl
-       JOIN share_items si ON si.id = spl.share_id
-       WHERE spl.token = ? AND spl.is_enabled = 1 AND si.is_deleted = 0`,
-      [token]
-    );
-    if (!link) Response.error('预览链接不存在或已关闭');
+    const link = findShareLinkByToken(token);
+    if (!link) Response.error('分享链接不存在或已关闭');
+    if (String(link.expires_at || '') < nowStr()) Response.error('分享已过期');
 
-    const now = nowStr();
-    if (link.expires_at < now) Response.error('分享已过期');
-    if (isBlacklisted(DB, link.resource_type, link.resource_id, user?.username)) {
+    const settings = readLinkSettings(link);
+    const loggedIn = Auth.check();
+    const currentUser = loggedIn ? Auth.user() : null;
+    const currentOwnerKey = loggedIn ? Auth.ownerKey() : '';
+
+    // 黑名单只对已登录用户生效（游客无法识别身份）
+    if (loggedIn && isBlacklisted(DB, link.resource_type, link.resource_id, currentUser?.username)) {
       Response.error('你已被该文件加入黑名单，无法查看此分享', 403, 403);
     }
+    // 链接要求登录 → 未登录直接 401（前端据此展示「前往登录」）
+    if (settings.require_login && !loggedIn) {
+      Response.error('请先登录后查看此分享链接', 401, 401);
+    }
 
-    // 返回资源内容
     const resourceData = getShareResourceData(link.resource_type, link.resource_id);
     if (!resourceData) Response.error('资源不存在或已被删除');
 
-    Response.success({
-      share_id: link.share_id,
+    let alreadyAccepted = false;
+    if (loggedIn) {
+      const target = shareTargetContext(DB, Auth);
+      const targetWhere = shareTargetClause('sup', target);
+      alreadyAccepted = !!DB.one(
+        `SELECT sup.id FROM share_user_permissions sup
+         WHERE sup.share_id = ? AND sup.status = 'accepted' AND ${targetWhere.sql}
+         ORDER BY sup.id DESC LIMIT 1`,
+        [link.id, ...targetWhere.params]
+      );
+    }
+
+    const content = textOfContent(resourceData.content);
+    Response.success(Object.assign({
+      share_id: link.id,
       resource_type: link.resource_type,
       resource_name: link.resource_name,
       permission: sharePermissions.normalizePermission(link.permission),
       owner_username: link.owner_username,
-      resource: resourceData,
-    });
+      resource: Object.assign({}, resourceData, { content: content }),
+      content: content,
+      // 仅预览 / 未允许接收时不能接受
+      can_accept: !settings.preview_only && settings.allow_accept,
+      can_guest_edit: settings.allow_guest_edit && !settings.preview_only,
+      already_accepted: alreadyAccepted,
+      is_owner: !!currentOwnerKey && link.owner_key === currentOwnerKey,
+    }, settingsPayloadOf(settings)));
+  }
+
+  // ===== 分享链接内容保存（游客编辑 / 登录用户编辑）=====
+  if (method === 'POST' && action === 'save-preview') {
+    const token = String(body.token ?? '').trim();
+    if (token === '') Response.error('缺少 token 参数');
+
+    const link = findShareLinkByToken(token);
+    if (!link) Response.error('分享链接不存在或已关闭');
+    if (String(link.expires_at || '') < nowStr()) Response.error('分享已过期');
+
+    const settings = readLinkSettings(link);
+    const loggedIn = Auth.check();
+    const currentUser = loggedIn ? Auth.user() : null;
+
+    if (loggedIn && isBlacklisted(DB, link.resource_type, link.resource_id, currentUser?.username)) {
+      Response.error('你已被该文件加入黑名单，无法编辑此分享内容', 403, 403);
+    }
+    if (settings.require_login && !loggedIn) {
+      Response.error('请先登录后编辑此分享内容', 401, 401);
+    }
+    if (settings.preview_only) {
+      Response.error('该分享链接仅用于预览，不能编辑内容');
+    }
+    if (!settings.allow_guest_edit) {
+      Response.error('分享者未允许通过此链接编辑内容', 403, 403);
+    }
+
+    const content = typeof body.content === 'string'
+      ? body.content
+      : (body.content === undefined || body.content === null ? null : String(body.content));
+    if (content === null) Response.error('缺少内容参数（content）');
+    const size = Buffer.byteLength(content, 'utf8');
+    if (size > 1024 * 1024) Response.error('内容过大，单次保存不能超过 1MB');
+
+    // 写回分享者源文件（占位文件内容保持不变）
+    const ownerFile = cloudShare.ownerFileOf(DB, link.resource_id);
+    if (!ownerFile) Response.error('源文件不存在或已被删除', 404, 404);
+
+    const now = nowStr();
+    DB.update('web_hosting_files', {
+      content: content,
+      file_size: size,
+      updated_at: now,
+    }, 'id = ?', [ownerFile.id]);
+
+    // 审计：登录用户记录其用户名，游客记录 guest
+    try {
+      DB.insert('audit_logs', {
+        school_id: parseInt((currentUser || {}).school_id ?? 0, 10) || 0,
+        user_id: parseInt((currentUser || {}).user_id ?? 0, 10) || 0,
+        username: loggedIn ? String((currentUser || {}).username || '') : 'guest',
+        action: 'share_link_edit',
+        target: `${link.resource_name || ''}（分享 #${link.id}，${size} 字节）`,
+        ip: req.socket?.remoteAddress || 'cli',
+        status: 'success',
+        created_at: now,
+      });
+    } catch (_) { /* 审计失败不影响保存 */ }
+
+    Response.success({ ok: true, updated_at: now, size: size }, '内容已保存');
   }
 
   // ===== 通过链接接受分享 =====
@@ -127,13 +355,14 @@ module.exports = async (ctx) => {
     const token = String(body.token ?? '').trim();
     if (token === '') Response.error('缺少 token 参数');
 
-    const link = DB.one(
-      `SELECT spl.*, si.* FROM share_preview_links spl
-       JOIN share_items si ON si.id = spl.share_id
-       WHERE spl.token = ? AND spl.is_enabled = 1 AND si.is_deleted = 0`,
-      [token]
-    );
-    if (!link) Response.error('预览链接不存在或已关闭');
+    const link = findShareLinkByToken(token);
+    if (!link) Response.error('分享链接不存在或已关闭');
+    if (String(link.expires_at || '') < nowStr()) Response.error('分享已过期');
+
+    // 链接策略：仅预览 / 未允许接收时不能接收
+    const settings = readLinkSettings(link);
+    if (settings.preview_only) Response.error('该分享链接仅用于预览，不能接收');
+    if (!settings.allow_accept) Response.error('分享者未允许通过链接接收此文件');
 
     // 不能接受自己的分享
     if (link.owner_key === ownerKey) Response.error('不能接受自己的分享');
@@ -142,10 +371,12 @@ module.exports = async (ctx) => {
     }
 
     // 检查是否已经接受过（联盟账户也可能通过子用户绑定收到分享）
+    const target = shareTargetContext(DB, Auth);
+    const targetWhere = shareTargetClause('sup', target);
     const existing = DB.one(
-      `SELECT * FROM share_user_permissions sup WHERE sup.share_id = ?
-       AND (sup.target_user_id = ? OR sup.target_username = ?) ORDER BY sup.id DESC LIMIT 1`,
-      [link.share_id, user.user_id ?? 0, user.username ?? '']
+      `SELECT * FROM share_user_permissions sup WHERE sup.share_id = ? AND ${targetWhere.sql}
+       ORDER BY sup.id DESC LIMIT 1`,
+      [link.id, ...targetWhere.params]
     );
     if (existing && existing.status === 'accepted') {
       const cloudUsername = recipientCloudUsername(DB, Auth, existing);
@@ -163,7 +394,7 @@ module.exports = async (ctx) => {
       }, 'id = ?', [existing.id]);
     } else {
       DB.insert('share_user_permissions', {
-        share_id: link.share_id,
+        share_id: link.id,
         target_user_id: user.user_id ?? 0,
         target_username: user.username ?? '',
         permission: sharePermissions.normalizePermission(link.permission),
@@ -175,9 +406,9 @@ module.exports = async (ctx) => {
 
     // 在接收者云空间创建同名分享占位文件
     const acceptedPerm = DB.one(
-      `SELECT * FROM share_user_permissions WHERE share_id = ?
-       AND (target_user_id = ? OR target_username = ?) ORDER BY id DESC LIMIT 1`,
-      [link.share_id, user.user_id ?? 0, user.username ?? '']
+      `SELECT * FROM share_user_permissions sup WHERE sup.share_id = ? AND ${targetWhere.sql}
+       ORDER BY sup.id DESC LIMIT 1`,
+      [link.id, ...targetWhere.params]
     );
     const cloudUsername = recipientCloudUsername(DB, Auth, acceptedPerm);
     if (cloudUsername) cloudShare.ensurePlaceholderForShare(DB, link, cloudUsername);
@@ -202,6 +433,7 @@ module.exports = async (ctx) => {
     const expiryDays = parseInt(body.expiry_days ?? 7, 10) || 0;
     const targetUsers = body.target_users ?? []; // 用户名数组
     const enablePreviewLink = !Helpers.empty(body.enable_preview_link);
+    const linkSettingsInput = pickLinkSettingsInput(body);
 
     if (resourceName === '') Response.error('资源名称不能为空');
     if (expiryDays < 1 || expiryDays > 90) Response.error('有效期必须在 1-90 天之间');
@@ -330,26 +562,34 @@ module.exports = async (ctx) => {
       }
     }
 
-    // 处理预览链接
+    // 处理分享链接（原「预览链接」）：写入四档可配置策略
     let previewLink = null;
+    let previewSettings = null;
     if (enablePreviewLink) {
-      // 检查是否已有预览链接
+      // 检查是否已有分享链接（复用时保留未显式下发的设置）
       const existingLink = DB.one(
         `SELECT * FROM share_preview_links WHERE share_id = ?`,
         [shareId]
       );
 
       if (existingLink) {
-        DB.update('share_preview_links', { is_enabled: 1 }, 'id = ?', [existingLink.id]);
+        previewSettings = normalizeLinkSettings(linkSettingsInput, existingLink);
+        DB.update(
+          'share_preview_links',
+          Object.assign({ is_enabled: 1 }, previewSettings),
+          'id = ?',
+          [existingLink.id]
+        );
         previewLink = existingLink.token;
       } else {
         const token = crypto.randomBytes(16).toString('hex');
-        DB.insert('share_preview_links', {
+        previewSettings = normalizeLinkSettings(linkSettingsInput, null);
+        DB.insert('share_preview_links', Object.assign({
           share_id: shareId,
           token: token,
           is_enabled: 1,
           created_at: now,
-        });
+        }, previewSettings));
         previewLink = token;
       }
     }
@@ -368,18 +608,16 @@ module.exports = async (ctx) => {
       DB.update('cloud_files', { status: 'shared' }, 'id = ?', [resourceId]);
     }
 
-    const protocol = req.protocol === 'https' ? 'https' : 'http';
-    const host = req.headers.host ?? 'localhost';
-
-    const result = {
+    const result = Object.assign({
       share_id: shareId,
       added_users: addedUsers,
       expires_at: expiresAt,
-    };
-
-    if (previewLink) {
-      result.preview_link = `${protocol}://${host}/share/preview?token=${previewLink}`;
-      result.preview_token = previewLink;
+    }, linkPayloadOf(req, previewLink, !!previewLink));
+    if (previewLink && previewSettings) {
+      Object.assign(result, settingsPayloadOf(previewSettings));
+    } else {
+      result.share_settings = null;
+      result.link_settings = null;
     }
 
     const msg = existingShare ? '分享已更新' : '分享已创建';
@@ -515,7 +753,7 @@ module.exports = async (ctx) => {
     Response.success(null, '已拒绝分享');
   }
 
-  // ===== 开关预览链接 =====
+  // ===== 开关分享链接（action 名保留预览链接时期的兼容命名）=====
   if (method === 'POST' && action === 'toggle-preview-link') {
     const shareId = parseInt(body.share_id ?? 0, 10) || 0;
     const enable = !Helpers.empty(body.enable);
@@ -526,39 +764,81 @@ module.exports = async (ctx) => {
 
     let existingLink = DB.one(`SELECT * FROM share_preview_links WHERE share_id = ?`, [shareId]);
     const now = nowStr();
+    const linkSettingsInput = pickLinkSettingsInput(body);
 
     if (enable) {
+      let settings;
       if (existingLink) {
-        DB.update('share_preview_links', { is_enabled: 1 }, 'id = ?', [existingLink.id]);
+        settings = normalizeLinkSettings(linkSettingsInput, existingLink);
+        DB.update(
+          'share_preview_links',
+          Object.assign({ is_enabled: 1 }, settings),
+          'id = ?',
+          [existingLink.id]
+        );
       } else {
         const token = crypto.randomBytes(16).toString('hex');
-        DB.insert('share_preview_links', {
+        settings = normalizeLinkSettings(linkSettingsInput, null);
+        DB.insert('share_preview_links', Object.assign({
           share_id: shareId,
           token: token,
           is_enabled: 1,
           created_at: now,
-        });
+        }, settings));
         existingLink = { token: token };
       }
-      const protocol = req.protocol === 'https' ? 'https' : 'http';
-      const host = req.headers.host ?? 'localhost';
-      Response.success({
+      Response.success(Object.assign({
         enabled: true,
-        preview_link: `${protocol}://${host}/share/preview?token=${existingLink.token}`,
-        preview_token: existingLink.token,
-      }, '预览链接已开启');
+      }, linkPayloadOf(req, existingLink.token, true), settingsPayloadOf(settings)), '分享链接已开启');
     } else {
+      const settings = readLinkSettings(existingLink);
       if (existingLink) {
         DB.update('share_preview_links', { is_enabled: 0 }, 'id = ?', [existingLink.id]);
       }
-      Response.success({ enabled: false }, '预览链接已关闭');
+      Response.success(Object.assign({
+        enabled: false,
+      }, linkPayloadOf(req, existingLink ? existingLink.token : null, false), settingsPayloadOf(settings)), '分享链接已关闭');
     }
+  }
+
+  // ===== 更新分享链接策略（仅 owner）=====
+  if (method === 'POST' && action === 'update-link-settings') {
+    const shareId = parseInt(body.share_id ?? 0, 10) || 0;
+    if (shareId <= 0) Response.error('缺少分享 ID');
+
+    const share = DB.one(
+      `SELECT * FROM share_items WHERE id = ? AND owner_key = ? AND is_deleted = 0`,
+      [shareId, ownerKey]
+    );
+    if (!share) Response.error('分享不存在或无权操作', 403, 403);
+
+    const link = DB.one(`SELECT * FROM share_preview_links WHERE share_id = ?`, [shareId]);
+    if (!link) Response.error('该分享尚未开启分享链接');
+
+    const input = pickLinkSettingsInput(body);
+    if (Object.keys(input).length === 0) Response.error('缺少要更新的分享链接设置');
+
+    const settings = normalizeLinkSettings(input, link);
+    DB.update('share_preview_links', settings, 'id = ?', [link.id]);
+
+    let enabled = (parseInt(link.is_enabled ?? 0, 10) || 0) === 1;
+    if (Object.prototype.hasOwnProperty.call(body, 'is_enabled')) {
+      // 允许顺带开关（可选，便于管理页一次性提交）
+      enabled = toLinkBool(body.is_enabled, enabled);
+      DB.update('share_preview_links', { is_enabled: enabled ? 1 : 0 }, 'id = ?', [link.id]);
+    }
+
+    Response.success(Object.assign({
+      share_id: shareId,
+      enabled: enabled,
+    }, linkPayloadOf(req, link.token, enabled), settingsPayloadOf(settings)), '分享链接设置已更新');
   }
 
   // ===== 列出我分享的 =====
   if (method === 'GET' && action === 'list-shared-by-me') {
     const shares = DB.all(
-      `SELECT si.*, spl.token AS preview_token, spl.is_enabled AS preview_enabled
+      `SELECT si.*, spl.token AS preview_token, spl.is_enabled AS preview_enabled,
+              spl.require_login, spl.preview_only, spl.allow_accept, spl.allow_guest_edit
        FROM share_items si
        LEFT JOIN share_preview_links spl ON spl.share_id = si.id
        WHERE si.owner_key = ? AND si.is_deleted = 0
@@ -573,7 +853,7 @@ module.exports = async (ctx) => {
         [share.id]
       );
 
-      result.push({
+      result.push(Object.assign({
         id: share.id,
         resource_type: share.resource_type,
         resource_id: share.resource_id,
@@ -582,8 +862,6 @@ module.exports = async (ctx) => {
         permission: sharePermissions.normalizePermission(share.permission),
         expires_at: share.expires_at,
         created_at: share.created_at,
-        preview_token: share.preview_token,
-        preview_enabled: parseInt(share.preview_enabled ?? 0, 10) || 0,
         users: users.map((u) => {
           return {
             id: u.id,
@@ -594,7 +872,7 @@ module.exports = async (ctx) => {
             accepted_at: u.accepted_at,
           };
         }),
-      });
+      }, linkStatePayloadOf(req, share)));
     }
 
     Response.success(result);
@@ -646,7 +924,8 @@ module.exports = async (ctx) => {
     if (shareId <= 0) Response.error('缺少分享 ID');
 
     const share = DB.one(
-      `SELECT si.*, spl.token AS preview_token, spl.is_enabled AS preview_enabled
+      `SELECT si.*, spl.token AS preview_token, spl.is_enabled AS preview_enabled,
+              spl.require_login, spl.preview_only, spl.allow_accept, spl.allow_guest_edit
        FROM share_items si
        LEFT JOIN share_preview_links spl ON spl.share_id = si.id
        WHERE si.id = ? AND si.owner_key = ? AND si.is_deleted = 0`,
@@ -659,10 +938,7 @@ module.exports = async (ctx) => {
       [shareId]
     );
 
-    const protocol = req.protocol === 'https' ? 'https' : 'http';
-    const host = req.headers.host ?? 'localhost';
-
-    Response.success({
+    Response.success(Object.assign({
       id: share.id,
       resource_type: share.resource_type,
       resource_id: share.resource_id,
@@ -671,9 +947,6 @@ module.exports = async (ctx) => {
       permission: sharePermissions.normalizePermission(share.permission),
       expires_at: share.expires_at,
       created_at: share.created_at,
-      preview_token: share.preview_token,
-      preview_enabled: parseInt(share.preview_enabled ?? 0, 10) || 0,
-      preview_link: share.preview_token ? `${protocol}://${host}/share/preview?token=${share.preview_token}` : null,
       users: users.map((u) => {
         return {
           id: u.id,
@@ -684,7 +957,7 @@ module.exports = async (ctx) => {
           accepted_at: u.accepted_at,
         };
       }),
-    });
+    }, linkStatePayloadOf(req, share)));
   }
 
   // ===== 删除分享 =====
@@ -889,7 +1162,7 @@ function getShareResourceData(type, id)
       return {
         id: file.id,
         name: file.name,
-        content: file.content,
+        content: textOfContent(file.content),
         file_type: file.file_type,
         file_size: file.file_size,
         updated_at: file.updated_at,
@@ -901,7 +1174,7 @@ function getShareResourceData(type, id)
       return {
         id: wFile.id,
         name: basename(wFile.file_path),
-        content: typeof wFile.content === 'string' ? wFile.content : '',
+        content: textOfContent(wFile.content),
         file_type: fileExt(wFile.file_path),
         file_size: wFile.file_size,
         updated_at: wFile.updated_at,

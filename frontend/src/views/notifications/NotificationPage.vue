@@ -155,14 +155,11 @@
               <label>
                 {{ sendForm.target_type === 'role' ? '选择角色' : sendForm.target_type === 'class' ? '选择班级' : '选择用户' }}
               </label>
-              <select v-model="sendForm.target_id">
-                <option value="">-- 请选择 --</option>
-                <option
-                  v-for="opt in targetList"
-                  :key="opt.value"
-                  :value="opt.value"
-                >{{ opt.label }}</option>
-              </select>
+              <CustomSelect
+                v-model="sendForm.target_id"
+                :options="targetSelectOptions"
+                placeholder="请选择"
+              />
             </div>
           </div>
           <div class="dialog-footer">
@@ -183,6 +180,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 import { notificationsApi } from '../../api';
 import { api } from '../../api/client';
 import { useAuth } from '../../composables/useAuth';
+import CustomSelect from '../../components/CustomSelect.vue';
 
 const { user } = useAuth();
 
@@ -241,6 +239,11 @@ const targetList = computed(() => {
   if (t === 'user') return recipients.value.users || [];
   return [];
 });
+
+const targetSelectOptions = computed(() => [
+  { value: '', label: '-- 请选择 --' },
+  ...targetList.value,
+]);
 
 const canSendNotification = computed(() => {
   if (!user.value) return false;

@@ -138,6 +138,13 @@ function ensureSchema() {
   addMissingColumn('web_hosting_files', 'published_size', 'INTEGER NOT NULL DEFAULT 0');
   addMissingColumn('web_hosting_files', 'review_status', "TEXT NOT NULL DEFAULT 'published'");
 
+  // V5：分享链接可配置策略（原「预览链接」升级为「分享链接」）
+  // 旧数据默认值保持与升级前行为一致：需登录、允许接收、不可游客编辑、非仅预览
+  addMissingColumn('share_preview_links', 'require_login', 'INTEGER NOT NULL DEFAULT 1');
+  addMissingColumn('share_preview_links', 'preview_only', 'INTEGER NOT NULL DEFAULT 0');
+  addMissingColumn('share_preview_links', 'allow_accept', 'INTEGER NOT NULL DEFAULT 1');
+  addMissingColumn('share_preview_links', 'allow_guest_edit', 'INTEGER NOT NULL DEFAULT 0');
+
   // 初始化已存在的文件：将 content 同步到 published_content
   try {
     db.exec("UPDATE web_hosting_files SET published_content = content, published_size = file_size WHERE published_content IS NULL AND is_directory = 0");

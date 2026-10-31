@@ -231,6 +231,14 @@
                 <div v-for="inst in instances" :key="inst.id" class="instance-item">
                   <div class="instance-item-head">
                     <span class="instance-name" :title="inst.name">{{ inst.name }}</span>
+                    <span
+                      v-if="inst.is_shared"
+                      class="instance-shared-badge"
+                      :title="sharedInstanceTitle(inst)"
+                    >
+                      <Icon icon="ri-share-forward-line" :size="10" />
+                      <span>来自分享 · {{ inst.shared_from || '他人' }}</span>
+                    </span>
                     <span class="instance-format" :class="instanceFormatClass(inst)" :title="'分发类型：' + instanceFormatLabel(inst)">{{ instanceFormatLabel(inst) }}</span>
                     <span
                       class="instance-status"
@@ -243,7 +251,7 @@
                   </div>
                   <div class="instance-file" :title="inst.source_file_name || '源文件已删除'">
                     <Icon icon="ri-file-2-line" :size="10" />
-                    <span>{{ inst.source_file_name || '源文件已删除' }}</span>
+                    <span>{{ inst.source_file_name || (inst.is_shared ? '源文件暂不可用' : '源文件已删除') }}</span>
                   </div>
                   <div class="instance-meta">
                     <button
@@ -257,10 +265,18 @@
                     <span class="instance-time">{{ formatInstanceTime(inst.updated_at) }}</span>
                   </div>
                   <div class="instance-actions">
-                    <button title="打开源文件" @click.stop="openInstanceSourceFile(inst)">
+                    <button
+                      :title="inst.source_file_id ? '打开源文件' : '源文件暂不可用（等待接收者空间中的分享文件）'"
+                      :disabled="!inst.source_file_id"
+                      @click.stop="openInstanceSourceFile(inst)"
+                    >
                       <Icon icon="ri-folder-open-line" :size="13" />
                     </button>
-                    <button title="编辑实例" @click.stop="openInstanceEditor(inst)">
+                    <button
+                      :title="canEditInstance(inst) ? '编辑实例' : '你没有编辑该共享实例的权限'"
+                      :disabled="!canEditInstance(inst)"
+                      @click.stop="openInstanceEditor(inst)"
+                    >
                       <Icon icon="ri-edit-line" :size="13" />
                     </button>
                     <button
@@ -269,13 +285,21 @@
                     >
                       <Icon :icon="copiedInstanceKey === 'copy-' + inst.id ? 'ri-check-line' : 'ri-file-copy-line'" :size="13" />
                     </button>
-                    <button v-if="instanceMode(inst) === 'static'" title="下载 ClassIsland 清单文件" @click.stop="downloadInstanceManifest(inst)">
+                    <button
+                      v-if="instanceMode(inst) === 'static' && !inst.is_shared"
+                      title="下载 ClassIsland 清单文件"
+                      @click.stop="downloadInstanceManifest(inst)"
+                    >
                       <Icon icon="ri-download-line" :size="13" />
                     </button>
-                    <button v-else title="打开配置地址" @click.stop="openInstanceConfigUrl(inst)">
+                    <button
+                      v-else-if="instanceMode(inst) !== 'static'"
+                      title="打开配置地址"
+                      @click.stop="openInstanceConfigUrl(inst)"
+                    >
                       <Icon icon="ri-external-link-line" :size="13" />
                     </button>
-                    <button class="danger" title="删除实例" @click.stop="deleteInstance(inst)">
+                    <button v-if="!inst.is_shared" class="danger" title="删除实例" @click.stop="deleteInstance(inst)">
                       <Icon icon="ri-delete-bin-line" :size="13" />
                     </button>
                   </div>
@@ -766,6 +790,8 @@
     :instance="editingInstance"
     :group-dir-id="groupDirId"
     :cloud-files="ownedCloudFiles"
+    :source-locked="!!editingInstance?.is_shared"
+    :shared-instance="!!editingInstance?.is_shared"
     @close="showInstanceDialog = false"
     @saved="onInstanceSaved"
   />
@@ -895,6 +921,16 @@ interface DistributionInstance {
   urls?: { kind?: string; manifest?: string; file_template?: string; source?: string };
   valid?: boolean;
   warning?: string;
+  /** ===== 来自分享的配置实例（后端 distributions 新契约） ===== */
+  is_shared?: boolean;
+  /** 分享者用户名 */
+  shared_from?: string;
+  /** 分享权限（四档，已归一化） */
+  shared_permission?: string;
+  /** 当前接收者是否可以编辑实例标识 / 组织名称 */
+  can_edit_instance?: boolean;
+  /** 分享者原始源文件 id（source_file_id 可能是接收者空间里的占位文件 id） */
+  owner_source_file_id?: number;
 }
 
 /** 分发模式：static=静态集控（ClassIsland 清单），url=公开配置地址（CSES / ExamAware） */
@@ -1850,7 +1886,16 @@ function normalizeInstance(raw: any): DistributionInstance | null {
   if (!raw || typeof raw !== 'object') return null;
   const id = Number(raw.id);
   if (!Number.isFinite(id)) return null;
-  const sourceFileId = Number(raw.source_file_id);
+  // 共享实例的 source_file_id 可能为 null（接收者空间暂无占位文件），不能归一成 0
+  const rawSourceFileId = raw.source_file_id;
+  const sourceFileId = rawSourceFileId === null || rawSourceFileId === undefined || rawSourceFileId === ''
+    ? NaN
+    : Number(rawSourceFileId);
+  const rawOwnerSourceFileId = raw.owner_source_file_id;
+  const ownerSourceFileId = rawOwnerSourceFileId === null || rawOwnerSourceFileId === undefined || rawOwnerSourceFileId === ''
+    ? NaN
+    : Number(rawOwnerSourceFileId);
+  const boolField = (value: unknown): boolean => value === true || Number(value) === 1;
   const urls = raw.urls && typeof raw.urls === 'object'
     ? {
         kind: typeof raw.urls.kind === 'string' ? raw.urls.kind : '',
@@ -1867,7 +1912,7 @@ function normalizeInstance(raw: any): DistributionInstance | null {
     format: typeof raw.format === 'string' ? raw.format : '',
     format_label: typeof raw.format_label === 'string' ? raw.format_label : '',
     format_mode: typeof raw.format_mode === 'string' ? raw.format_mode : '',
-    source_file_id: Number.isFinite(sourceFileId) ? sourceFileId : undefined,
+    source_file_id: Number.isFinite(sourceFileId) && sourceFileId > 0 ? sourceFileId : undefined,
     source_file_name: typeof raw.source_file_name === 'string' ? raw.source_file_name : '',
     source_file_type: typeof raw.source_file_type === 'string' ? raw.source_file_type : '',
     source_updated_at: typeof raw.source_updated_at === 'string' ? raw.source_updated_at : '',
@@ -1882,6 +1927,12 @@ function normalizeInstance(raw: any): DistributionInstance | null {
     // 接口缺失 valid 字段时按“正常”处理，避免误报警告
     valid: raw.valid !== false,
     warning: typeof raw.warning === 'string' ? raw.warning : '',
+    // 共享实例（来自分享的配置实例）
+    is_shared: boolField(raw.is_shared),
+    shared_from: typeof raw.shared_from === 'string' ? raw.shared_from : '',
+    shared_permission: typeof raw.shared_permission === 'string' ? raw.shared_permission : '',
+    can_edit_instance: boolField(raw.can_edit_instance),
+    owner_source_file_id: Number.isFinite(ownerSourceFileId) && ownerSourceFileId > 0 ? ownerSourceFileId : undefined,
   };
 }
 
@@ -2121,10 +2172,36 @@ function onPropertiesDialogClose() {
   void loadCloudFiles();
 }
 
+/** 共享实例权限文案（四档，兼容旧 view/edit） */
+function sharedInstancePermissionText(inst: DistributionInstance): string {
+  switch (String(inst.shared_permission || '')) {
+    case 'view_instance': return '查看实例（只读）';
+    case 'edit_instance': return '可编辑实例';
+    case 'edit_file': return '可编辑源文件（实例只读）';
+    case 'view_file': return '仅查看';
+    default: return '来自分享';
+  }
+}
+
+function sharedInstanceTitle(inst: DistributionInstance): string {
+  return `来自 ${inst.shared_from || '他人'} 的分享 · ${sharedInstancePermissionText(inst)}`;
+}
+
+/** 是否可编辑实例：自有实例恒可；共享实例需后端明确 can_edit_instance=true */
+function canEditInstance(inst: DistributionInstance): boolean {
+  if (!inst.is_shared) return true;
+  return inst.can_edit_instance === true;
+}
+
 async function openInstanceSourceFile(inst: DistributionInstance) {
   const fileId = Number(inst.source_file_id);
+  if (!Number.isFinite(fileId) || fileId <= 0) {
+    alert('源文件暂不可用（可能尚未接收完成），请稍后刷新实例列表再试');
+    return;
+  }
+  // 共享实例的 source_file_id 是接收者云空间中的分享占位文件，同样允许打开（只读/可编辑由文件分享权限决定）
   const target = cloudFiles.value.find(
-    (f) => Number(f.id) === fileId && f.source !== 'shared' && !f.is_directory
+    (f) => Number(f.id) === fileId && !f.is_directory
   );
   if (!target) {
     alert('源文件不在当前云文件列表中，可能已被删除或尚未加载，请刷新后重试');
@@ -2134,6 +2211,10 @@ async function openInstanceSourceFile(inst: DistributionInstance) {
 }
 
 function openInstanceEditor(inst: DistributionInstance) {
+  if (!canEditInstance(inst)) {
+    alert('你没有编辑该共享实例的权限，仅可查看');
+    return;
+  }
   editingInstance.value = inst;
   showInstanceDialog.value = true;
 }
@@ -2208,6 +2289,8 @@ function openInstanceConfigUrl(inst: DistributionInstance) {
 
 function downloadInstanceManifest(inst: DistributionInstance) {
   if (instanceMode(inst) !== 'static') return;
+  // 清单地址为文件所有者专属接口，共享实例不提供下载
+  if (inst.is_shared) return;
   const id = Number(inst.id);
   if (!Number.isFinite(id)) return;
   const link = document.createElement('a');
@@ -2219,6 +2302,10 @@ function downloadInstanceManifest(inst: DistributionInstance) {
 }
 
 async function deleteInstance(inst: DistributionInstance) {
+  if (inst.is_shared) {
+    alert('共享实例由分享者管理，接收者不能删除');
+    return;
+  }
   const consumer = instanceMode(inst) === 'url' ? '使用该配置地址的程序' : 'ClassIsland';
   if (!confirm(`确定删除配置实例「${inst.name}」吗？\n删除后${consumer}将无法再同步该实例的配置。`)) return;
   try {
@@ -3834,6 +3921,28 @@ onMounted(async () => {
 .instance-format.fmt-cses { color: var(--status-success); background: rgba(16, 124, 16, 0.1); }
 .instance-format.fmt-examaware { color: #7A5AF8; background: rgba(122, 90, 248, 0.12); }
 .instance-format.fmt-unknown { color: var(--text-tertiary); background: var(--subtle-pressed); }
+/* 来自分享的配置实例徽标 */
+.instance-shared-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  max-width: 120px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  font-size: 9px;
+  line-height: 1.5;
+  color: #7A5AF8;
+  background: rgba(122, 90, 248, 0.12);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.instance-shared-badge span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .instance-status {
   display: inline-flex;
   align-items: center;

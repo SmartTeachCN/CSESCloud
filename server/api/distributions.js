@@ -29,6 +29,8 @@ const { nowStr } = require('../lib/response');
 const convert = require('../lib/classisland-convert');
 const formats = require('../lib/distribution-formats');
 const classislandApp = require('../apps/classisland');
+const cloudShare = require('../lib/cloud-share');
+const sharePermissions = require('../lib/share-permissions');
 const { baseUrlFromRequest } = require('../lib/static-control-public');
 
 const CLOUD_PREFIX = '/.cloud/';
@@ -301,6 +303,82 @@ function buildPreviewUrls(baseUrl, dirId, instanceId, format, file) {
   return { kind: 'url', source: formats.rawConfigUrl(baseUrl, dirId, instanceId, ext) };
 }
 
+// ────────────────────── 被分享文件的配置实例 ──────────────────────
+
+/**
+ * 当前用户已接受的 cloud_file 分享中、权限 ≥「查看实例」的那些，
+ * 及其绑定在该分享文件上的实例（分享者的 instances）。
+ * 注意：只查分享文件对应的实例，不泄漏分享者的其它实例。
+ * @returns {Array<{row:object, share:object, permission:string}>}
+ */
+function sharedInstancePairs(DB, Auth, ownerKey) {
+  let shares = [];
+  try {
+    shares = cloudShare.acceptedSharesForUser(DB, Auth) || [];
+  } catch (_) {
+    return [];
+  }
+  if (!shares.length) return [];
+
+  const placeholders = APP_KEYS.map(() => '?').join(',');
+  const currentOwnerKey = String(ownerKey || '');
+  const seen = new Set();
+  const pairs = [];
+  for (const share of shares) {
+    const shareOwnerKey = String(share.owner_key || '');
+    if (!shareOwnerKey || shareOwnerKey === currentOwnerKey) continue;
+    const permission = sharePermissions.normalizePermission(share.user_permission || share.permission);
+    if (!sharePermissions.allows(permission, 'view_instance')) continue;
+    const sourceFileId = parseInt(share.resource_id, 10) || 0;
+    if (!sourceFileId) continue;
+    const rows = DB.all(
+      `SELECT * FROM instances WHERE source_file_id = ? AND owner_key = ? AND app_key IN (${placeholders}) ORDER BY id ASC`,
+      [sourceFileId, share.owner_key, ...APP_KEYS]
+    );
+    for (const row of rows) {
+      const key = String(row.id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pairs.push({ row: row, share: share, permission: permission });
+    }
+  }
+  return pairs;
+}
+
+/**
+ * 给共享实例 DTO 补附加字段：
+ *  - is_shared/shared_from/shared_permission/can_edit_instance/owner_source_file_id
+ *  - source_file_id 覆盖为接收者云空间中该分享占位文件的 id（找不到则 null）
+ */
+function decorateSharedDTO(DB, dto, pair, cloudUsername) {
+  const permission = pair.permission;
+  const ownerSourceFileId = parseInt(pair.row.source_file_id, 10) || null;
+  const placeholder = cloudUsername
+    ? cloudShare.findPlaceholderForShare(DB, pair.share.id, cloudUsername, ownerSourceFileId)
+    : null;
+  return Object.assign(dto, {
+    is_shared: true,
+    shared_from: pair.share.owner_username || '',
+    shared_permission: permission,
+    can_edit_instance: sharePermissions.allows(permission, 'edit_instance'),
+    owner_source_file_id: ownerSourceFileId,
+    source_file_id: placeholder ? placeholder.id : null,
+  });
+}
+
+/** 构造实例 DTO 列表：自己的实例 + 被分享文件对应的实例（带共享标记）。 */
+function buildInstancesWithShared(DB, Auth, ownerKey, ownRows, ownGroup, baseUrl, cloudUsername) {
+  const pairs = sharedInstancePairs(DB, Auth, ownerKey);
+  const rows = ownRows.concat(pairs.map((pair) => pair.row));
+  const dtos = buildDTOs(DB, rows, ownGroup, baseUrl);
+  if (!pairs.length) return dtos;
+  const pairById = new Map(pairs.map((pair) => [String(pair.row.id), pair]));
+  return dtos.map((dto) => {
+    const pair = pairById.get(String(dto.id));
+    return pair ? decorateSharedDTO(DB, dto, pair, cloudUsername) : dto;
+  });
+}
+
 // ────────────────────────────── 路由入口 ──────────────────────────────
 
 module.exports = async (ctx) => {
@@ -335,7 +413,7 @@ module.exports = async (ctx) => {
       },
       base_url: baseUrl,
       formats: Object.values(formats.FORMATS),
-      instances: buildDTOs(DB, rows, group, baseUrl),
+      instances: buildInstancesWithShared(DB, Auth, ownerKey, rows, group, baseUrl, username),
     });
   }
 
@@ -343,21 +421,33 @@ module.exports = async (ctx) => {
   if (method === 'GET' && action === 'list') {
     const group = findGroup(DB, ownerKey);
     const rows = listRows(DB, ownerKey);
-    Response.success(buildDTOs(DB, rows, group, baseUrl));
+    Response.success(buildInstancesWithShared(DB, Auth, ownerKey, rows, group, baseUrl, username));
   }
 
   if (method === 'GET' && action === 'get') {
     const id = parseInt(query.id ?? 0, 10) || 0;
     if (!id) Response.error('缺少实例 ID（id）');
     const row = DB.one(
-      `SELECT * FROM instances WHERE id = ? AND owner_key = ? AND app_key IN (${APP_KEYS.map(() => '?').join(',')})`,
-      [id, ownerKey, ...APP_KEYS]
+      `SELECT * FROM instances WHERE id = ? AND app_key IN (${APP_KEYS.map(() => '?').join(',')})`,
+      [id, ...APP_KEYS]
     );
     if (!row) Response.error('配置实例不存在或无权访问', 403, 403);
+
+    // 非 owner：必须在「已接受且权限 ≥ 查看实例」的分享范围内
+    let sharedPair = null;
+    if (String(row.owner_key || '') !== ownerKey) {
+      sharedPair = sharedInstancePairs(DB, Auth, ownerKey).find(
+        (pair) => String(pair.row.id) === String(row.id)
+      ) || null;
+      if (!sharedPair) Response.error('配置实例不存在或无权访问', 403, 403);
+    }
+
     const group = DB.one('SELECT * FROM instance_groups WHERE id = ?', [row.group_id]) || null;
-    Response.success(buildDTO(DB, row, group, baseUrl, {
+    let dto = buildDTO(DB, row, group, baseUrl, {
       files: new Map(), validations: new Map(), versions: new Map(),
-    }));
+    });
+    if (sharedPair) dto = decorateSharedDTO(DB, dto, sharedPair, username);
+    Response.success(dto);
   }
 
   // ── 源文件校验 / 格式识别 ──
@@ -492,17 +582,114 @@ module.exports = async (ctx) => {
     }), '分发配置已创建');
   }
 
-  // ── 更新分发 ──
+  // ── 更新分发（owner 可改全部字段；共享接收者仅「编辑实例」权限可改实例标识/组织名称） ──
   if (method === 'POST' && action === 'update') {
     const id = parseInt(body.id ?? 0, 10) || 0;
     if (!id) Response.error('缺少实例 ID（id）');
 
     const row = DB.one(
-      `SELECT * FROM instances WHERE id = ? AND owner_key = ? AND app_key IN (${APP_KEYS.map(() => '?').join(',')})`,
-      [id, ownerKey, ...APP_KEYS]
+      `SELECT * FROM instances WHERE id = ? AND app_key IN (${APP_KEYS.map(() => '?').join(',')})`,
+      [id, ...APP_KEYS]
     );
     if (!row) Response.error('配置实例不存在或无权修改', 403, 403);
 
+    const isOwner = String(row.owner_key || '') === ownerKey;
+    let sharedPair = null;
+    if (!isOwner) {
+      sharedPair = sharedInstancePairs(DB, Auth, ownerKey).find(
+        (pair) => String(pair.row.id) === String(row.id)
+      ) || null;
+      if (!sharedPair) Response.error('配置实例不存在或无权修改', 403, 403);
+      if (!sharePermissions.allows(sharedPair.permission, 'edit_instance')) {
+        Response.error('没有编辑该实例的权限（需要「编辑实例」权限）', 403, 403);
+      }
+    }
+
+    // ── 共享接收者：仅允许修改实例标识与组织名称，源文件不可变更 ──
+    if (sharedPair) {
+      const group = DB.one('SELECT * FROM instance_groups WHERE id = ?', [row.group_id]) || null;
+      if (!group) Response.error('配置实例所属实例组不存在，请重新创建分发', 404, 404);
+
+      if (body.file_id !== undefined && body.file_id !== null && body.file_id !== '') {
+        const nextFileId = parseInt(body.file_id, 10) || 0;
+        if (nextFileId !== (parseInt(row.source_file_id, 10) || 0)) {
+          Response.error('共享实例不支持修改源文件', 1, 400);
+        }
+      }
+
+      const sharedUpdates = {};
+      const config = parseConfig(row.config);
+      let sharedChanged = false;
+
+      if (body.instance_id !== undefined && body.instance_id !== null) {
+        const nextName = String(body.instance_id).trim();
+        if (nextName === '') Response.error('实例标识不能为空');
+        if (nextName !== row.name) {
+          if (!convert.validInstanceId(nextName)) {
+            Response.error('实例标识不合法（不能包含 / \\ : * ? " < > |、不能包含 .. 且不能以 . 开头）');
+          }
+          const duplicate = DB.one(
+            'SELECT id, name FROM instances WHERE group_id = ? AND name = ? AND id != ?',
+            [group.id, nextName, id]
+          );
+          if (duplicate) {
+            Response.error(
+              '实例标识「' + nextName + '」已被占用，请使用其他名称',
+              1,
+              400,
+              { existing_id: duplicate.id, existing_name: duplicate.name }
+            );
+          }
+          sharedUpdates.name = nextName;
+          sharedChanged = true;
+        }
+      }
+
+      if (body.organization_name !== undefined) {
+        const nextOrganizationName = normalizeOrganizationName(body.organization_name, group.dir_id);
+        if (nextOrganizationName !== (config.organization_name || '')) {
+          config.organization_name = nextOrganizationName;
+          sharedChanged = true;
+        }
+      }
+
+      if (!sharedChanged) {
+        Response.success(decorateSharedDTO(
+          DB,
+          buildDTO(DB, row, group, baseUrl, {
+            files: new Map(), validations: new Map(), versions: new Map(),
+          }),
+          sharedPair,
+          username
+        ), '分发配置未变化');
+      }
+
+      const now = nowStr();
+      sharedUpdates.config = JSON.stringify(config);
+      sharedUpdates.updated_at = now;
+      // 按实例 id 更新（不加 owner_key 限制），并 touch 分享者的实例组
+      DB.update('instances', sharedUpdates, 'id = ?', [id]);
+      DB.update('instance_groups', { updated_at: now }, 'id = ?', [group.id]);
+
+      Auth.logAudit(
+        schoolId,
+        userId,
+        'distribution_update_shared',
+        `更新共享配置实例 ${sharedUpdates.name || row.name}（分享者 ${sharedPair.share.owner_username}，组 ${group.dir_id}）`
+      );
+
+      const updatedShared = DB.one('SELECT * FROM instances WHERE id = ?', [id]);
+      Response.success(decorateSharedDTO(
+        DB,
+        buildDTO(DB, updatedShared, group, baseUrl, {
+          files: new Map(), validations: new Map(), versions: new Map(),
+        }),
+        sharedPair,
+        username
+      ), '分发配置已更新');
+    }
+
+    // ── owner：保持原有更新逻辑 ──
     const group = DB.one('SELECT * FROM instance_groups WHERE id = ? AND owner_key = ?', [row.group_id, ownerKey]);
     if (!group) Response.error('配置实例所属实例组不存在，请重新创建分发', 404, 404);
 

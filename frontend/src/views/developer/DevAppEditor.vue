@@ -159,10 +159,15 @@
                     <input v-model="tool.label" :disabled="readonly" @input="onRibbonChange" placeholder="显示名" />
                     <input v-model="tool.icon" :disabled="readonly" @input="onRibbonChange" placeholder="ri-xxx-line" />
                     <input v-model="tool.command" :disabled="readonly" @input="onRibbonChange" placeholder="command（如 save）" />
-                    <select v-model="tool.type" :disabled="readonly" @change="onRibbonChange" class="rv-tool-type">
-                      <option value="action">点击按钮</option>
-                      <option value="select">页面切换</option>
-                    </select>
+                    <CustomSelect
+                      v-model="tool.type"
+                      :options="ribbonToolTypeOptions"
+                      class="rv-tool-type"
+                      inline
+                      height="25px"
+                      :disabled="readonly"
+                      @change="onRibbonChange"
+                    />
                   </div>
                   <button v-if="!readonly" class="rv-del-sm" @click="removeTool(gi, ti)" title="删除工具">
                     <Icon icon="ri-close-line" :size="12" />
@@ -271,6 +276,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import CustomSelect from '../../components/CustomSelect.vue';
 import { useAuth } from '../../composables/useAuth';
 import { devApi } from '../../api';
 
@@ -329,6 +335,12 @@ interface RibbonGroup {
   tools: RibbonTool[];
 }
 const ribbonGroups = ref<RibbonGroup[]>([]);
+
+/** Ribbon 工具类型下拉选项 */
+const ribbonToolTypeOptions = [
+  { value: 'action', label: '点击按钮' },
+  { value: 'select', label: '页面切换' },
+];
 
 // 从 appInfoText 解析 ribbon 到可视化编辑器
 function syncRibbonFromAppInfo() {
@@ -1042,17 +1054,15 @@ onMounted(() => {
 .rv-tool-fields input:focus { border-color: var(--accent-base); }
 
 .rv-tool-type {
-  padding: 4px var(--spacer-2);
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border);
-  border-radius: var(--radius-xs);
-  font-size: var(--font-size-xs);
-  color: var(--text-primary);
-  outline: none;
-  font-family: var(--font-mono, monospace);
   grid-column: 1 / -1;
 }
-.rv-tool-type:focus { border-color: var(--accent-base); }
+
+.rv-tool-type :deep(.select-trigger) {
+  padding: 0 var(--spacer-2);
+  border-radius: var(--radius-xs);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono, monospace);
+}
 
 .rv-del-sm {
   position: absolute;

@@ -138,11 +138,13 @@
                 <div class="pref-title">界面语言</div>
                 <div class="pref-desc">选择系统显示语言</div>
               </div>
-              <select v-model="preferences.language" class="form-select" @change="savePreferences">
-                <option value="zh-CN">简体中文</option>
-                <option value="en-US">English</option>
-                <option value="zh-TW">繁體中文</option>
-              </select>
+              <CustomSelect
+                v-model="preferences.language"
+                :options="languageOptions"
+                inline
+                width="110px"
+                @change="savePreferences"
+              />
             </div>
 
             <div class="pref-item">
@@ -189,11 +191,13 @@
                 <div class="pref-title">数据导出格式</div>
                 <div class="pref-desc">选择导出数据时的默认文件格式</div>
               </div>
-              <select v-model="preferences.exportFormat" class="form-select" @change="savePreferences">
-                <option value="csv">CSV</option>
-                <option value="xlsx">Excel</option>
-                <option value="pdf">PDF</option>
-              </select>
+              <CustomSelect
+                v-model="preferences.exportFormat"
+                :options="exportFormatOptions"
+                inline
+                width="96px"
+                @change="savePreferences"
+              />
             </div>
           </div>
         </div>
@@ -244,6 +248,7 @@
 import { ref, reactive, computed, onMounted } from 'vue';
 import { profileApi } from '../../api';
 import { useAuth } from '../../composables/useAuth';
+import CustomSelect from '../../components/CustomSelect.vue';
 
 const { user } = useAuth();
 const activeSection = ref<'info' | 'security' | 'preferences'>('info');
@@ -269,6 +274,18 @@ const preferences = reactive({
   weeklyReport: false,
   exportFormat: 'xlsx'
 });
+
+const languageOptions = [
+  { value: 'zh-CN', label: '简体中文' },
+  { value: 'en-US', label: 'English' },
+  { value: 'zh-TW', label: '繁體中文' },
+];
+
+const exportFormatOptions = [
+  { value: 'csv', label: 'CSV' },
+  { value: 'xlsx', label: 'Excel' },
+  { value: 'pdf', label: 'PDF' },
+];
 
 // 密码修改
 const showPasswordDialog = ref(false);
@@ -596,8 +613,7 @@ onMounted(() => {
   color: var(--text-primary);
 }
 
-.form-input,
-.form-select {
+.form-input {
   height: 36px;
   padding: 0 var(--spacer-3);
   background: var(--ctrl-fill-default);
@@ -610,13 +626,8 @@ onMounted(() => {
   font-family: var(--font-family);
 }
 
-.form-input:focus,
-.form-select:focus {
+.form-input:focus {
   border-color: var(--accent-base);
-}
-
-.form-select {
-  cursor: pointer;
 }
 
 .form-error {

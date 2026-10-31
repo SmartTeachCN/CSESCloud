@@ -19,6 +19,10 @@
               <span class="im-meta-label">分发类型</span>
               <span class="im-format-badge" :class="formatClass(instanceFormat)">{{ instanceFormatLabel }}</span>
             </div>
+            <div class="im-meta-row" v-if="sharedInstance">
+              <span class="im-meta-label">来源</span>
+              <span class="im-meta-value">来自分享 · {{ instance?.shared_from || '分享者' }}</span>
+            </div>
             <div class="im-meta-row">
               <span class="im-meta-label">实例组标识</span>
               <span class="im-meta-value mono">{{ groupDirId || displayInstance?.group_dir_id || '-' }}</span>
@@ -67,10 +71,20 @@
 
           <div class="im-field">
             <label class="im-label">源文件</label>
-            <select v-model="fileId" class="im-select" :disabled="saving">
-              <option v-for="f in fileOptions" :key="f.id" :value="f.id">{{ f.name }}</option>
-            </select>
-            <div class="im-field-hint">修改源文件后，分发配置将随新文件内容更新（格式可能随之变化）。</div>
+            <template v-if="sourceLocked">
+              <input class="im-input" :value="lockedSourceName" readonly disabled />
+              <div class="im-field-hint">源文件由分享者提供，接收者不能更换；文件只读或可编辑取决于分享权限。</div>
+            </template>
+            <template v-else>
+              <CustomSelect
+                v-model="fileId"
+                :options="sourceFileOptions"
+                class="im-select"
+                height="34px"
+                :disabled="saving"
+              />
+              <div class="im-field-hint">修改源文件后，分发配置将随新文件内容更新（格式可能随之变化）。</div>
+            </template>
           </div>
 
           <div class="im-field">
@@ -95,7 +109,14 @@
                 <Icon :icon="copied === 'manifest' ? 'ri-check-line' : 'ri-file-copy-line'" :size="13" />
                 <span>{{ copied === 'manifest' ? '已复制' : '复制' }}</span>
               </button>
-              <a v-if="downloadHref" class="im-download-btn" :href="downloadHref" target="_blank" rel="noopener" title="下载 ClassIsland 清单文件">
+              <a
+                v-if="downloadHref && !sharedInstance"
+                class="im-download-btn"
+                :href="downloadHref"
+                target="_blank"
+                rel="noopener"
+                title="下载 ClassIsland 清单文件"
+              >
                 <Icon icon="ri-download-line" :size="13" />
               </a>
             </div>
@@ -147,6 +168,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import CustomSelect from '../CustomSelect.vue';
 import { distributionsApi } from '../../api';
 
 /** 分发模式：static=静态集控（ClassIsland 清单），url=公开配置地址（CSES / ExamAware） */
@@ -177,6 +199,12 @@ interface DistributionInstance {
   urls?: DistributionUrls;
   valid?: boolean;
   warning?: string;
+  /** 来自分享的实例字段（后端新契约） */
+  is_shared?: boolean;
+  shared_from?: string;
+  shared_permission?: string;
+  can_edit_instance?: boolean;
+  owner_source_file_id?: number;
 }
 
 interface CloudFileOption {
@@ -189,6 +217,10 @@ const props = defineProps<{
   instance: DistributionInstance | null;
   groupDirId: string;
   cloudFiles: CloudFileOption[];
+  /** 源文件锁定（共享实例：源文件由分享者提供，接收者不能更换） */
+  sourceLocked?: boolean;
+  /** 共享实例（来自分享：隐藏 owner-only 的清单下载入口） */
+  sharedInstance?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -275,9 +307,20 @@ const fileOptions = computed<CloudFileOption[]>(() => {
   return list;
 });
 
+/** 源文件下拉的 CustomSelect 选项 */
+const sourceFileOptions = computed(() => fileOptions.value.map((f) => ({ value: f.id, label: f.name })));
+
 const instanceNameError = computed(() => validateInstanceName(instanceName.value));
+/** 锁定态下展示的源文件名（仅用于只读展示） */
+const lockedSourceName = computed(() => {
+  return displayInstance.value?.source_file_name
+    || props.instance?.source_file_name
+    || '来自分享的源文件';
+});
 const canSave = computed(() => {
-  return !!props.instance && !instanceNameError.value && !!fileId.value && !saving.value;
+  if (!props.instance || instanceNameError.value || saving.value) return false;
+  // 共享实例源文件锁定：不要求选择源文件
+  return !!props.sourceLocked || !!fileId.value;
 });
 
 /** 实例标识校验：允许中文/空格，规则与后端 convert.validInstanceId 保持一致 */
@@ -358,20 +401,26 @@ async function copyText(text: string, key: string) {
 async function save() {
   if (!props.instance || saving.value) return;
   if (instanceNameError.value) return;
-  const parsedFileId = Number(fileId.value);
-  if (!Number.isFinite(parsedFileId)) {
-    error.value = '请选择有效的源文件。';
-    return;
-  }
   error.value = '';
   successMessage.value = '';
   saving.value = true;
   try {
-    const dto = await distributionsApi.update(props.instance.id, {
+    const body: { instance_id: string; organization_name: string; file_id?: number } = {
       instance_id: instanceName.value.trim(),
       organization_name: organizationName.value.trim(),
-      file_id: parsedFileId,
-    });
+    };
+    if (props.sourceLocked) {
+      // 共享实例：源文件由分享者锁定，只提交实例标识与组织名称
+    } else {
+      const parsedFileId = Number(fileId.value);
+      if (!Number.isFinite(parsedFileId)) {
+        error.value = '请选择有效的源文件。';
+        saving.value = false;
+        return;
+      }
+      body.file_id = parsedFileId;
+    }
+    const dto = await distributionsApi.update(props.instance.id, body);
     if (!dto || typeof dto !== 'object') {
       throw new Error('服务端未返回配置实例信息，请稍后重试。');
     }
@@ -580,8 +629,7 @@ function onClose() {
   color: var(--status-error);
 }
 
-.im-input,
-.im-select {
+.im-input {
   width: 100%;
   height: 34px;
   padding: 0 var(--spacer-3);
@@ -595,8 +643,7 @@ function onClose() {
   transition: border-color var(--fast-duration);
 }
 
-.im-input:focus,
-.im-select:focus {
+.im-input:focus {
   border-color: var(--accent-base);
 }
 
@@ -604,8 +651,9 @@ function onClose() {
   border-color: var(--status-error);
 }
 
+/* 源文件下拉（CustomSelect）：只保留布局宽度，皮肤由组件提供 */
 .im-select {
-  cursor: pointer;
+  width: 100%;
 }
 
 .im-field-hint {

@@ -30,14 +30,14 @@
       </div>
       <div class="filter-group">
         <span class="filter-label">操作类型</span>
-        <select v-model="filters.action" class="filter-input">
-          <option value="">全部</option>
-          <option value="create">创建</option>
-          <option value="update">更新</option>
-          <option value="delete">删除</option>
-          <option value="login">登录</option>
-          <option value="export">导出</option>
-        </select>
+        <CustomSelect
+          v-model="filters.action"
+          :options="actionFilterOptions"
+          inline
+          width="110px"
+          height="32px"
+          class="filter-select"
+        />
       </div>
       <div class="filter-group">
         <span class="filter-label">用户</span>
@@ -45,11 +45,14 @@
       </div>
       <div class="filter-group">
         <span class="filter-label">状态</span>
-        <select v-model="filters.status" class="filter-input">
-          <option value="">全部</option>
-          <option value="success">成功</option>
-          <option value="failed">失败</option>
-        </select>
+        <CustomSelect
+          v-model="filters.status"
+          :options="statusFilterOptions"
+          inline
+          width="110px"
+          height="32px"
+          class="filter-select"
+        />
       </div>
       <div class="filter-group">
         <button class="btn btn-primary" @click="applyFilters">
@@ -121,11 +124,14 @@
           >{{ page }}</button>
           <button class="btn btn-ghost-sm" :disabled="currentPage >= totalPages" @click="currentPage++">下一页</button>
         </div>
-        <select v-model.number="pageSize" class="page-size-select">
-          <option :value="10">10 条/页</option>
-          <option :value="20">20 条/页</option>
-          <option :value="50">50 条/页</option>
-        </select>
+        <CustomSelect
+          v-model="pageSize"
+          :options="pageSizeOptions"
+          inline
+          width="92px"
+          height="32px"
+          class="page-size-select"
+        />
       </div>
     </div>
   </div>
@@ -133,6 +139,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue';
+import CustomSelect from '../../components/CustomSelect.vue';
 
 type ActionType = 'create' | 'update' | 'delete' | 'login' | 'export';
 type StatusType = 'success' | 'failed';
@@ -167,6 +174,27 @@ const filters = reactive<Filters>({
 });
 
 const appliedFilters = reactive<Filters>({ ...filters });
+
+const actionFilterOptions = [
+  { value: '', label: '全部' },
+  { value: 'create', label: '创建' },
+  { value: 'update', label: '更新' },
+  { value: 'delete', label: '删除' },
+  { value: 'login', label: '登录' },
+  { value: 'export', label: '导出' },
+];
+
+const statusFilterOptions = [
+  { value: '', label: '全部' },
+  { value: 'success', label: '成功' },
+  { value: 'failed', label: '失败' },
+];
+
+const pageSizeOptions = [
+  { value: 10, label: '10 条/页' },
+  { value: 20, label: '20 条/页' },
+  { value: 50, label: '50 条/页' },
+];
 
 const logs = ref<LogEntry[]>([
   { id: '1', timestamp: '2024-01-15 14:32:18', user: '张三', action: 'create', target: '班级 CS-2024-1', ip: '192.168.1.105', status: 'success' },
@@ -282,6 +310,11 @@ function exportLogs() {
 
 .filter-input:focus {
   border-color: var(--accent-base);
+}
+
+.filter-select :deep(.select-trigger),
+.page-size-select :deep(.select-trigger) {
+  padding: 0 var(--spacer-2);
 }
 
 .filter-sep {
@@ -468,14 +501,7 @@ function exportLogs() {
   color: var(--accent-text);
 }
 
-.page-size-select {
-  height: 32px;
+.page-size-select :deep(.select-trigger) {
   padding: 0 var(--spacer-2);
-  background: var(--ctrl-fill-default);
-  border: 1px solid var(--ctrl-border);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  cursor: pointer;
 }
 </style>

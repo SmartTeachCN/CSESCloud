@@ -11,10 +11,17 @@ const routes = [
     meta: { title: 'CSES Cloud 智教云', requiresAuth: false }
   },
   {
+    path: '/share/link',
+    name: 'ShareLink',
+    component: () => import('../views/share/SharePreviewPage.vue'),
+    meta: { title: '分享链接', requiresAuth: false }
+  },
+  {
+    // 兼容旧链接：/share/preview?token=... 仍可用
     path: '/share/preview',
     name: 'SharePreview',
     component: () => import('../views/share/SharePreviewPage.vue'),
-    meta: { title: '分享预览', requiresAuth: false }
+    meta: { title: '分享链接', requiresAuth: false }
   },
   {
     path: '/login',

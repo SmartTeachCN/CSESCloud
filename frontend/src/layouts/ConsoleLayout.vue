@@ -294,7 +294,7 @@ import { useRoute, useRouter } from 'vue-router';
 import BrandLogo from '../components/BrandLogo.vue';
 import AiAssistantDrawer from '../components/AiAssistantDrawer.vue';
 import { useAuth } from '../composables/useAuth';
-import { notificationsApi, helpApi, dataSpaceApi, distributionsApi } from '../api';
+import { notificationsApi, helpApi, dataSpaceApi, distributionsApi, authApi } from '../api';
 import { api } from '../api/client';
 
 const route = useRoute();
@@ -313,7 +313,7 @@ const unreadCount = ref(0);
 // AI 助理抽屉
 const aiDrawerVisible = ref(false);
 
-const { fetchMe, user: sessionUser } = useAuth();
+const { fetchMe, user: sessionUser, clear: clearSession } = useAuth();
 
 // 当前用户认证信息（用于权限控制）
 const authUser = ref<any>(null);
@@ -1186,7 +1186,7 @@ function runCommand(id: CommandId) {
     case 'new-file': router.push({ path: '/console/editor/light', query: { new: 'file' } }); break;
     case 'new-dir': router.push({ path: '/console/editor/light', query: { new: 'dir' } }); break;
     case 'mark-all-read': void markAllNotificationsRead(); break;
-    case 'logout': logout(); break;
+    case 'logout': void logout(); break;
     default: break;
   }
 }
@@ -1320,9 +1320,17 @@ function goBack() {
   router.back();
 }
 
-function logout() {
+async function logout() {
+  try {
+    // 必须通知服务端销毁会话，否则 cookie 仍在，登录页会被导航守卫送回控制台
+    await authApi.logout();
+  } catch {
+    // 网络失败也继续本地清理，避免用户卡在已退出的界面
+  }
+  clearSession();
   localStorage.removeItem('auth_token');
-  window.location.href = '/login';
+  // replace 避免浏览器回退到已退出的控制台页面
+  window.location.replace('/login');
 }
 
 watch(() => route.path, () => {

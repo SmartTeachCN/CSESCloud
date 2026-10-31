@@ -214,6 +214,30 @@ function ensurePlaceholderForShare(DB, share, targetUsername) {
   return DB.one('SELECT * FROM web_hosting_files WHERE id = ?', [id]);
 }
 
+/**
+ * 查找某分享在接收者云空间中的占位文件（只读，不创建）。
+ * 通过占位标记匹配 share_id（以及可选的 owner_file_id）。
+ * @returns {object|null} placeholder row
+ */
+function findPlaceholderForShare(DB, shareId, targetUsername, ownerFileId) {
+  const targetShareId = parseInt(shareId, 10) || 0;
+  if (!targetShareId || !targetUsername) return null;
+  const expectedOwnerFileId = parseInt(ownerFileId, 10) || 0;
+  const space = DB.one('SELECT * FROM web_hosting_spaces WHERE alliance_username = ?', [targetUsername]);
+  if (!space) return null;
+  const rows = DB.all(
+    `SELECT * FROM web_hosting_files WHERE space_id = ? AND is_directory = 0 AND file_path LIKE ?`,
+    [space.id, CLOUD_PREFIX + '%']
+  );
+  for (const row of rows) {
+    const marker = parseMarker(row.content);
+    if (!marker || marker.share_id !== targetShareId) continue;
+    if (expectedOwnerFileId && marker.owner_file_id !== expectedOwnerFileId) continue;
+    return row;
+  }
+  return null;
+}
+
 /** 为当前用户所有已接受的 cloud_file 分享补齐占位符。 */
 function ensurePlaceholdersForUser(DB, Auth) {
   const shares = acceptedSharesForUser(DB, Auth);
@@ -302,9 +326,11 @@ module.exports = {
   makeMarker,
   parseMarker,
   isPlaceholder,
+  ownerFileOf,
   ensureCloudSpace,
   ensureCloudDir,
   ensurePlaceholderForShare,
+  findPlaceholderForShare,
   ensurePlaceholdersForUser,
   acceptedSharesForUser,
   shareTargetContext,

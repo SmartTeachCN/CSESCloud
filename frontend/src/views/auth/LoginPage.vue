@@ -75,11 +75,15 @@
             <label for="school-select">学校</label>
             <div class="input-wrapper">
               <Icon icon="ri-school-line" class="input-icon" />
-              <select id="school-select" v-model="selectedSchoolValue" @change="onSchoolChange">
-                <option value="" disabled>请选择学校</option>
-                <option v-for="s in schools" :key="s.id" :value="String(s.id)">{{ s.name }}</option>
-              </select>
-              <Icon icon="ri-arrow-down-s-line" class="select-caret" />
+              <CustomSelect
+                id="school-select"
+                v-model="selectedSchoolValue"
+                :options="schoolOptions"
+                placeholder="请选择学校"
+                height="40px"
+                class="school-select"
+                @change="onSchoolChange"
+              />
             </div>
           </div>
 
@@ -227,9 +231,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import BrandLogo from '../../components/BrandLogo.vue';
+import CustomSelect from '../../components/CustomSelect.vue';
 import { authApi } from '../../api';
 import { useAuth } from '../../composables/useAuth';
 
@@ -249,6 +254,10 @@ const allianceUsername = ref('');
 // 子用户登录（学校 + 用户名 + 密码）
 const schools = ref<any[]>([]);
 const selectedSchoolValue = ref<string>('');
+// 学校下拉选项（值统一为字符串，与 selectedSchoolValue 类型一致）
+const schoolOptions = computed(() =>
+  (schools.value || []).map((s: any) => ({ value: String(s.id), label: s.name }))
+);
 const subUsername = ref('');
 const subPassword = ref('');
 const rememberInList = ref(false);
@@ -552,6 +561,19 @@ async function removeSavedEntry(entry: any) {
   display: flex;
   flex-direction: column;
   gap: var(--spacer-4);
+}
+
+/* 学校下拉（CustomSelect）：为左侧图标留位，并保持与输入框一致的字号/圆角 */
+.school-select :deep(.select-trigger) {
+  padding-left: calc(var(--spacer-3) + 24px);
+  font-size: var(--font-size-base);
+  border-radius: var(--radius-md);
+}
+
+/* CustomSelect 根节点为定位元素（relative），会盖住同容器内绝对定位的 .input-icon；
+   抬高图标层级，保证学校图标与其它输入框一致可见 */
+.input-wrapper .input-icon {
+  z-index: 1;
 }
 
 .alliance-tip {

@@ -151,10 +151,11 @@
               </div>
               <div class="form-group" v-if="notifScope === 'school'">
                 <label>目标学校</label>
-                <select v-model="adminNotifForm.school_id">
-                  <option :value="0">-- 请选择学校 --</option>
-                  <option v-for="s in schoolList" :key="s.id" :value="s.id">{{ s.name }}</option>
-                </select>
+                <CustomSelect
+                  v-model="adminNotifForm.school_id"
+                  :options="schoolOptions"
+                  placeholder="请选择学校"
+                />
               </div>
               <div class="form-group">
                 <label>通知类型</label>
@@ -180,10 +181,11 @@
               </div>
               <div class="form-group" v-if="adminNotifForm.target_type !== 'all'">
                 <label>{{ adminNotifForm.target_type === 'role' ? '选择角色' : '选择用户' }}</label>
-                <select v-model="adminNotifForm.target_id">
-                  <option value="">-- 请选择 --</option>
-                  <option v-for="r in adminNotifTargetList" :key="r.value" :value="r.value">{{ r.label }}</option>
-                </select>
+                <CustomSelect
+                  v-model="adminNotifForm.target_id"
+                  :options="adminNotifTargetOptions"
+                  placeholder="请选择"
+                />
               </div>
               <div class="form-group">
                 <label>通知标题 <span class="required">*</span></label>
@@ -227,10 +229,11 @@
             <div class="config-card-body">
               <div class="form-group">
                 <label>默认模型</label>
-                <select v-model="aiConfigForm.default_model">
-                  <option value="default">规则引擎（内置）</option>
-                  <option v-for="m in aiModels" :key="m.id" :value="m.name">{{ m.name }} ({{ m.provider }})</option>
-                </select>
+                <CustomSelect
+                  v-model="aiConfigForm.default_model"
+                  :options="defaultModelOptions"
+                  placeholder="请选择默认模型"
+                />
               </div>
               <button class="btn btn-primary" @click="saveAiConfig" :disabled="aiConfigBusy">
                 {{ aiConfigBusy ? '保存中...' : '保存设置' }}
@@ -300,14 +303,11 @@
                 </div>
                 <div class="form-row">
                   <label>提供商</label>
-                  <select v-model="aiModelForm.provider">
-                    <option value="">选择提供商</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="openai_compatible">OpenAI 兼容</option>
-                    <option value="deepseek">DeepSeek</option>
-                    <option value="anthropic">Anthropic (Claude)</option>
-                    <option value="google">Google (Gemini)</option>
-                  </select>
+                  <CustomSelect
+                    v-model="aiModelForm.provider"
+                    :options="aiProviderOptions"
+                    placeholder="选择提供商"
+                  />
                 </div>
                 <div class="form-row">
                   <label>模型 ID</label>
@@ -620,11 +620,15 @@
               </div>
               <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
                 <span style="font-size:12px;color:var(--text-tertiary)">排序：</span>
-                <select v-model="dsSortBy" @change="loadDataSpaces"
-                  style="padding:4px 8px;font-size:12px;background:var(--ctrl-fill-default);border:1px solid var(--ctrl-border);border-radius:4px;color:var(--text-primary)">
-                  <option value="used">按占用</option>
-                  <option value="username">按用户ID</option>
-                </select>
+                <CustomSelect
+                  v-model="dsSortBy"
+                  :options="dsSortOptions"
+                  inline
+                  width="96px"
+                  height="28px"
+                  class="ds-sort-select"
+                  @change="loadDataSpaces"
+                />
                 <button class="icon-btn-sm"
                   @click="dsSortOrder = dsSortOrder === 'desc' ? 'asc' : 'desc'; loadDataSpaces()"
                   :title="dsSortOrder === 'desc' ? '降序' : '升序'">
@@ -931,6 +935,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { adminApi, helpApi } from '../../api';
 import { useAuth } from '../../composables/useAuth';
+import CustomSelect from '../../components/CustomSelect.vue';
 
 const route = useRoute();
 const { user } = useAuth();
@@ -994,6 +999,10 @@ const newPassword = ref('');
 // 通知管理
 const notifScope = ref('all'); // 'all' | 'school'
 const schoolList = ref<any[]>([]);
+const schoolOptions = computed(() => [
+  { value: 0, label: '-- 请选择学校 --' },
+  ...schoolList.value.map((s: any) => ({ value: s.id, label: s.name })),
+]);
 const adminNotifBusy = ref(false);
 const adminNotifMsg = ref('');
 const adminNotifError = ref(false);
@@ -1040,6 +1049,11 @@ const adminNotifTargetList = computed(() => {
   }
   return [];
 });
+
+const adminNotifTargetOptions = computed(() => [
+  { value: '', label: '-- 请选择 --' },
+  ...adminNotifTargetList.value,
+]);
 
 function getRoleLabel(role: string): string {
   const labels: Record<string, string> = { admin: '管理员', teacher: '教师', student: '学生' };
@@ -1193,6 +1207,20 @@ const showAiModelForm = ref(false);
 const editingAiModelId = ref<number | null>(null);
 const aiModelForm = ref({ name: '', provider: '', model_id: '', endpoint: '', api_key: '' });
 
+const aiProviderOptions = [
+  { value: '', label: '选择提供商' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'openai_compatible', label: 'OpenAI 兼容' },
+  { value: 'deepseek', label: 'DeepSeek' },
+  { value: 'anthropic', label: 'Anthropic (Claude)' },
+  { value: 'google', label: 'Google (Gemini)' },
+];
+
+const defaultModelOptions = computed(() => [
+  { value: 'default', label: '规则引擎（内置）' },
+  ...aiModels.value.map((m: any) => ({ value: m.name, label: `${m.name} (${m.provider})` })),
+]);
+
 // 知识库
 const kbLoading = ref(false);
 const kbBusy = ref(false);
@@ -1329,6 +1357,10 @@ async function deleteWebSpaceConfirm(ws: any) {
 const dsLoading = ref(false);
 const dsSortBy = ref('used');
 const dsSortOrder = ref('desc');
+const dsSortOptions = [
+  { value: 'used', label: '按占用' },
+  { value: 'username', label: '按用户ID' },
+];
 const dataSpaces = ref<any[]>([]);
 
 async function loadDataSpaces() {
@@ -2116,7 +2148,6 @@ onMounted(loadConfig);
 }
 
 .form-row input,
-.form-row select,
 .form-row textarea {
   padding: var(--spacer-2) var(--spacer-3);
   background: var(--ctrl-fill-default);
@@ -2133,7 +2164,6 @@ onMounted(loadConfig);
 }
 
 .form-row input:focus,
-.form-row select:focus,
 .form-row textarea:focus {
   border-color: var(--accent-base);
 }
@@ -2680,6 +2710,11 @@ onMounted(loadConfig);
 }
 
 /* ===== 数据空间管理 ===== */
+.ds-sort-select :deep(.select-trigger) {
+  padding: 0 var(--spacer-2);
+  font-size: 12px;
+}
+
 .dataspace-list {
   display: flex;
   flex-direction: column;
