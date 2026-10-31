@@ -1,0 +1,273 @@
+# CSES Cloud V3 · 发布流水线（tag → 可下载发布产物）
+#
+# 触发：push 标签 v*（在 Actions 页面也可以手动指定一个已存在的标签）。
+# 流程：检出该标签 → 构建前端 → 打包「git 跟踪的源码 + 本次构建的 dist/」
+#       → 生成 cses-cloud-v3-<tag 去 v>.tar.gz / .zip / SHA256SUMS.txt
+#       → 创建或更新对应 GitHub Release 并上传资产。
+#
+# 生产端同步脚本依赖固定文件名（标签去掉 v 前缀后拼进文件名）：
+#   cses-cloud-v3-<tag 去 v>.tar.gz
+#   cses-cloud-v3-<tag 去 v>.zip
+#   SHA256SUMS.txt                （sha256sum 格式，覆盖上面两个文件）
+# 例：标签 v3.0.0 → cses-cloud-v3-3.0.0.tar.gz / cses-cloud-v3-3.0.0.zip
+#     标签 3.0.0  → 同上（没有 v 前缀时原样使用）
+#
+# 打包取舍：
+# - 用 `git archive` 取源码，node_modules/、data/ 下的运行时数据（cses.db*、
+#   sessions/、dev-users/、ai-shots/、ai-uploads/）、本地凭据与临时脚本都不会进包；
+# - dist/ 被 .gitignore 忽略，所以 archive 里没有它，这里把本次构建结果拷进去，
+#   保证产物「源码 + 可直接对外服务的前端」都齐。
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的标签（需已存在，例如 v3.0.0）'
+        required: true
+        type: string
+
+# 创建/更新 Release、上传资产需要写权限
+permissions:
+  contents: write
+
+# 发布不允许并发取消，避免出现「Release 建了一半」的状态
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: 构建并发布
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 检出代码（手动触发时检出指定标签）
+        uses: actions/checkout@v4
+        with:
+          # 打包要用 git archive 取该标签的完整树
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: 解析发布元信息
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+          # tag 触发时事件本身没有分支信息，用仓库默认分支代表发布线
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG="${INPUT_TAG}"
+            # 手动触发时的 ref 是所选分支，直接用它
+            BRANCH="${REF_NAME}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            BRANCH="${DEFAULT_BRANCH:-${REF_NAME}}"
+          fi
+          if [ -z "${TAG}" ]; then
+            echo "::error::无法确定发布标签"
+            exit 1
+          fi
+          # 资产名去掉标签的 v 前缀：v3.0.0 → cses-cloud-v3-3.0.0
+          TAG_NOV="${TAG#v}"
+          if [ -z "${TAG_NOV}" ]; then
+            echo "::error::标签 ${TAG} 去掉 v 前缀后为空，无法生成资产名"
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+          echo "asset_base=cses-cloud-v3-${TAG_NOV}" >> "$GITHUB_OUTPUT"
+          echo "发布标签：${TAG}（分支：${BRANCH}，资产前缀：cses-cloud-v3-${TAG_NOV}）"
+
+      - name: 准备 pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: 准备 Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            frontend/pnpm-lock.yaml
+
+      - name: 校验服务端语法（server 下逐个 node --check）
+        run: node .github/scripts/check-server.mjs
+
+      - name: 安装根目录依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 安装前端依赖
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: 构建前端
+        run: pnpm build
+
+      - name: 暂存发布目录（源码 + dist/）
+        id: stage
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          BRANCH: ${{ steps.meta.outputs.branch }}
+        run: |
+          set -euo pipefail
+          STAGE="${RUNNER_TEMP}/release-stage"
+          ASSETS="${RUNNER_TEMP}/release-assets"
+          rm -rf "${STAGE}" "${ASSETS}"
+          mkdir -p "${STAGE}" "${ASSETS}"
+
+          # 只取 git 跟踪的文件：node_modules、.git、本地凭据、未跟踪的临时脚本都不会进包
+          git archive --format=tar HEAD | tar -x -C "${STAGE}"
+
+          # 安全兜底：这些文件一旦被提交进索引就绝不允许出现在发布包里（宁可发布失败）
+          for secret in .cred_in.txt .env .env.local .env.production; do
+            if [ -e "${STAGE}/${secret}" ]; then
+              echo "::error::发布产物中出现密钥/凭据文件 ${secret}，请先从 git 索引移除"
+              exit 1
+            fi
+          done
+
+          # 历史包袱兜底：data/ 下的运行期数据即使被旧提交误跟踪，也不进发布包
+          # （当前 HEAD 里就误跟踪了 data/sessions/*.json，见交付说明）
+          rm -rf "${STAGE}/data/sessions" \
+                 "${STAGE}/data/dev-users" \
+                 "${STAGE}/data/ai-shots" \
+                 "${STAGE}/data/ai-uploads" \
+                 "${STAGE}/data/update"
+          find "${STAGE}/data" -maxdepth 1 -type f \
+            \( -name '*.db' -o -name '*.db-*' -o -name '*.sqlite*' \) -delete 2>/dev/null || true
+          # 开发模式标记：产物里绝不能带（否则生产端会走本地模拟登录）
+          rm -f "${STAGE}/debug.flag"
+          # 构建/安装调试日志不属于源码
+          find "${STAGE}" -type f -name '*.log' -delete
+
+          # 用本次新构建的产物替换 archive 里的 dist（dist/ 被 .gitignore 忽略，正常为空）
+          rm -rf "${STAGE}/dist"
+          cp -R dist "${STAGE}/dist"
+          test -f "${STAGE}/dist/index.html"
+
+          # 构建信息：server/lib/build-info.js 会读取仓库根的 build-info.json
+          # （字段约定 commit / branch / buildTime / version / tag），生产端据此展示版本。
+          # version 取标签去掉 v 前缀，tag 保留原样；branch 由 meta step 算好（tag 触发 =
+          # 仓库默认分支，手动触发 = 所选分支），脚本里再做 GITHUB_REF_NAME 兜底。
+          ( cd "${STAGE}" && node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const tag = process.env.TAG || "";
+            fs.writeFileSync("build-info.json", JSON.stringify({
+              version: tag.replace(/^v/i, "") || pkg.version || "",
+              tag,
+              commit: process.env.GITHUB_SHA || "",
+              branch: process.env.BRANCH || process.env.GITHUB_REF_NAME || "",
+              buildTime: new Date().toISOString(),
+              generator: "github-actions",
+            }, null, 2) + "\n");
+          ' )
+
+          echo "stage=${STAGE}" >> "$GITHUB_OUTPUT"
+          echo "assets=${ASSETS}" >> "$GITHUB_OUTPUT"
+
+      - name: 打包 tar.gz / zip 并生成 SHA256SUMS.txt
+        env:
+          BASE: ${{ steps.meta.outputs.asset_base }}
+          STAGE: ${{ steps.stage.outputs.stage }}
+          ASSETS: ${{ steps.stage.outputs.assets }}
+        run: |
+          set -euo pipefail
+
+          # tar.gz：固定条目顺序与属主，产物更稳定；Linux 生产端直接用 tar 解包
+          tar --sort=name --owner=0 --group=0 --numeric-owner \
+            -czf "${ASSETS}/${BASE}.tar.gz" -C "${STAGE}" .
+
+          # zip：给 Windows 端手工解压用，内容与 tar.gz 一致
+          ( cd "${STAGE}" && zip -q -r -X "${ASSETS}/${BASE}.zip" . )
+
+          # 校验文件必须只列出本次上传的资产（生产端常直接 sha256sum -c）
+          ( cd "${ASSETS}" && sha256sum "${BASE}.tar.gz" "${BASE}.zip" > SHA256SUMS.txt )
+
+          {
+            echo "### 发布资产"
+            echo ""
+            echo '```'
+            ls -l "${ASSETS}"
+            echo ''
+            cat "${ASSETS}/SHA256SUMS.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 校验发布包内容与校验和
+        env:
+          BASE: ${{ steps.meta.outputs.asset_base }}
+          ASSETS: ${{ steps.stage.outputs.assets }}
+        run: |
+          set -euo pipefail
+
+          # 校验和自检（生产端下载后也会做同样的事）
+          ( cd "${ASSETS}" && sha256sum -c SHA256SUMS.txt )
+
+          # 先把条目列表落盘再 grep：避免 `tar | grep -q` 时 grep 提前退出造成
+          # tar 收到 SIGPIPE，进而在 pipefail 下误判失败
+          TAR_LIST="${ASSETS}/.tar-entries.txt"
+          ZIP_LIST="${ASSETS}/.zip-entries.txt"
+          tar -tzf "${ASSETS}/${BASE}.tar.gz" > "${TAR_LIST}"
+          unzip -l "${ASSETS}/${BASE}.zip" > "${ZIP_LIST}"
+
+          # 产物必须含源码入口 + 已构建前端 + 构建信息
+          for f in package.json server/index.js schema.sql build-info.json dist/index.html; do
+            if ! grep -q -x -e "./${f}" -e "${f}" "${TAR_LIST}"; then
+              echo "::error::tar.gz 中缺少 ${f}"
+              exit 1
+            fi
+          done
+
+          # 产物不得含依赖、git 仓库、运行期数据与本地凭据
+          if grep -Eq '(^|/)(node_modules|\.git)/|(^|/)data/(sessions|dev-users)/|(^|/)debug\.flag$|(^|/)\.cred_in\.txt$' "${TAR_LIST}"; then
+            echo "::error::发布包中出现不应发布的目录/文件"
+            exit 1
+          fi
+
+          # zip 应可正常读取，且内容与 tar.gz 一致（至少含同一入口文件）
+          unzip -tq "${ASSETS}/${BASE}.zip"
+          grep -q 'dist/index.html' "${ZIP_LIST}"
+
+          rm -f "${TAR_LIST}" "${ZIP_LIST}"
+          echo "发布包校验通过：${BASE}.tar.gz / ${BASE}.zip / SHA256SUMS.txt"
+
+      - name: 创建 / 更新 GitHub Release 并上传资产
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: CSES Cloud V3 ${{ steps.meta.outputs.tag }}
+          draft: false
+          # 带 -rc / -beta 之类后缀的标签自动标记为预发布
+          prerelease: ${{ contains(steps.meta.outputs.tag, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.stage.outputs.assets }}/${{ steps.meta.outputs.asset_base }}.tar.gz
+            ${{ steps.stage.outputs.assets }}/${{ steps.meta.outputs.asset_base }}.zip
+            ${{ steps.stage.outputs.assets }}/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 可选通知：仓库里没配 RELEASE_WEBHOOK_URL 时自动跳过，不会让发布失败
+      - name: 可选：发布通知
+        env:
+          NOTIFY_WEBHOOK: ${{ secrets.RELEASE_WEBHOOK_URL }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          if [ -z "${NOTIFY_WEBHOOK:-}" ]; then
+            echo "未配置 secrets.RELEASE_WEBHOOK_URL，跳过发布通知。"
+            exit 0
+          fi
+          curl -fsS -m 10 -X POST "${NOTIFY_WEBHOOK}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"msgtype\":\"text\",\"text\":{\"content\":\"CSES Cloud V3 已发布 ${TAG}\"}}" \
+            || echo "::warning::发布通知发送失败（不影响发布结果）"

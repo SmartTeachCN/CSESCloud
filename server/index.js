@@ -1,3 +1,4 @@
+require('./lib/env-load'); // 顶部加载仓库根 .env（零依赖，不覆盖真实环境变量；供 server-config / 生产端同步使用）
 /**
  * CSES Cloud - NodeJS 后端服务入口（V3，全部为 NodeJS 原生路由）
  *

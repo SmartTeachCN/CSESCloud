@@ -1,0 +1,93 @@
+# CSES Cloud V3 · 持续集成（提交后自动构建）
+#
+# 触发：push 到 V3 / CSES-Cloud-V3 分支、任意 pull_request。
+# 流程：检代码 → 准备 Node 22 + pnpm 10 → 校验服务端语法 → 安装依赖（根目录 + frontend）
+#       → 构建前端（输出到仓库根 dist/）→ 上传 dist/ 为 artifact（保留 7 天）。
+#
+# 说明：
+# - 这里刻意不写 pnpm 版本：pnpm/action-setup@v4 会读取 package.json 的
+#   packageManager 字段（pnpm@10.14.0+sha512...）。若同时写 version 输入，
+#   action 会因「两处版本不一致」直接报错。
+# - 所有依赖都按 lockfile 安装（--frozen-lockfile），锁文件与 package.json
+#   不一致时 CI 会失败，避免出现「本地能跑、CI 装出来的依赖不同」。
+name: CI
+
+on:
+  push:
+    branches:
+      - V3
+      - CSES-Cloud-V3
+  pull_request:
+  # 允许在 Actions 页面手动跑一次完整构建（排查用）
+  workflow_dispatch:
+
+# CI 只读仓库内容，不需要写权限
+permissions:
+  contents: read
+
+# 同一分支 / PR 的新提交会取消上一次未完成的构建，避免排队堆积
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 校验并构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          # CI 不需要用 git 凭据做任何写操作
+          persist-credentials: false
+
+      # 必须在 checkout 之后，action 要读仓库根的 package.json
+      - name: 准备 pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: 准备 Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            frontend/pnpm-lock.yaml
+
+      # 语法校验只依赖 node 本身，放在安装之前，坏代码可以秒级失败
+      - name: 校验服务端语法（server 下逐个 node --check）
+        run: node .github/scripts/check-server.mjs
+
+      - name: 安装根目录依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 安装前端依赖
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      # 等价于 pnpm --dir frontend build，vite 输出到仓库根 dist/（会先清空）
+      - name: 构建前端
+        run: pnpm build
+
+      - name: 检查构建产物
+        run: |
+          test -f dist/index.html
+          du -sh dist
+          {
+            echo "### 前端构建产物"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| 提交 | \`${GITHUB_SHA}\` |"
+            echo "| 入口 | \`dist/index.html\` |"
+            echo "| 体积 | $(du -sh dist | cut -f1) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传 dist 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: cses-cloud-v3-dist
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error

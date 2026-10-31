@@ -51,6 +51,8 @@ _test_*.mjs
 _e2e_*.mjs
 _acl-recovery/
 _verify_shots/
+# 迁移/历史清洗时使用的临时克隆目录（只在本地，参与者手工清理）
+_migration_tmp/
 *.log
 npminstall-debug.log
 

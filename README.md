@@ -1,5 +1,8 @@
 # CSESCloudNG · V3
 
+[![CI](https://github.com/SmartTeachCN/CSESCloud/actions/workflows/ci.yml/badge.svg?branch=CSES-Cloud-V3)](https://github.com/SmartTeachCN/CSESCloud/actions/workflows/ci.yml)
+[![Release](https://github.com/SmartTeachCN/CSESCloud/actions/workflows/release.yml/badge.svg)](https://github.com/SmartTeachCN/CSESCloud/actions/workflows/release.yml)
+
 CSES Cloud 智教云平台（NodeJS 后端 + Vue 3 前端）。
 
 V3 聚焦 **配置分发**：轻编辑器同时管理云文件与「配置实例」，按源文件类型自动选择分发方式：
@@ -9,6 +12,7 @@ V3 聚焦 **配置分发**：轻编辑器同时管理云文件与「配置实例
 | ClassIsland 档案（Profile JSON） | 静态集控 | `classisland` | 清单 + 六类数据源 |
 | CSES 配置（YAML / JSON） | 公开配置地址 | `cses_config` | 原文件内容 URL |
 | ExamAware 配置（`.ea2` / JSON） | 公开配置地址 | `examaware` | 原文件内容 URL |
+| CKV 键值对配置（`.ckv`） | 公开配置地址 | `ckv_config` | 原文件内容 URL |
 
 平台不再提供校园集控、实例云控、WebSocket / REST 设备控制等动态集控能力，所有接口均为
 Node.js 原生路径（不使用 PHP 后缀）。
@@ -59,7 +63,7 @@ pnpm dev                     # 同时启动 API(8000) 与 Vite 开发服务器
 
 ### 编辑器插件
 
-- `.yml` / `.json` / `.ea2` 等格式由已发布编辑器插件负责可视化编辑；
+- `.yml` / `.json` / `.ea2` / `.ckv` 等格式由已发布编辑器插件负责可视化编辑；
 - 插件无法识别当前文件格式时，会请求平台回退到 **默认编辑器（Monaco）**，不再在插件内部
   提供通用/源码编辑器；源码查看统一由默认编辑器承担；
 - 插件内部不提供源码查看器，Ribbon 中只有结构化编辑相关工具；
@@ -92,16 +96,17 @@ pnpm dev                     # 同时启动 API(8000) 与 Vite 开发服务器
 4. 在「ID」处填写配置实例的实例标识（如 `高一1班`）；
 5. 之后在云端修改档案并保存，ClassIsland「集控」设置页点击「立即同步」即可更新。
 
-### CSES / ExamAware 配置分发（公开配置地址）
+### CSES / ExamAware / CKV 配置分发（公开配置地址）
 
-对 CSES 配置（`.yml` / `.json`）或 ExamAware 配置（`.ea2`）右键「分发配置」，得到稳定地址：
+对 CSES 配置（`.yml` / `.json`）、ExamAware 配置（`.ea2`）或 CKV 键值对配置（`.ckv`）右键「分发配置」，
+得到稳定地址：
 
 ```
 /config/<实例组标识>/<实例标识>.<扩展名>
 ```
 
-地址直接返回源文件内容（CSES 返回 YAML/JSON 原文，ExamAware 返回 JSON），可在支持对应格式的
-程序 / 客户端 / 集控系统中填写使用；源文件保存后内容实时更新。
+地址直接返回源文件内容（CSES 返回 YAML/JSON 原文，ExamAware 返回 JSON，CKV 返回 `text/plain`
+键值对原文），可在支持对应格式的程序 / 客户端 / 集控系统中填写使用；源文件保存后内容实时更新。
 
 ### 实例云应用模块
 
@@ -113,6 +118,7 @@ server/apps/index.js                     # 云应用注册表
 server/apps/classisland/index.js         # ClassIsland 档案 → 静态集控（清单 + 六类数据源）
 server/apps/cses-config/index.js         # CSES 配置 → 公开配置地址
 server/apps/examaware/index.js           # ExamAware 配置 → 公开配置地址
+server/apps/ckv-config/index.js          # CKV 键值对配置 → 公开配置地址
 server/apps/lib/raw-config.js            # 公开配置地址通用逻辑
 server/lib/distribution-formats.js       # 分发格式识别与校验（多格式）
 server/lib/classisland-convert.js        # ClassIsland 清单/结构辅助工具
@@ -154,21 +160,63 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
+## CI/CD 与生产端同步
+
+- **CI**（`.github/workflows/ci.yml`）在 push 到 `V3` / `CSES-Cloud-V3` 分支或 PR 时自动执行：
+  Node 22 + pnpm 10 → 服务端语法校验 → 安装依赖 → 构建前端 → 上传 `dist/` artifact。
+- **Release**（`.github/workflows/release.yml`）在 push `v*` 标签时产出可部署发布包并创建 GitHub Release：
+  - `cses-cloud-v3-<tag 去 v>.tar.gz` / `cses-cloud-v3-<tag 去 v>.zip`：git 跟踪的源码 + 本次构建的 `dist/` + `build-info.json`（例如标签 `v3.0.0` → `cses-cloud-v3-3.0.0.tar.gz`）
+  - `SHA256SUMS.txt`：上述产物的校验和（`sha256sum` 格式）
+
+生产服务器上可检查并一键拉取更新（纯 Node 脚本、零新增依赖，无需在服务器构建前端）：
+
+```bash
+pnpm sync:check        # 检查上游 Release / 分支最新提交与本地版本的差异（只读）
+pnpm sync:dry-run      # 演练：下载 + SHA256 校验 + 解包 + 预演差异，不改动部署、不重启
+pnpm sync:apply        # 更新：备份 → 替换代码 → 按需装依赖 → 重启 → 健康检查，失败自动回滚
+pnpm sync:rollback     # 回滚到最近一次备份
+```
+
+等价命令为 `node scripts/sync-production.mjs --check|--apply|--rollback`（支持 `--dry-run`、`--json`、`--tag`、`--yes` 等，见 `--help`）。
+
+管理接口（需 `UPDATE_SYNC_ENABLED=1`，凭据走 `X-Update-Token` 请求头或最高管理员会话）：
+
+| 方法 | 地址 | 作用 |
+|---|---|---|
+| GET | `/api/system/update?action=version` | 当前版本 / 提交 / 构建时间 / 运行时长 |
+| GET | `/api/system/update?action=check` | 对比上游 Release 与分支最新提交，判断是否需要更新 |
+| GET | `/api/system/update?action=status` | 最近一次同步任务状态 + 日志尾部 + 备份列表 |
+| POST | `/api/system/update?action=apply` | 触发后台更新任务（立即返回 `job_id`） |
+| POST | `/api/system/update?action=rollback` | 触发后台回滚任务 |
+| GET | `/api/system/health` | 公开健康检查（更新后探活 / 监控探活） |
+
+更新只替换「代码」：`data/`、`node_modules/`、`.git/`、`.env*`、`exports/`、`logs/` 等运行期内容不会被覆盖；
+每次更新前自动备份到 `data/update/backups/`，失败自动回滚。完整的环境变量表、systemd / pm2 配置、
+故障排查与安全说明见 [docs/生产端同步.md](docs/生产端同步.md)。
+
 ## 验证部署
 
 ```bash
-node --disable-warning=ExperimentalWarning _smoke_db_test.js          # 数据库读写/BLOB 往返自检
-node --disable-warning=ExperimentalWarning _smoke_static_control.js   # 配置分发/目录/删除实例冒烟（需服务已启动）
-node --disable-warning=ExperimentalWarning _smoke_share.js            # 云文件分享占位/读取与编辑重定向冒烟（需服务已启动）
-node --disable-warning=ExperimentalWarning _smoke_share_permissions.js # 四档权限/黑名单/接收者移除链接冒烟（需服务已启动）
-curl http://127.0.0.1:9000/api/ping                                   # 返回 {"code":404,"message":"API 端点不存在"} 即为存活
+# 0. 本地自检（不需要额外脚本，仓库里也不再提交开发用的临时冒烟脚本）
+node .github/scripts/check-server.mjs          # 逐个 node --check 服务端 JS
+pnpm build                                     # 前端构建，产物在 dist/
+pnpm start                                     # 生产模式：API + dist 静态资源（默认 :8000）
+
+# 1. 服务存活与构建信息
+curl http://127.0.0.1:8000/api/system/health   # 返回 code:0 + version + uptime（公开，供监控/更新探活）
+curl http://127.0.0.1:8000/api/system/update?action=version   # 版本/提交/构建时间（需 UPDATE_SYNC_ENABLED=1）
+curl http://127.0.0.1:8000/api/ping            # 返回 {"code":404,"message":"API 端点不存在"} 也说明服务存活
+
+# 2. 数据库与分享冒烟（自己本地写脚本放在仓库外，或用 .gitignore 覆盖的 _smoke_*.js 名字，本仓库不提交这类脚本）
+node --disable-warning=ExperimentalWarning <你的冒烟脚本>.js
 
 # ClassIsland 静态集控（需要先在轻编辑器分发一个 ClassIsland 配置实例）
-curl "http://127.0.0.1:9000/classisland/manifest?id=<实例组标识>"
-curl "http://127.0.0.1:9000/classisland/file?id=<实例组标识>/<实例标识>&key=Subjects"
+curl "http://127.0.0.1:8000/classisland/manifest?id=<实例组标识>"
+curl "http://127.0.0.1:8000/classisland/file?id=<实例组标识>/<实例标识>&key=Subjects"
 
-# CSES / ExamAware 公开配置地址
-curl "http://127.0.0.1:9000/config/<实例组标识>/<实例标识>.yml"
+# CSES / ExamAware / CKV 公开配置地址
+curl "http://127.0.0.1:8000/config/<实例组标识>/<实例标识>.yml"
+curl "http://127.0.0.1:8000/config/<实例组标识>/<实例标识>.ckv"
 ```
 
 ## 与旧版本的关系

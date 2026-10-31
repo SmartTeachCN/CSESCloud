@@ -5,7 +5,11 @@
   "scripts": {
     "dev": "concurrently -n api,vite -c blue,green \"node --disable-warning=ExperimentalWarning server/index.js\" \"pnpm --dir frontend dev\"",
     "build": "pnpm --dir frontend build",
-    "start": "node --disable-warning=ExperimentalWarning server/index.js"
+    "start": "node --disable-warning=ExperimentalWarning server/index.js",
+    "sync:check": "node scripts/sync-production.mjs --check",
+    "sync:dry-run": "node scripts/sync-production.mjs --apply --dry-run",
+    "sync:apply": "node scripts/sync-production.mjs --apply",
+    "sync:rollback": "node scripts/sync-production.mjs --rollback"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
